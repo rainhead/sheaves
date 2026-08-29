@@ -98,20 +98,16 @@ is hand-rolled AppKit — SwiftUI's `MenuBarExtra` has exactly one behaviour, wh
 to open its content on any click.
 
 **Being on a call is not being away.** Idle detection that watches only the
-keyboard and mouse interrupts every meeting to ask whether you are still there;
+keyboard and mouse interrupts every meeting to ask whether you are still there, and
 Harvest's own app does exactly that. Sheaves counts the microphone being in use as
-presence, so a call is time at work like any other. Reading
-`kAudioDevicePropertyDeviceIsRunningSomewhere`, read across every device that can
-record, asks about the *device* rather than the audio — so it needs no microphone
-entitlement, prompts for no permission and can never hear anything. Every input
-device is checked and not merely the default one, because choosing a headset in
-Zoom while the system default stays on the built-in microphone is the ordinary
-case. A locked screen still outranks it — a
-meeting left open on a locked Mac is a machine alone in a room. And an absence only
+presence — while you are muted too, which is the case that decides whether any of
+this is worth having — so a call is time at work like any other. It asks whether a
+device is running, never what it is carrying, so it needs no microphone entitlement
+and prompts for no permission. A locked screen outranks it, and an absence only
 speaks for a timer that was running while somebody was here: one started on the web
-or a phone is left alone, because this Mac knows nothing about it. See
-[`AbsenceDetector`](Packages/SheavesCore/Sources/SheavesCore/Store/AbsenceDetector.swift)
-and [`PresenceMonitor`](Apps/Mac/Sources/PresenceMonitor.swift).
+or a phone is left alone, because this Mac knows nothing about it.
+[How Sheaves decides you are here](docs/presence.md) has the measurements and the
+limits.
 
 <img src="docs/images/absence-prompt.png" width="440"
   alt="The Sheaves absence prompt: a timer that ran while nobody was here, with
@@ -142,6 +138,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | [`Packages/SheavesCore`](Packages/SheavesCore) | API client, models, store, persistence. No AppKit, no SwiftUI. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
+| [`docs`](docs) | Notes too long for here, and the images this file uses. |
 
 ## Keyboard
 
