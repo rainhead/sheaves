@@ -10,10 +10,12 @@ import SwiftUI
 @MainActor
 final class QuickEntryController {
     private let tracker: TimeTracker
+    private let openSettings: @MainActor () -> Void
     private var panel: NSPanel?
 
-    init(tracker: TimeTracker) {
+    init(tracker: TimeTracker, openSettings: @escaping @MainActor () -> Void) {
         self.tracker = tracker
+        self.openSettings = openSettings
     }
 
     func toggle() {
@@ -56,6 +58,10 @@ final class QuickEntryController {
 
         let root = QuickEntryView(onDismiss: { [weak self] in self?.hide() })
             .environment(tracker)
+            .environment(\.openSettingsWindow) { [weak self] in
+                self?.hide()
+                self?.openSettings()
+            }
         panel.contentView = NSHostingView(rootView: root)
         return panel
     }

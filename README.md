@@ -60,7 +60,9 @@ first request returns.
 
 The global hotkey uses Carbon's `RegisterEventHotKey`
 ([`GlobalHotKey`](Apps/Mac/Sources/GlobalHotKey.swift)) rather than an `NSEvent`
-monitor: it needs no Accessibility permission and can actually consume the key.
+monitor: it needs no Accessibility permission and can actually consume the key. It is
+rebindable in Settings, and says so when another app already owns the combination —
+Carbon reports that by failing silently, which is worth surfacing.
 
 ## Layout
 
@@ -74,7 +76,7 @@ monitor: it needs no Accessibility permission and can actually consume the key.
 
 | | |
 | --- | --- |
-| ⌃⌥⌘T | Quick entry, from any app |
+| ⌃⌥⌘T | Quick entry, from any app (rebindable in Settings) |
 | ↑ ↓ | Move through matches |
 | ⇥ | Jump to the notes field |
 | ⏎ | Start the selected timer |

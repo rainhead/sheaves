@@ -103,6 +103,9 @@ public actor MutationQueue {
                 pending.removeFirst()
                 report.discarded.append((mutation, error))
                 persist()
+            } catch is CancellationError {
+                // Left queued deliberately; a cancelled drain is not a failed one.
+                break
             } catch {
                 report.stoppedWith = .invalidResponse
                 break

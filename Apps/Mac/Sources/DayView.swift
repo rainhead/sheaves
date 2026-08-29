@@ -5,6 +5,7 @@ import SwiftUI
 /// something new without reaching for the mouse.
 struct DayView: View {
     @Environment(TimeTracker.self) private var tracker
+    @Environment(\.openSettingsWindow) private var openSettings
 
     private var format: HoursFormat { HoursFormat(company: tracker.company) }
 
@@ -90,11 +91,12 @@ struct DayView: View {
         HStack(spacing: 8) {
             SyncStatusLabel()
             Spacer()
-            SettingsLink {
+            Button(action: openSettings) {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
             .help("Settings")
+            .keyboardShortcut(",")
 
             Button {
                 NSApp.terminate(nil)
@@ -163,6 +165,8 @@ struct SyncStatusLabel: View {
 
 /// Shown before any credentials exist, so the popover is never just empty.
 struct ConnectPrompt: View {
+    @Environment(\.openSettingsWindow) private var openSettings
+
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.badge.questionmark")
@@ -174,9 +178,8 @@ struct ConnectPrompt: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            SettingsLink {
-                Text("Open Settings…")
-            }
+            Button("Open Settings…", action: openSettings)
+                .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)

@@ -57,7 +57,7 @@ struct HarvestClientTests {
 
         #expect(entries.count == 2)
         #expect(entries[0].project.name == "Marketing Website")
-        #expect(entries[0].spentDate == CalendarDate(year: 2026, month: 8, day: 29))
+        #expect(entries[0].spentDate == Fixture.today)
         #expect(entries[0].notes == "Adding CSS styling")
         #expect(entries[0].isRunning == false)
         #expect(entries[1].notes == nil)

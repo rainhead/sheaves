@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(TimeTracker.self) private var tracker
+    @Environment(HotKeyPreference.self) private var hotKeys
 
     @State private var accountID = ""
     @State private var token = ""
@@ -16,6 +17,7 @@ struct SettingsView: View {
             } else {
                 connectedSection
             }
+            shortcutSection
         }
         .formStyle(.grouped)
         .frame(width: 460)
@@ -55,16 +57,41 @@ struct SettingsView: View {
             LabeledContent("Account", value: tracker.company?.name ?? "—")
             LabeledContent("Signed in as", value: tracker.user?.name ?? "—")
             LabeledContent("Projects", value: "\(tracker.targets.count) task assignments")
-            LabeledContent("Quick entry") {
-                Text("⌃⌥⌘T")
-                    .font(.body.monospaced())
-            }
             HStack {
                 Spacer()
                 Button("Disconnect", role: .destructive) {
                     Task { await tracker.disconnect() }
                 }
             }
+        }
+    }
+
+    private var shortcutSection: some View {
+        @Bindable var hotKeys = hotKeys
+        return Section {
+            LabeledContent("Quick entry") {
+                ShortcutRecorder(shortcut: $hotKeys.shortcut)
+            }
+            if hotKeys.isRegistered == false {
+                Label(
+                    "Another app already owns \(hotKeys.shortcut.display). Pick a different combination.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
+            }
+            if hotKeys.shortcut != .quickEntryDefault {
+                HStack {
+                    Spacer()
+                    Button("Reset to ⌃⌥⌘T") { hotKeys.resetToDefault() }
+                }
+            }
+        } header: {
+            Text("Shortcut")
+        } footer: {
+            Text("Opens the quick-entry panel from any app. Sheaves registers it with the window server, so no Accessibility permission is needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

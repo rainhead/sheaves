@@ -64,7 +64,9 @@ public final class TimeTracker {
     private let queue: MutationQueue
     private var ticker: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
+    private var accountDataFetchedAt: Date?
     private let maxRecents = 12
+    private static let accountDataLifetime: TimeInterval = 600
 
     public init(
         client: HarvestClient = HarvestClient(),
@@ -124,6 +126,7 @@ public final class TimeTracker {
         targets = []
         entries = []
         recentTargets = []
+        accountDataFetchedAt = nil
         pendingCount = 0
         lastSyncedAt = nil
         connection = .needsCredentials
@@ -132,11 +135,18 @@ public final class TimeTracker {
     // MARK: - Syncing
 
     /// Flushes queued changes, then reloads the visible day from Harvest.
+    ///
+    /// Syncs are serialised rather than cancelled: a burst of clicks each enqueue a
+    /// mutation, and tearing down a drain half way through would report a failure
+    /// that never happened.
     public func sync() async {
-        syncTask?.cancel()
+        if let inFlight = syncTask {
+            await inFlight.value
+        }
         let task = Task { await performSync() }
         syncTask = task
         await task.value
+        if syncTask == task { syncTask = nil }
     }
 
     private func performSync() async {
@@ -147,6 +157,7 @@ public final class TimeTracker {
 
         let report = await queue.drain(using: client)
         pendingCount = await queue.count
+        if Task.isCancelled { return }
         if let blocker = report.stoppedWith {
             connection = .offline(reason: blocker.localizedDescription)
             return
@@ -164,19 +175,19 @@ public final class TimeTracker {
             } else {
                 user = try await client.currentUser()
             }
-            async let company = client.company()
-            async let assignments = client.projectAssignments()
             async let dayEntries = client.timeEntries(userID: user.id, from: day, to: day)
             async let running = client.runningTimeEntry(userID: user.id)
 
             self.user = user
-            self.company = try await company
-            self.targets = try await assignments.timerTargets()
             self.entries = try await merge(dayEntries: dayEntries, running: running)
+            try await refreshAccountDataIfStale()
             self.lastSyncedAt = Date()
             self.connection = .online
             pruneRecents()
             saveSnapshot()
+        } catch is CancellationError {
+            // Shutting down or superseded; the queue is persisted, so nothing is lost.
+            return
         } catch let error as HarvestError {
             connection = error.isTransient
                 ? .offline(reason: error.localizedDescription)
@@ -184,6 +195,19 @@ public final class TimeTracker {
         } catch {
             connection = .offline(reason: error.localizedDescription)
         }
+    }
+
+    /// Project assignments and company settings change rarely and cost two requests,
+    /// so they are not refetched on every start/stop.
+    private func refreshAccountDataIfStale() async throws {
+        let isStale = accountDataFetchedAt.map { Date().timeIntervalSince($0) > Self.accountDataLifetime } ?? true
+        guard isStale || targets.isEmpty else { return }
+
+        async let company = client.company()
+        async let assignments = client.projectAssignments()
+        self.company = try await company
+        self.targets = try await assignments.timerTargets()
+        accountDataFetchedAt = Date()
     }
 
     /// A timer started on another day still belongs in the menu bar, so it is folded

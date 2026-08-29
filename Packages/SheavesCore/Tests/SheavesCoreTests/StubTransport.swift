@@ -44,10 +44,14 @@ actor StubTransport: HarvestTransport {
 enum Fixture {
     static let credentials = HarvestCredentials(accountID: "12345", token: "sekrit")
 
-    static let timeEntry = """
+    /// Fixtures date themselves to today. Pinning a literal date would quietly break
+    /// every test that compares against `TimeTracker.day`, one day after it was written.
+    static let today = CalendarDate.today()
+
+    static var timeEntry: String { """
     {
       "id": 636709355,
-      "spent_date": "2026-08-29",
+      "spent_date": "\(today)",
       "user": { "id": 1782959, "name": "Kim Allen" },
       "client": { "id": 5735774, "name": "ABC Corp" },
       "project": { "id": 14307913, "name": "Marketing Website" },
@@ -72,12 +76,12 @@ enum Fixture {
       "created_at": "2026-08-29T22:44:36Z",
       "updated_at": "2026-08-29T22:48:56Z"
     }
-    """
+    """ }
 
-    static let runningTimeEntry = """
+    static var runningTimeEntry: String { """
     {
       "id": 636708906,
-      "spent_date": "2026-08-29",
+      "spent_date": "\(today)",
       "user": { "id": 1782959, "name": "Kim Allen" },
       "client": { "id": 5735776, "name": "123 Industries" },
       "project": { "id": 14308069, "name": "Online Store - Phase 1" },
@@ -96,7 +100,7 @@ enum Fixture {
       "created_at": "2026-08-29T14:30:00Z",
       "updated_at": "2026-08-29T14:30:00Z"
     }
-    """
+    """ }
 
     static func timeEntriesPage(_ entries: [String], nextPage: Int? = nil, page: Int = 1, totalPages: Int = 1) -> String {
         """
@@ -208,4 +212,45 @@ enum Fixture {
       "updated_at": "2026-06-26T21:23:36Z"
     }
     """
+}
+
+/// A transport that answers by URL path rather than call order.
+///
+/// `TimeTracker` fires several requests concurrently with `async let`, so their
+/// arrival order is not fixed and an ordered stub would hand back the wrong bodies.
+actor RoutingTransport: HarvestTransport {
+    /// Path fragment → response body. First match wins.
+    private var routes: [(fragment: String, body: String, status: Int)]
+    private(set) var paths: [String] = []
+
+    init(_ routes: [(String, String)]) {
+        self.routes = routes.map { ($0.0, $0.1, 200) }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let url = request.url!
+        paths.append(url.path())
+        guard let route = routes.first(where: { url.absoluteString.contains($0.fragment) }) else {
+            throw HarvestError.notFound
+        }
+        let http = HTTPURLResponse(url: url, statusCode: route.status, httpVersion: "HTTP/1.1", headerFields: nil)!
+        return (Data(route.body.utf8), http)
+    }
+
+    func callCount(matching fragment: String) -> Int {
+        paths.filter { $0.contains(fragment) }.count
+    }
+}
+
+extension RoutingTransport {
+    /// A fully working account: one stopped entry, one project with one active task.
+    static func standardAccount(entries: [String] = [Fixture.timeEntry]) -> RoutingTransport {
+        RoutingTransport([
+            ("users/me/project_assignments", Fixture.projectAssignmentsPage),
+            ("users/me", Fixture.currentUser),
+            ("company", Fixture.company),
+            ("is_running=true", Fixture.timeEntriesPage([])),
+            ("time_entries", Fixture.timeEntriesPage(entries)),
+        ])
+    }
 }

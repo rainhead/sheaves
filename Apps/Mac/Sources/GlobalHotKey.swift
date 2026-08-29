@@ -115,14 +115,3 @@ private final class HotKeyRegistry: @unchecked Sendable {
         )
     }
 }
-
-extension GlobalHotKey {
-    /// ⌃⌥⌘T — the default for "start a timer from anywhere".
-    static func quickEntryDefault(action: @escaping @Sendable () -> Void) -> GlobalHotKey? {
-        GlobalHotKey(
-            keyCode: UInt32(kVK_ANSI_T),
-            modifiers: UInt32(controlKey | optionKey | cmdKey),
-            action: action
-        )
-    }
-}
