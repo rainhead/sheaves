@@ -73,6 +73,13 @@ struct PresenceMonitorTests {
 
         run(monitor, sensor, minutes: 90)
 
+        // An absence only ever surfaces when somebody comes back, so this has to
+        // come back to mean anything. Without it the assertion holds even with the
+        // microphone ignored entirely, which is the whole claim under test.
+        sensor.isMicrophoneInUse = false
+        sensor.secondsSinceInput = 1
+        monitor.poll(now: start + 90 * 60 + 1)
+
         #expect(box.absences.isEmpty)
     }
 
