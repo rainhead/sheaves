@@ -26,7 +26,7 @@ extension HarvestError: LocalizedError {
         case .unauthorized:
             "Harvest rejected the token. Check the token and account ID."
         case .rateLimited(let retryAfter):
-            "Harvest is rate limiting requests. Retrying in \(Int(retryAfter.rounded()))s."
+            "Harvest is rate limiting requests. Retrying in \(Int(retryAfter.rounded()).formatted())s."
         case .notFound:
             "That record no longer exists in Harvest."
         case .rejected(_, let message):

@@ -184,9 +184,9 @@ struct SyncStatusLabel: View {
         case .connecting:
             return "Connecting…"
         case .offline:
-            return tracker.pendingCount > 0 ? "Offline · \(tracker.pendingCount) queued" : "Offline"
+            return tracker.pendingCount > 0 ? "Offline · \(tracker.pendingCount.formatted()) queued" : "Offline"
         case .online:
-            if tracker.pendingCount > 0 { return "Syncing \(tracker.pendingCount)…" }
+            if tracker.pendingCount > 0 { return "Syncing \(tracker.pendingCount.formatted())…" }
             guard let synced = tracker.lastSyncedAt else { return "Synced" }
             // Reading `now` keeps this label live; the relative formatter renders a
             // just-finished sync as "in 0 seconds", which reads like the future.

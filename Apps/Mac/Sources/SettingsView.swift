@@ -57,7 +57,7 @@ struct SettingsView: View {
         Section("Harvest") {
             LabeledContent("Account", value: tracker.company?.name ?? "—")
             LabeledContent("Signed in as", value: tracker.user?.name ?? "—")
-            LabeledContent("Projects", value: "\(tracker.targets.count) task assignments")
+            LabeledContent("Projects", value: "\(tracker.targets.count.formatted()) task assignments")
             HStack {
                 Spacer()
                 Button("Disconnect…", role: .destructive) { isConfirmingDisconnect = true }
@@ -74,7 +74,7 @@ struct SettingsView: View {
             } message: {
                 Text(
                     tracker.pendingCount > 0
-                        ? "\(tracker.pendingCount) change\(tracker.pendingCount == 1 ? "" : "s") have not reached Harvest yet and will be discarded along with the token."
+                        ? "\(tracker.pendingCount.formatted()) change\(tracker.pendingCount == 1 ? "" : "s") have not reached Harvest yet and will be discarded along with the token."
                         : "The token will be removed from your Keychain. Cached entries are cleared."
                 )
             }

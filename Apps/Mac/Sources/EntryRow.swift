@@ -81,9 +81,9 @@ struct EntryRow: View {
         let hours = total / 60
         let minutes = total % 60
         switch (hours, minutes) {
-        case (0, let m): return "\(m) minute\(m == 1 ? "" : "s")"
-        case (let h, 0): return "\(h) hour\(h == 1 ? "" : "s")"
-        case (let h, let m): return "\(h) hour\(h == 1 ? "" : "s") \(m) minute\(m == 1 ? "" : "s")"
+        case (0, let m): return "\(m.formatted()) minute\(m == 1 ? "" : "s")"
+        case (let h, 0): return "\(h.formatted()) hour\(h == 1 ? "" : "s")"
+        case (let h, let m): return "\(h.formatted()) hour\(h == 1 ? "" : "s") \(m.formatted()) minute\(m == 1 ? "" : "s")"
         }
     }
 

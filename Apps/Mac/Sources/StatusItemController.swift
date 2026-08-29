@@ -92,8 +92,8 @@ final class StatusItemController {
         guard let entry = activity.entry else { return "no timer running" }
         let total = Int((entry.hours(asOf: tracker.now) * 60).rounded())
         let duration = total < 60
-            ? "\(total) minute\(total == 1 ? "" : "s")"
-            : "\(total / 60) hour\(total / 60 == 1 ? "" : "s") \(total % 60) minute\(total % 60 == 1 ? "" : "s")"
+            ? "\(total.formatted()) minute\(total == 1 ? "" : "s")"
+            : "\(( total / 60).formatted()) hour\(total / 60 == 1 ? "" : "s") \((total % 60).formatted()) minute\(total % 60 == 1 ? "" : "s")"
         return activity.entry.map { _ in
             "\(duration), \(entry.isRunning ? "timer running" : "paused")"
         } ?? duration

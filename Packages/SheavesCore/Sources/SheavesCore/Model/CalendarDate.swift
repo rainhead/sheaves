@@ -56,6 +56,9 @@ public struct CalendarDate: Hashable, Sendable, Codable, Comparable, CustomStrin
 
     // MARK: ISO 8601 text
 
+    /// Deliberately *not* locale-aware: this is the wire format Harvest parses, so it
+    /// must stay ASCII digits with hyphens whatever the reader's region says.
+    /// Anything shown to a person goes through a format style instead.
     public var description: String {
         String(format: "%04d-%02d-%02d", year, month, day)
     }

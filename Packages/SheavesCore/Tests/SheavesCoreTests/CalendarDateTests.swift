@@ -70,28 +70,41 @@ struct CalendarDateTests {
 
 @Suite("Hours formatting")
 struct HoursFormattingTests {
+    /// Pinned so the suite does not depend on the machine's region settings.
+    private let english = Locale(identifier: "en_US")
+
     @Test("formats as hours and minutes")
     func hoursMinutes() {
-        #expect(1.4.formattedHours(.hoursMinutes) == "1:24")
-        #expect(0.0.formattedHours(.hoursMinutes) == "0:00")
-        #expect(10.5.formattedHours(.hoursMinutes) == "10:30")
+        #expect(1.4.formattedHours(.hoursMinutes, locale: english) == "1:24")
+        #expect(0.0.formattedHours(.hoursMinutes, locale: english) == "0:00")
+        #expect(10.5.formattedHours(.hoursMinutes, locale: english) == "10:30")
     }
 
     /// Rounding to minutes before splitting keeps 0:60 from ever appearing.
     @Test("never renders sixty minutes")
     func neverSixtyMinutes() {
-        #expect(0.99999.formattedHours(.hoursMinutes) == "1:00")
-        #expect(1.99999.formattedHours(.hoursMinutes) == "2:00")
+        #expect(0.99999.formattedHours(.hoursMinutes, locale: english) == "1:00")
+        #expect(1.99999.formattedHours(.hoursMinutes, locale: english) == "2:00")
     }
 
     @Test("formats as decimal hours")
     func decimal() {
-        #expect(1.4.formattedHours(.decimal) == "1.40")
-        #expect(0.25.formattedHours(.decimal) == "0.25")
+        #expect(1.4.formattedHours(.decimal, locale: english) == "1.40")
+        #expect(0.25.formattedHours(.decimal, locale: english) == "0.25")
     }
 
     @Test("clamps negative durations")
     func negatives() {
-        #expect((-1.0).formattedHours(.hoursMinutes) == "0:00")
+        #expect((-1.0).formattedHours(.hoursMinutes, locale: english) == "0:00")
+    }
+
+    /// Decimal separators and digits are not universal: a hand-rolled "%.2f" gives
+    /// a French user "1.40" where they expect "1,40".
+    @Test("respects the reader's locale")
+    func respectsLocale() {
+        #expect(1.4.formattedHours(.decimal, locale: Locale(identifier: "fr_FR")) == "1,40")
+        #expect(1.4.formattedHours(.decimal, locale: Locale(identifier: "de_DE")) == "1,40")
+        // Arabic-Indic digits, which the colon form needs too.
+        #expect(1.4.formattedHours(.hoursMinutes, locale: Locale(identifier: "ar_EG")) == "١:٢٤")
     }
 }
