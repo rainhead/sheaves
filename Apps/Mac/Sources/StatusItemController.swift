@@ -169,7 +169,12 @@ final class StatusItemController {
         // key input — the search field would swallow every keystroke.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        installDismissWatchers()
+        // Arm dismissal on the next turn of the run loop. Armed synchronously, the
+        // very click that opened the panel can still be in flight and close it again.
+        Task { @MainActor in
+            guard self.panel.isVisible else { return }
+            self.installDismissWatchers()
+        }
         Task { await tracker.sync() }
     }
 
@@ -211,11 +216,6 @@ final class StatusItemController {
         dismissObservers.append(
             NotificationCenter.default.addObserver(
                 forName: NSWindow.didResignKeyNotification, object: panel, queue: .main, using: close
-            )
-        )
-        dismissObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main, using: close
             )
         )
         dismissObservers.append(
