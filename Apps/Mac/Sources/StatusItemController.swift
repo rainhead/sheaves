@@ -15,8 +15,9 @@ final class StatusItemController {
     private let tracker: TimeTracker
     private let openSettings: @MainActor () -> Void
     private let statusItem: NSStatusItem
-    private let popover = NSPopover()
+    private let panel: MenuBarPanel
     private let content: NSHostingController<AnyView>
+    private var dismissObserver: (any NSObjectProtocol)?
 
     /// Width of the leading icon, and so of the region that toggles the timer.
     private let iconRegionWidth: CGFloat = 24
@@ -31,15 +32,12 @@ final class StatusItemController {
                 DayView()
                     .environment(tracker)
                     .environment(\.openSettingsWindow, openSettings)
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             )
         )
-        // Let the hosting controller drive the popover's size as SwiftUI's layout
-        // settles, rather than the popover keeping whatever size it was created with.
         content.sizingOptions = [.preferredContentSize]
-
-        popover.behavior = .transient
-        popover.animates = false
-        popover.contentViewController = content
+        panel = MenuBarPanel(contentViewController: content)
 
         if let button = statusItem.button {
             button.target = self
@@ -141,32 +139,98 @@ final class StatusItemController {
         return button.convert(event.locationInWindow, from: nil).x <= iconRegionWidth
     }
 
-    // MARK: - Popover
+    // MARK: - Panel
 
     func togglePopover() {
-        popover.isShown ? popover.performClose(nil) : showPopover()
+        panel.isVisible ? hidePanel() : showPanel()
     }
 
-    private func showPopover() {
-        guard let button = statusItem.button else { return }
+    private func showPanel() {
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
 
-        // NSPopover positions itself from its content size at the moment it is shown.
-        // SwiftUI does not report a size until it has laid out, so showing first and
-        // letting the content grow afterwards left the popover anchored as though it
-        // were tiny — and it expanded off the top of the screen. Force a layout and
-        // hand over the real size before it picks a position.
+        // Size before positioning: the panel hangs from the menu bar downwards, so
+        // its origin depends on how tall the content turns out to be.
         content.view.layoutSubtreeIfNeeded()
         let fitted = content.view.fittingSize
-        if fitted.height > 0 {
-            popover.contentSize = fitted
+        if fitted.width > 0, fitted.height > 0 {
+            panel.setContentSize(fitted)
         }
 
-        // An accessory app is not active, and an inactive app's popover cannot take
-        // key input — which would leave the search field unable to accept a keystroke.
-        // Activating first avoids a second reposition after the window becomes key.
+        let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        panel.setFrameOrigin(origin(below: anchor))
+
+        // An accessory app is not active, and an inactive app's window cannot take
+        // key input — the search field would swallow every keystroke.
         NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        panel.makeKeyAndOrderFront(nil)
+        observeDismissal()
         Task { await tracker.sync() }
+    }
+
+    func hidePanel() {
+        panel.orderOut(nil)
+        if let dismissObserver {
+            NotificationCenter.default.removeObserver(dismissObserver)
+            self.dismissObserver = nil
+        }
+    }
+
+    /// Menu bar panels sit just under the bar, centred on their item, and never hang
+    /// off the edge of the screen.
+    private func origin(below anchor: NSRect) -> NSPoint {
+        let screen = statusItem.button?.window?.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? .zero
+        let size = panel.frame.size
+        let margin: CGFloat = 8
+
+        let x = min(
+            max(anchor.midX - size.width / 2, visible.minX + margin),
+            visible.maxX - size.width - margin
+        )
+        return NSPoint(x: x, y: anchor.minY - size.height - 2)
+    }
+
+    /// Menu bar panels close as soon as attention moves elsewhere.
+    private func observeDismissal() {
+        guard dismissObserver == nil else { return }
+        dismissObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hidePanel() }
+        }
+    }
+}
+
+/// A borderless panel that looks like every other menu bar extra.
+///
+/// `NSPopover` was the obvious choice and the wrong one: it always draws an arrow
+/// pointing at its anchor, and nothing else in the menu bar has one.
+private final class MenuBarPanel: NSPanel {
+    init(contentViewController: NSViewController) {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        self.contentViewController = contentViewController
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        level = .popUpMenu
+        isMovable = false
+        isReleasedWhenClosed = false
+        animationBehavior = .utilityWindow
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    }
+
+    // Borderless panels refuse key by default, which would leave the search field
+    // unable to take a keystroke.
+    override var canBecomeKey: Bool { true }
+
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)
     }
 }
