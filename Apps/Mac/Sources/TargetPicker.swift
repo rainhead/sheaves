@@ -4,20 +4,18 @@ import SwiftUI
 /// Type-to-filter list of project/task pairs, driven entirely from the keyboard.
 ///
 /// Shared by the menu bar popover and the quick-entry panel so both behave the same:
-/// type to narrow, arrows to move, ⇥ for notes, ⏎ to start.
+/// type to narrow, arrows to move, ⏎ to start. Notes belong to an entry and are
+/// written on the entry itself, once there is something to annotate.
 struct TargetPicker: View {
     @Environment(TimeTracker.self) private var tracker
 
     var placeholder: String = "Start a timer…"
     var maxVisible: Int = 6
-    var onStart: (TimerTarget, String?) -> Void
+    var onStart: (TimerTarget) -> Void
 
     @State private var query = ""
-    @State private var notes = ""
     @State private var selection = 0
-    @FocusState private var focus: Field?
-
-    private enum Field: Hashable { case search, notes }
+    @FocusState private var isSearchFocused: Bool
 
     private var results: [TimerTarget] {
         Array(tracker.suggestedTargets(matching: query).prefix(40))
@@ -35,10 +33,9 @@ struct TargetPicker: View {
                 emptyState
             } else {
                 resultList
-                notesField
             }
         }
-        .onAppear { focus = .search }
+        .onAppear { isSearchFocused = true }
         .onChange(of: query) { selection = 0 }
     }
 
@@ -50,17 +47,10 @@ struct TargetPicker: View {
                 .textFieldStyle(.plain)
                 .accessibilityLabel("Start a timer")
                 .accessibilityHint("Type to filter projects and tasks")
-                .focused($focus, equals: .search)
+                .focused($isSearchFocused)
                 .onSubmit(start)
                 .onKeyPress(.downArrow) { move(by: 1) }
                 .onKeyPress(.upArrow) { move(by: -1) }
-                .onKeyPress(phases: .down) { press in
-                    // ⌥⇥ jumps to notes as a convenience; plain Tab must still hand
-                    // focus onwards, or the panel becomes a keyboard trap.
-                    guard press.key == .tab, press.modifiers.contains(.option) else { return .ignored }
-                    focus = .notes
-                    return .handled
-                }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -93,18 +83,6 @@ struct TargetPicker: View {
         }
     }
 
-    private var notesField: some View {
-        TextField("Notes (optional)", text: $notes)
-            .textFieldStyle(.plain)
-            .font(.callout)
-            .focused($focus, equals: .notes)
-            .accessibilityLabel("Notes for the new timer")
-            .onSubmit(start)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-    }
-
     private var emptyState: some View {
         Text(tracker.targets.isEmpty ? "No projects yet — sync with Harvest." : "No match for “\(query)”.")
             .font(.callout)
@@ -120,10 +98,8 @@ struct TargetPicker: View {
 
     private func start() {
         guard let selected else { return }
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        onStart(selected, trimmed.isEmpty ? nil : trimmed)
+        onStart(selected)
         query = ""
-        notes = ""
         selection = 0
     }
 }

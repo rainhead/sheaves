@@ -127,8 +127,8 @@ struct QuickEntryView: View {
             if tracker.connection == .needsCredentials {
                 ConnectPrompt()
             } else {
-                TargetPicker(placeholder: "Start a timer…", maxVisible: 5) { target, notes in
-                    Task { await tracker.start(target, notes: notes) }
+                TargetPicker(placeholder: "Start a timer…", maxVisible: 5) { target in
+                    Task { await tracker.start(target) }
                     onDismiss()
                 }
             }

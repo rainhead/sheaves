@@ -23,8 +23,8 @@ struct DayView: View {
                 // the common case, and searching is for the exception.
                 entryList
                 Divider()
-                TargetPicker { target, notes in
-                    Task { await tracker.start(target, notes: notes) }
+                TargetPicker { target in
+                    Task { await tracker.start(target) }
                 }
             }
             Divider()
