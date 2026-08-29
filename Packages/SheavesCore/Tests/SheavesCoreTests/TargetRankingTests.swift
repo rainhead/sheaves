@@ -35,7 +35,7 @@ struct TargetRankingTests {
     @Test("ignores pairs the user has never logged")
     func onlyIncludesUsedTargets() {
         let ranked = TimeTracker.rankByUsage(
-            [entry(project: "Beeline", task: "Programming", daysAgo: 1)],
+            [entry(project: "Acme", task: "Programming", daysAgo: 1)],
             asOf: today
         )
         #expect(ranked.count == 1)
@@ -47,8 +47,8 @@ struct TargetRankingTests {
     @Test("puts a daily habit above a single old entry")
     func habitBeatsOneOffs() throws {
         let entries =
-            (0..<10).map { entry(project: "Beeline", task: "Programming", daysAgo: $0) }
-            + [entry(project: "Beeline", task: "Business Development", daysAgo: 80)]
+            (0..<10).map { entry(project: "Acme", task: "Programming", daysAgo: $0) }
+            + [entry(project: "Acme", task: "Business Development", daysAgo: 80)]
 
         let ranked = TimeTracker.rankByUsage(entries, asOf: today)
 
