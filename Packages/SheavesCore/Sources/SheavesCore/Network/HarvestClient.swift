@@ -70,15 +70,19 @@ public actor HarvestClient {
         return page.items.first
     }
 
-    /// Creates an entry with its timer already running.
+    /// Creates a time entry.
     ///
-    /// Omitting `hours` starts the timer on duration-tracking accounts, and omitting
-    /// `ended_time` does the same on timestamp accounts, so one body covers both.
-    public func startTimeEntry(
+    /// Omitting `hours` starts the timer running: that is what an absent `hours`
+    /// means on duration-tracking accounts, and an absent `ended_time` on timestamp
+    /// accounts, so one body covers both. Passing `hours` creates a stopped entry of
+    /// exactly that length, which is how work done offline is recorded accurately
+    /// rather than being measured from whenever the request happens to arrive.
+    public func createTimeEntry(
         projectID: Int,
         taskID: Int,
         spentDate: CalendarDate = .today(),
-        notes: String? = nil
+        notes: String? = nil,
+        hours: Double? = nil
     ) async throws -> TimeEntry {
         try await send(
             "time_entries",
@@ -87,7 +91,8 @@ public actor HarvestClient {
                 projectId: projectID,
                 taskId: taskID,
                 spentDate: spentDate,
-                notes: notes
+                notes: notes,
+                hours: hours
             )
         )
     }
@@ -201,6 +206,12 @@ public actor HarvestClient {
                 attempt += 1
                 try await Task.sleep(for: .seconds(retryAfter * backoffScale))
             case 500...:
+                // Never retry a POST: the server may have committed the change
+                // before failing, and a second create means a duplicate time entry.
+                // Let the caller decide, with the request left in the queue.
+                guard request.httpMethod != "POST" else {
+                    throw HarvestError.server(status: response.statusCode)
+                }
                 guard attempt < maxRetries else { throw HarvestError.server(status: response.statusCode) }
                 attempt += 1
                 try await Task.sleep(for: .seconds(Double(attempt) * backoffScale))
@@ -213,7 +224,7 @@ public actor HarvestClient {
         }
     }
 
-    private static func retryAfter(from response: HTTPURLResponse) -> TimeInterval {
+    static func retryAfter(from response: HTTPURLResponse) -> TimeInterval {
         let header = response.value(forHTTPHeaderField: "Retry-After")
         return header.flatMap(TimeInterval.init) ?? 15
     }
@@ -294,6 +305,7 @@ private struct CreateTimeEntryPayload: Encodable, Sendable {
     let taskId: Int
     let spentDate: CalendarDate
     var notes: String?
+    var hours: Double?
 }
 
 private struct UpdateTimeEntryPayload: Encodable, Sendable {

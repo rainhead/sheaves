@@ -234,10 +234,23 @@ actor RoutingTransport: HarvestTransport {
         }
     }
 
+    struct Call: Sendable {
+        var method: String
+        var path: String
+        /// Decoded eagerly to keep the type Sendable; only scalars are asserted on.
+        var hours: Double?
+        var notes: String?
+        var projectID: Int?
+        var spentDate: String?
+    }
+
     private let routes: [Route]
     /// When set, every request fails as if the network were gone.
     private var isOffline = false
     private(set) var paths: [String] = []
+    /// Method, path and decoded body of every request, so a test can assert that a
+    /// POST actually happened and with what — not merely that some request did.
+    private(set) var calls: [Call] = []
 
     init(_ routes: [Route]) {
         self.routes = routes
@@ -248,6 +261,18 @@ actor RoutingTransport: HarvestTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = request.url!
         paths.append(url.path())
+        let body = request.httpBody
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        calls.append(
+            Call(
+                method: request.httpMethod ?? "GET",
+                path: url.path(),
+                hours: body["hours"] as? Double,
+                notes: body["notes"] as? String,
+                projectID: body["project_id"] as? Int,
+                spentDate: body["spent_date"] as? String
+            )
+        )
         if isOffline { throw URLError(.notConnectedToInternet) }
         guard let route = routes.first(where: { $0.matches(request) }) else {
             throw HarvestError.notFound
@@ -258,6 +283,22 @@ actor RoutingTransport: HarvestTransport {
 
     func callCount(matching fragment: String) -> Int {
         paths.filter { $0.contains(fragment) }.count
+    }
+
+    func calls(method: String, containing fragment: String) -> [Call] {
+        calls.filter { $0.method == method && $0.path.contains(fragment) }
+    }
+
+    func firstIndex(method: String, containing fragment: String) -> Int? {
+        calls.firstIndex { $0.method == method && $0.path.contains(fragment) }
+    }
+
+    func firstIndex(method: String, excluding fragment: String) -> Int? {
+        calls.firstIndex { $0.method == method && !$0.path.contains(fragment) }
+    }
+
+    func hours(atCall index: Int) -> Double? {
+        calls.indices.contains(index) ? calls[index].hours : nil
     }
 }
 

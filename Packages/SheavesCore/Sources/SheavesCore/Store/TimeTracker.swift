@@ -117,6 +117,10 @@ public final class TimeTracker {
     private var ticker: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var accountDataFetchedAt: Date?
+    /// Set once the user navigates away from today, so the app stops following the
+    /// calendar. Without this, a menu bar app left running for days keeps logging to
+    /// whichever day it happened to launch on.
+    private var isPinnedToDay = false
     private let maxRecents = 12
     /// Read with:
     /// `log show --last 10m --predicate 'subsystem == "com.rainhead.Sheaves"'`
@@ -186,6 +190,7 @@ public final class TimeTracker {
         frequentTargets = []
         lastActiveToday = nil
         accountDataFetchedAt = nil
+        isPinnedToDay = false
         pendingCount = 0
         lastSyncedAt = nil
         connection = .needsCredentials
@@ -199,10 +204,17 @@ public final class TimeTracker {
     /// mutation, and tearing down a drain half way through would report a failure
     /// that never happened.
     public func sync() async {
-        if let inFlight = syncTask {
-            await inFlight.value
+        // Chain, do not merely await. Awaiting the in-flight task lets *every*
+        // waiter past the guard at once, and each then starts its own performSync —
+        // so two drains run concurrently, the queue actor interleaves them at its
+        // await points, and the same mutation is sent twice while the next is
+        // dropped. Building the next task around the previous one, and publishing
+        // it before any suspension, makes the chain genuinely serial.
+        let previous = syncTask
+        let task = Task {
+            await previous?.value
+            await self.performSync()
         }
-        let task = Task { await performSync() }
         syncTask = task
         await task.value
         if syncTask == task { syncTask = nil }
@@ -213,6 +225,7 @@ public final class TimeTracker {
             connection = .needsCredentials
             return
         }
+        advanceDayIfNeeded()
 
         let report = await queue.drain(using: client)
         pendingCount = await queue.count
@@ -300,6 +313,7 @@ public final class TimeTracker {
     }
 
     public func selectDay(_ newDay: CalendarDate) async {
+        isPinnedToDay = newDay != .today()
         guard newDay != day else { return }
         day = newDay
         entries = []
@@ -341,7 +355,16 @@ public final class TimeTracker {
         noteRecent(target)
         noteLastActivity()
         restartClock()
-        await enqueue(.start(local: local, target: target, spentDate: day, notes: notes))
+        await enqueue(
+            .create(
+                local: local,
+                target: target,
+                spentDate: day,
+                notes: notes,
+                startedAt: Date(),
+                endedAt: nil
+            )
+        )
     }
 
     public func resume(_ entry: TrackedEntry) async {
@@ -355,20 +378,37 @@ public final class TimeTracker {
         noteRecent(entry.target)
         noteLastActivity()
         restartClock()
-        await enqueue(.restart(entry.id))
+
+        // A timer that has not reached Harvest yet is resumed by amending its
+        // queued create, not by queueing a restart of an entry that does not exist.
+        if case .local(let uuid) = entry.id, await queue.amendCreate(local: uuid, endedAt: nil) {
+            await queueChanged()
+            return
+        }
+        await enqueue(.restart(entry.id, resumedAt: Date(), bankedHours: entry.bankedHours))
     }
 
     public func stop(_ entry: TrackedEntry) async {
         guard entry.isRunning else { return }
+        let stoppedAt = Date()
+        // The total measured here is authoritative; Harvest's own stop timing is not,
+        // because the request may not reach it for hours.
+        let hours = entry.hours(asOf: stoppedAt)
         mutateLocally(entry.id) {
-            $0.bankedHours = $0.hours(asOf: Date())
+            $0.bankedHours = hours
             $0.isRunning = false
             $0.timerStartedAt = nil
             $0.isPending = true
         }
         noteLastActivity()
         restartClock()
-        await enqueue(.stop(entry.id))
+
+        if case .local(let uuid) = entry.id,
+           await queue.amendCreate(local: uuid, endedAt: stoppedAt) {
+            await queueChanged()
+            return
+        }
+        await enqueue(.stop(entry.id, hours: hours))
     }
 
     public func toggle(_ entry: TrackedEntry) async {
@@ -411,6 +451,10 @@ public final class TimeTracker {
 
     private func enqueue(_ mutation: Mutation) async {
         await queue.enqueue(mutation)
+        await queueChanged()
+    }
+
+    private func queueChanged() async {
         pendingCount = await queue.count
         saveSnapshot()
         await sync()
@@ -436,6 +480,16 @@ public final class TimeTracker {
         if recentTargets.count > maxRecents {
             recentTargets.removeLast(recentTargets.count - maxRecents)
         }
+    }
+
+    /// Rolls the visible day over at midnight, unless the user is deliberately
+    /// looking at another day.
+    private func advanceDayIfNeeded() {
+        let today = CalendarDate.today()
+        guard !isPinnedToDay, day != today else { return }
+        day = today
+        entries = []
+        lastActiveToday = nil
     }
 
     /// Remembers the most recent thing worked on today, for the menu bar.
@@ -528,6 +582,9 @@ public final class TimeTracker {
                 try? await Task.sleep(for: interval)
                 guard let self else { return }
                 self.now = Date()
+                if !self.isPinnedToDay, self.day != CalendarDate.today() {
+                    Task { await self.sync() }
+                }
             }
         }
     }

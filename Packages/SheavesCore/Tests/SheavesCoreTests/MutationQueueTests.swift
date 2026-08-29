@@ -24,11 +24,12 @@ struct MutationQueueTests {
         let transport = StubTransport([
             .init(body: Fixture.timeEntry),
             .init(body: Fixture.timeEntry),
+            .init(body: Fixture.timeEntry),
         ])
         let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
 
         await queue.enqueue(.update(.server(636709355), notes: "first", hours: nil))
-        await queue.enqueue(.stop(.server(636709355)))
+        await queue.enqueue(.stop(.server(636709355), hours: 1))
         let report = await queue.drain(using: client)
 
         #expect(report.applied == 2)
@@ -46,14 +47,18 @@ struct MutationQueueTests {
         defer { try? FileManager.default.removeItem(at: file) }
         let queue = MutationQueue(fileURL: file)
         let transport = StubTransport([
-            .init(status: 201, body: Fixture.runningTimeEntry),
-            .init(body: Fixture.timeEntry),
+            .init(status: 201, body: Fixture.runningTimeEntry),  // create
+            .init(body: Fixture.timeEntry),                      // stop
+            .init(body: Fixture.timeEntry),                      // hours correction
         ])
         let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
 
         let local = UUID()
-        await queue.enqueue(.start(local: local, target: target, spentDate: .today(), notes: nil))
-        await queue.enqueue(.stop(.local(local)))
+        await queue.enqueue(
+            .create(local: local, target: target, spentDate: .today(), notes: nil,
+                    startedAt: Date(), endedAt: Date())
+        )
+        await queue.enqueue(.stop(.local(local), hours: 0.5))
         let report = await queue.drain(using: client)
 
         #expect(report.applied == 2)
@@ -75,8 +80,8 @@ struct MutationQueueTests {
         ])
         let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
 
-        await queue.enqueue(.stop(.server(1)))
-        await queue.enqueue(.stop(.server(2)))
+        await queue.enqueue(.stop(.server(1), hours: 1))
+        await queue.enqueue(.stop(.server(2), hours: 1))
         let report = await queue.drain(using: client)
 
         #expect(report.applied == 0)
@@ -94,11 +99,12 @@ struct MutationQueueTests {
         let transport = StubTransport([
             .init(status: 422, body: #"{"message": "Time entry is locked."}"#),
             .init(body: Fixture.timeEntry),
+            .init(body: Fixture.timeEntry),
         ])
         let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
 
         await queue.enqueue(.update(.server(1), notes: "nope", hours: nil))
-        await queue.enqueue(.stop(.server(2)))
+        await queue.enqueue(.stop(.server(2), hours: 1))
         let report = await queue.drain(using: client)
 
         #expect(report.applied == 1)
@@ -112,7 +118,7 @@ struct MutationQueueTests {
         defer { try? FileManager.default.removeItem(at: file) }
 
         let first = MutationQueue(fileURL: file)
-        await first.enqueue(.stop(.server(636709355)))
+        await first.enqueue(.stop(.server(636709355), hours: 1))
         #expect(await first.count == 1)
 
         let reopened = MutationQueue(fileURL: file)

@@ -1,10 +1,28 @@
 import Foundation
 
 /// A change the user made locally that Harvest has not accepted yet.
+///
+/// Every case that affects elapsed time carries the time itself, not just the
+/// command. Harvest's `/stop` banks time up to the moment the request *arrives*,
+/// and a create starts its timer when it arrives too — so replaying bare commands
+/// after a spell offline silently destroys or invents hours. Recording when the
+/// user actually acted, and sending explicit hours, keeps the entry honest however
+/// late the request lands.
 public enum Mutation: Codable, Sendable, Hashable {
-    case start(local: UUID, target: TimerTarget, spentDate: CalendarDate, notes: String?)
-    case stop(TrackedEntry.ID)
-    case restart(TrackedEntry.ID)
+    /// `endedAt == nil` means the timer was still running when this was queued; the
+    /// entry is created with the elapsed time so far and then resumed.
+    case create(
+        local: UUID,
+        target: TimerTarget,
+        spentDate: CalendarDate,
+        notes: String?,
+        startedAt: Date,
+        endedAt: Date?
+    )
+    /// `hours` is the total measured locally when the user stopped the timer.
+    case stop(TrackedEntry.ID, hours: Double)
+    /// `bankedHours` is the total before resuming; `resumedAt` is when the user did.
+    case restart(TrackedEntry.ID, resumedAt: Date, bankedHours: Double)
     case update(TrackedEntry.ID, notes: String?, hours: Double?)
     case delete(TrackedEntry.ID)
 
@@ -12,17 +30,19 @@ public enum Mutation: Codable, Sendable, Hashable {
     /// the create that minted them has landed.
     var subject: TrackedEntry.ID {
         switch self {
-        case .start(let local, _, _, _): .local(local)
-        case .stop(let id), .restart(let id), .delete(let id): id
+        case .create(let local, _, _, _, _, _): .local(local)
+        case .stop(let id, _): id
+        case .restart(let id, _, _): id
         case .update(let id, _, _): id
+        case .delete(let id): id
         }
     }
 
     func retargeted(to id: TrackedEntry.ID) -> Mutation {
         switch self {
-        case .start: self
-        case .stop: .stop(id)
-        case .restart: .restart(id)
+        case .create: self
+        case .stop(_, let hours): .stop(id, hours: hours)
+        case .restart(_, let resumedAt, let banked): .restart(id, resumedAt: resumedAt, bankedHours: banked)
         case .update(_, let notes, let hours): .update(id, notes: notes, hours: hours)
         case .delete: .delete(id)
         }
@@ -49,6 +69,7 @@ public struct DrainReport: Sendable {
 /// otherwise a single bad change would wedge every later one forever.
 public actor MutationQueue {
     private var pending: [Mutation] = []
+    private var isDraining = false
     private let fileURL: URL
 
     public init(fileURL: URL) {
@@ -80,11 +101,19 @@ public actor MutationQueue {
 
     /// Sends queued mutations to Harvest in order, stopping at the first retryable failure.
     public func drain(using client: HarvestClient) async -> DrainReport {
+        // The loop awaits the network, so an actor lets a second caller in partway
+        // through. Two drains would read the same `pending.first`, send it twice,
+        // and then each remove one entry — duplicating a mutation and losing its
+        // successor.
+        guard !isDraining else { return DrainReport() }
+        isDraining = true
+        defer { isDraining = false }
+
         var report = DrainReport()
 
         while let mutation = pending.first {
             do {
-                if case .start(let local, _, _, _) = mutation {
+                if case .create(let local, _, _, _, _, _) = mutation {
                     let entry = try await apply(mutation, using: client)
                     // Later queued changes still point at the placeholder id; repoint them.
                     if let entry {
@@ -117,27 +146,74 @@ public actor MutationQueue {
 
     private func apply(_ mutation: Mutation, using client: HarvestClient) async throws -> TimeEntry? {
         switch mutation {
-        case .start(_, let target, let spentDate, let notes):
-            return try await client.startTimeEntry(
+        case .create(_, let target, let spentDate, let notes, let startedAt, let endedAt):
+            // Measure from when the user started, not from now.
+            let finish = endedAt ?? Date()
+            let hours = max(0, finish.timeIntervalSince(startedAt)) / 3600
+            let entry = try await client.createTimeEntry(
                 projectID: target.project.id,
                 taskID: target.task.id,
                 spentDate: spentDate,
-                notes: notes
+                notes: notes,
+                hours: hours
             )
-        case .stop(let id):
+            guard endedAt == nil else { return entry }
+            // Still running: the entry now holds the offline time, so resume it and
+            // let Harvest count onwards from here.
+            return try await client.restartTimeEntry(id: entry.id)
+
+        case .stop(let id, let hours):
             guard let serverID = id.serverID else { throw HarvestError.notFound }
-            return try await client.stopTimeEntry(id: serverID)
-        case .restart(let id):
+            do {
+                _ = try await client.stopTimeEntry(id: serverID)
+            } catch HarvestError.rejected {
+                // Already stopped server-side — the hours still need correcting.
+            }
+            return try await client.updateTimeEntry(id: serverID, hours: hours)
+
+        case .restart(let id, let resumedAt, let bankedHours):
             guard let serverID = id.serverID else { throw HarvestError.notFound }
+            let offline = max(0, Date().timeIntervalSince(resumedAt)) / 3600
+            if offline > 1.0 / 3600 {
+                // Bank the time it ran offline *before* resuming, so the total is
+                // never patched while the timer is live.
+                _ = try await client.updateTimeEntry(id: serverID, hours: bankedHours + offline)
+            }
             return try await client.restartTimeEntry(id: serverID)
+
         case .update(let id, let notes, let hours):
             guard let serverID = id.serverID else { throw HarvestError.notFound }
             return try await client.updateTimeEntry(id: serverID, notes: notes, hours: hours)
+
         case .delete(let id):
             guard let serverID = id.serverID else { throw HarvestError.notFound }
             try await client.deleteTimeEntry(id: serverID)
             return nil
         }
+    }
+
+    /// Marks a queued create as finished (or running again) without adding a second
+    /// mutation, for a timer started and stopped before the queue ever drained.
+    /// Returns false when no such create is pending.
+    public func amendCreate(local: UUID, endedAt: Date?) -> Bool {
+        let match = pending.firstIndex { mutation in
+            if case .create(let id, _, _, _, _, _) = mutation { return id == local }
+            return false
+        }
+        guard let index = match,
+              case .create(let id, let target, let date, let notes, let startedAt, _) = pending[index]
+        else { return false }
+
+        pending[index] = .create(
+            local: id,
+            target: target,
+            spentDate: date,
+            notes: notes,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+        persist()
+        return true
     }
 
     private func rewrite(local: UUID, to id: TrackedEntry.ID) {

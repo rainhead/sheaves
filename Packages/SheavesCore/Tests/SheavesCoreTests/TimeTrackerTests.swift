@@ -92,7 +92,11 @@ struct TimeTrackerTests {
         // Nothing is left owing, and no local placeholder survives the refresh.
         #expect(tracker.pendingCount == 0)
         #expect(tracker.entries.allSatisfy { $0.id.serverID != nil })
-        #expect(await transport.callCount(matching: "time_entries") > 0)
+        // Assert the create actually happened. Counting requests would pass even if
+        // the mutation had been silently discarded, since every sync issues GETs.
+        let creates = await transport.calls(method: "POST", containing: "time_entries")
+        #expect(creates.count == 1)
+        #expect(creates.first?.projectID == target.project.id)
     }
 
     /// Harvest allows one running timer per user; the UI must not imply otherwise.
@@ -182,7 +186,9 @@ struct TimeTrackerTests {
         await recovered.sync()
 
         #expect(recovered.pendingCount == 0)
-        #expect(await reconnected.callCount(matching: "time_entries") > 0)
+        // The queued start must have been *sent*, not dropped: pendingCount reaching
+        // zero is also what discarding it would look like.
+        #expect(await reconnected.calls(method: "POST", containing: "time_entries").count == 1)
     }
 
     @Test("changing the visible day reloads it")

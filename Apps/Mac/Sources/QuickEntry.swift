@@ -67,7 +67,14 @@ final class QuickEntryController {
     }
 
     private func centre(_ panel: NSPanel) {
-        guard let screen = NSScreen.main?.visibleFrame else { return }
+        // Not NSScreen.main: that is the screen holding the *key window*, and this
+        // app has none when the hotkey fires from another app — so it falls back to
+        // the primary display and the panel opens on the wrong monitor. The pointer
+        // is the best available signal for where the user is working.
+        let pointer = NSEvent.mouseLocation
+        let target = NSScreen.screens.first { $0.frame.contains(pointer) }
+            ?? NSScreen.main
+        guard let screen = target?.visibleFrame else { return }
         let size = panel.frame.size
         panel.setFrameOrigin(
             NSPoint(

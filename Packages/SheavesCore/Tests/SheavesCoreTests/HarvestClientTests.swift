@@ -155,7 +155,7 @@ struct HarvestClientTests {
         let transport = StubTransport(status: 201, body: Fixture.runningTimeEntry)
         let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
 
-        _ = try await client.startTimeEntry(
+        _ = try await client.createTimeEntry(
             projectID: 14308069,
             taskID: 8083366,
             spentDate: CalendarDate(year: 2026, month: 8, day: 29),
@@ -174,6 +174,37 @@ struct HarvestClientTests {
         // accounts and timestamp accounts alike.
         #expect(json["hours"] == nil)
         #expect(json["ended_time"] == nil)
+    }
+
+    /// Work done offline is recorded as an explicit length, so it does not depend on
+    /// when the request happens to arrive.
+    @Test("creates a finished entry of an exact length when given hours")
+    func createsWithExplicitHours() async throws {
+        let transport = StubTransport(status: 201, body: Fixture.timeEntry)
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+
+        _ = try await client.createTimeEntry(
+            projectID: 1, taskID: 2, spentDate: Fixture.today, hours: 0.5
+        )
+
+        let body = try #require(await transport.request(at: 0).httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["hours"] as? Double == 0.5)
+    }
+
+    /// A POST may have committed before the server failed; sending it again would
+    /// create a second time entry.
+    @Test("never retries a failed POST")
+    func doesNotRetryPost() async throws {
+        let transport = StubTransport(
+            Array(repeating: StubTransport.Response(status: 500, body: ""), count: 4)
+        )
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+
+        await #expect(throws: HarvestError.server(status: 500)) {
+            _ = try await client.createTimeEntry(projectID: 1, taskID: 2)
+        }
+        #expect(await transport.requestCount == 1)
     }
 
     @Test("stops and restarts through the dedicated endpoints")
