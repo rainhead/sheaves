@@ -17,7 +17,12 @@ final class StatusItemController {
     private let statusItem: NSStatusItem
     private let panel: MenuBarPanel
     private let content: NSHostingController<AnyView>
-    private var dismissObserver: (any NSObjectProtocol)?
+    private var dismissObservers: [any NSObjectProtocol] = []
+    private var globalClickMonitor: Any?
+    /// Clicking the status item makes it key, which can close the panel a moment
+    /// before the click action runs — without this the item would reopen what the
+    /// same click just dismissed.
+    private var lastHiddenAt = Date.distantPast
 
     /// Width of the leading icon, and so of the region that toggles the timer.
     private let iconRegionWidth: CGFloat = 24
@@ -146,6 +151,7 @@ final class StatusItemController {
     }
 
     private func showPanel() {
+        guard Date().timeIntervalSince(lastHiddenAt) > 0.2 else { return }
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
 
         // Size before positioning: the panel hangs from the menu bar downwards, so
@@ -163,16 +169,15 @@ final class StatusItemController {
         // key input — the search field would swallow every keystroke.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        observeDismissal()
+        installDismissWatchers()
         Task { await tracker.sync() }
     }
 
     func hidePanel() {
+        guard panel.isVisible else { return }
         panel.orderOut(nil)
-        if let dismissObserver {
-            NotificationCenter.default.removeObserver(dismissObserver)
-            self.dismissObserver = nil
-        }
+        lastHiddenAt = Date()
+        removeDismissWatchers()
     }
 
     /// Menu bar panels sit just under the bar, centred on their item, and never hang
@@ -190,15 +195,56 @@ final class StatusItemController {
         return NSPoint(x: x, y: anchor.minY - size.height - 2)
     }
 
-    /// Menu bar panels close as soon as attention moves elsewhere.
-    private func observeDismissal() {
-        guard dismissObserver == nil else { return }
-        dismissObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification,
-            object: panel,
-            queue: .main
-        ) { [weak self] _ in
+    /// Menu bar panels close as soon as attention moves anywhere else.
+    ///
+    /// Losing key focus is not enough on its own: another app's menu bar menu opens
+    /// inside its own event loop, and this panel never resigns key while that
+    /// happens. HIToolbox broadcasts menu tracking system-wide, which covers those;
+    /// a global click monitor covers menu bar extras that are panels rather than
+    /// menus, since those produce an ordinary mouse-down in another process.
+    private func installDismissWatchers() {
+        guard dismissObservers.isEmpty else { return }
+        let close: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated { self?.hidePanel() }
+        }
+
+        dismissObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: panel, queue: .main, using: close
+            )
+        )
+        dismissObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main, using: close
+            )
+        )
+        dismissObservers.append(
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("com.apple.HIToolbox.beginMenuTrackingNotification"),
+                object: nil,
+                queue: .main,
+                using: close
+            )
+        )
+
+        // Global monitors see only other applications' events, so clicking inside
+        // this panel or on the status item does not trip it.
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in self?.hidePanel() }
+        }
+    }
+
+    private func removeDismissWatchers() {
+        for observer in dismissObservers {
+            NotificationCenter.default.removeObserver(observer)
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+        dismissObservers.removeAll()
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
         }
     }
 }
