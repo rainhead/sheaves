@@ -15,12 +15,17 @@ struct DayView: View {
                 ConnectPrompt()
             } else {
                 header
+                if case .offline(let reason) = tracker.connection {
+                    FailureBanner(reason: reason)
+                }
+                Divider()
+                // Today's entries come first: resuming something already started is
+                // the common case, and searching is for the exception.
+                entryList
                 Divider()
                 TargetPicker { target, notes in
                     Task { await tracker.start(target, notes: notes) }
                 }
-                Divider()
-                entryList
             }
             Divider()
             footer
@@ -70,20 +75,19 @@ struct DayView: View {
     @ViewBuilder
     private var entryList: some View {
         if tracker.entries.isEmpty {
-            Text("Nothing tracked \(tracker.isToday ? "yet today" : "on this day").")
+            Text(tracker.isToday ? "Nothing tracked yet today." : "Nothing tracked on this day.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 12)
+                .padding(.vertical, 10)
         } else {
-            ScrollView {
+            SizedScrollView(maxHeight: 260) {
                 LazyVStack(spacing: 2) {
                     ForEach(tracker.entries) { entry in
                         EntryRow(entry: entry, format: format)
                     }
                 }
             }
-            .frame(maxHeight: 260)
         }
     }
 
@@ -113,6 +117,26 @@ struct DayView: View {
     private var dayTitle: String {
         if tracker.isToday { return "Today" }
         return tracker.day.startOfDay().formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+}
+
+/// A sync failure the user can actually read. The status dot alone is too quiet
+/// when the list is empty, because an empty day and a failed load look identical.
+struct FailureBanner: View {
+    let reason: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(reason)
+                .font(.caption)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -153,6 +177,10 @@ struct SyncStatusLabel: View {
         case .online:
             if tracker.pendingCount > 0 { return "Syncing \(tracker.pendingCount)…" }
             guard let synced = tracker.lastSyncedAt else { return "Synced" }
+            // Reading `now` keeps this label live; the relative formatter renders a
+            // just-finished sync as "in 0 seconds", which reads like the future.
+            let elapsed = tracker.now.timeIntervalSince(synced)
+            guard elapsed >= 45 else { return "Synced just now" }
             return "Synced \(synced.formatted(.relative(presentation: .numeric)))"
         }
     }

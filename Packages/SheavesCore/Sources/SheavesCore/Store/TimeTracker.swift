@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// The application's model: what is on the clock, what happened today, and what
 /// Sheaves still owes Harvest.
@@ -66,6 +67,9 @@ public final class TimeTracker {
     private var syncTask: Task<Void, Never>?
     private var accountDataFetchedAt: Date?
     private let maxRecents = 12
+    /// Read with:
+    /// `log show --last 10m --predicate 'subsystem == "com.rainhead.Sheaves"'`
+    private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "sync")
     private static let accountDataLifetime: TimeInterval = 600
 
     public init(
@@ -185,14 +189,19 @@ public final class TimeTracker {
             self.connection = .online
             pruneRecents()
             saveSnapshot()
+            Self.log.info(
+                "sync ok: \(self.entries.count, privacy: .public) entries, \(self.targets.count, privacy: .public) targets on \(self.day.description, privacy: .public)"
+            )
         } catch is CancellationError {
             // Shutting down or superseded; the queue is persisted, so nothing is lost.
             return
         } catch let error as HarvestError {
+            Self.log.error("sync failed: \(error.localizedDescription, privacy: .public)")
             connection = error.isTransient
                 ? .offline(reason: error.localizedDescription)
                 : (error == .unauthorized ? .needsCredentials : .offline(reason: error.localizedDescription))
         } catch {
+            Self.log.error("sync failed: \(error.localizedDescription, privacy: .public)")
             connection = .offline(reason: error.localizedDescription)
         }
     }
@@ -206,8 +215,12 @@ public final class TimeTracker {
         async let company = client.company()
         async let assignments = client.projectAssignments()
         self.company = try await company
-        self.targets = try await assignments.timerTargets()
+        let fetched = try await assignments
+        self.targets = fetched.timerTargets()
         accountDataFetchedAt = Date()
+        Self.log.info(
+            "account data: \(fetched.count, privacy: .public) assignments -> \(self.targets.count, privacy: .public) active targets"
+        )
     }
 
     /// A timer started on another day still belongs in the menu bar, so it is folded
@@ -396,7 +409,11 @@ public final class TimeTracker {
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+                // A running timer needs a second-by-second clock. Idle, the only
+                // thing `now` drives is the "synced N minutes ago" label, and
+                // redrawing the menu bar every second all day to serve that is waste.
+                let interval: Duration = self?.runningEntry == nil ? .seconds(15) : .seconds(1)
+                try? await Task.sleep(for: interval)
                 guard let self else { return }
                 self.now = Date()
             }

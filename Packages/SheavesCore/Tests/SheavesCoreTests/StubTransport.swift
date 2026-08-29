@@ -214,23 +214,42 @@ enum Fixture {
     """
 }
 
-/// A transport that answers by URL path rather than call order.
+/// A transport that answers by HTTP method and URL path rather than call order.
 ///
 /// `TimeTracker` fires several requests concurrently with `async let`, so their
 /// arrival order is not fixed and an ordered stub would hand back the wrong bodies.
+/// Matching the method matters too: `POST /time_entries` and `GET /time_entries`
+/// return quite different shapes, and conflating them once made a test pass for the
+/// wrong reason.
 actor RoutingTransport: HarvestTransport {
-    /// Path fragment → response body. First match wins.
-    private var routes: [(fragment: String, body: String, status: Int)]
+    struct Route {
+        var method: String?
+        var fragment: String
+        var body: String
+        var status: Int = 200
+
+        func matches(_ request: URLRequest) -> Bool {
+            if let method, method != request.httpMethod { return false }
+            return request.url?.absoluteString.contains(fragment) == true
+        }
+    }
+
+    private let routes: [Route]
+    /// When set, every request fails as if the network were gone.
+    private var isOffline = false
     private(set) var paths: [String] = []
 
-    init(_ routes: [(String, String)]) {
-        self.routes = routes.map { ($0.0, $0.1, 200) }
+    init(_ routes: [Route]) {
+        self.routes = routes
     }
+
+    func goOffline() { isOffline = true }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = request.url!
         paths.append(url.path())
-        guard let route = routes.first(where: { url.absoluteString.contains($0.fragment) }) else {
+        if isOffline { throw URLError(.notConnectedToInternet) }
+        guard let route = routes.first(where: { $0.matches(request) }) else {
             throw HarvestError.notFound
         }
         let http = HTTPURLResponse(url: url, statusCode: route.status, httpVersion: "HTTP/1.1", headerFields: nil)!
@@ -243,14 +262,29 @@ actor RoutingTransport: HarvestTransport {
 }
 
 extension RoutingTransport {
-    /// A fully working account: one stopped entry, one project with one active task.
+    /// A working account: one project with one active task, plus writable timers.
     static func standardAccount(entries: [String] = [Fixture.timeEntry]) -> RoutingTransport {
         RoutingTransport([
-            ("users/me/project_assignments", Fixture.projectAssignmentsPage),
-            ("users/me", Fixture.currentUser),
-            ("company", Fixture.company),
-            ("is_running=true", Fixture.timeEntriesPage([])),
-            ("time_entries", Fixture.timeEntriesPage(entries)),
+            Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
+            Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
+            Route(method: "GET", fragment: "company", body: Fixture.company),
+            Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),
+            Route(method: "PATCH", fragment: "/restart", body: Fixture.runningTimeEntry),
+            Route(method: "POST", fragment: "time_entries", body: Fixture.runningTimeEntry, status: 201),
+            Route(method: "GET", fragment: "is_running=true", body: Fixture.timeEntriesPage([])),
+            Route(method: "GET", fragment: "time_entries", body: Fixture.timeEntriesPage(entries)),
+        ])
+    }
+
+    /// The same account, but with a timer already running.
+    static func accountWithRunningTimer() -> RoutingTransport {
+        let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
+        return RoutingTransport([
+            Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
+            Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
+            Route(method: "GET", fragment: "company", body: Fixture.company),
+            Route(method: "GET", fragment: "is_running=true", body: running),
+            Route(method: "GET", fragment: "time_entries", body: running),
         ])
     }
 }

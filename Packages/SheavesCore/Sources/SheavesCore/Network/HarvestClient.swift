@@ -129,7 +129,7 @@ public actor HarvestClient {
 
     private func get<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         let data = try await perform(request(path: path, query: query))
-        return try Self.decode(T.self, from: data)
+        return try Self.decode(T.self, from: data, endpoint: path)
     }
 
     private func getAllPages<Item: PaginatedItem>(
@@ -159,7 +159,7 @@ public actor HarvestClient {
         request.httpBody = try Self.encoder.encode(body)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let data = try await perform(request)
-        return try Self.decode(T.self, from: data)
+        return try Self.decode(T.self, from: data, endpoint: path)
     }
 
     private func request(path: String, method: String = "GET", query: [String: String] = [:]) throws -> URLRequest {
@@ -255,11 +255,32 @@ public actor HarvestClient {
 
 
 
-    private static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    private static func decode<T: Decodable>(_ type: T.Type, from data: Data, endpoint: String) throws -> T {
         do {
             return try decoder.decode(type, from: data)
         } catch {
-            throw HarvestError.invalidResponse
+            throw HarvestError.decoding(endpoint: endpoint, detail: describe(error))
+        }
+    }
+
+    /// Turns a `DecodingError` into something that names the offending field.
+    /// The default description is a wall of text that omits the path.
+    private static func describe(_ error: any Error) -> String {
+        func path(_ context: DecodingError.Context) -> String {
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return path.isEmpty ? "the top level" : path
+        }
+        switch error {
+        case let DecodingError.keyNotFound(key, context):
+            return "missing field ‘\(key.stringValue)’ at \(path(context))"
+        case let DecodingError.typeMismatch(type, context):
+            return "expected \(type) at \(path(context))"
+        case let DecodingError.valueNotFound(type, context):
+            return "unexpected null \(type) at \(path(context))"
+        case let DecodingError.dataCorrupted(context):
+            return "\(context.debugDescription) at \(path(context))"
+        default:
+            return String(describing: error)
         }
     }
 }

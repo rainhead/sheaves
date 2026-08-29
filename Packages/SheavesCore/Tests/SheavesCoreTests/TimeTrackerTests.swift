@@ -56,15 +56,17 @@ struct TimeTrackerTests {
         #expect(await transport.callCount(matching: "time_entries") == 6)
     }
 
-    @Test("shows a started timer before Harvest has confirmed it")
+    /// The whole point of the local-first model: the timer shows up even though
+    /// Harvest never hears about it.
+    @Test("shows a started timer while Harvest is unreachable")
     func startIsOptimistic() async throws {
         let transport = RoutingTransport.standardAccount()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         let target = try #require(tracker.targets.first)
+        await transport.goOffline()
 
-        // Nothing answers POST /time_entries here, so the create cannot succeed.
         await tracker.start(target, notes: "spike")
 
         let running = try #require(tracker.runningEntry)
@@ -73,24 +75,35 @@ struct TimeTrackerTests {
         #expect(running.isPending)
         #expect(running.id.serverID == nil)
         #expect(tracker.recentTargets.first?.id == target.id)
+        #expect(tracker.pendingCount == 1)
+    }
+
+    @Test("adopts Harvest's id once the create lands")
+    func startReconcilesWithServer() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+
+        await tracker.start(target)
+
+        // Nothing is left owing, and no local placeholder survives the refresh.
+        #expect(tracker.pendingCount == 0)
+        #expect(tracker.entries.allSatisfy { $0.id.serverID != nil })
+        #expect(await transport.callCount(matching: "time_entries") > 0)
     }
 
     /// Harvest allows one running timer per user; the UI must not imply otherwise.
     @Test("never shows two timers running at once")
     func startStopsThePreviousTimer() async throws {
-        let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
-        let transport = RoutingTransport([
-            ("users/me/project_assignments", Fixture.projectAssignmentsPage),
-            ("users/me", Fixture.currentUser),
-            ("company", Fixture.company),
-            ("is_running=true", running),
-            ("time_entries", running),
-        ])
+        let transport = RoutingTransport.accountWithRunningTimer()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         #expect(tracker.runningEntry != nil)
         let target = try #require(tracker.targets.first)
+        await transport.goOffline()
 
         await tracker.start(target)
 
@@ -100,18 +113,12 @@ struct TimeTrackerTests {
 
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
-        let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
-        let transport = RoutingTransport([
-            ("users/me/project_assignments", Fixture.projectAssignmentsPage),
-            ("users/me", Fixture.currentUser),
-            ("company", Fixture.company),
-            ("is_running=true", running),
-            ("time_entries", running),
-        ])
+        let transport = RoutingTransport.accountWithRunningTimer()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         let entry = try #require(tracker.runningEntry)
+        await transport.goOffline()
 
         await tracker.stop(entry)
 
@@ -124,14 +131,13 @@ struct TimeTrackerTests {
 
     @Test("resumes an existing entry rather than creating a duplicate")
     func startResumesMatchingEntry() async throws {
-        // The stopped fixture entry is Graphic Design on Marketing Website; the only
-        // available target is Graphic Design on Online Store, so they must not match.
         let transport = RoutingTransport.standardAccount()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         let existing = try #require(tracker.entries.first)
         let before = tracker.entries.count
+        await transport.goOffline()
 
         await tracker.start(existing.target)
 
@@ -152,18 +158,30 @@ struct TimeTrackerTests {
         }
     }
 
-    @Test("queues changes it could not deliver")
+    @Test("queues changes it could not deliver, and sends them on reconnect")
     func queuesUndeliverableChanges() async throws {
         let transport = RoutingTransport.standardAccount()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         let target = try #require(tracker.targets.first)
+        await transport.goOffline()
 
-        // POST /time_entries has no route, so the create is refused and retained.
         await tracker.start(target)
+        #expect(tracker.pendingCount == 1)
 
-        #expect(tracker.pendingCount >= 1)
+        // A queue that never drains would make offline support a lie.
+        let reconnected = RoutingTransport.standardAccount()
+        let recovered = TimeTracker(
+            client: HarvestClient(credentials: Fixture.credentials, transport: reconnected, backoffScale: 0),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshot),
+            queue: MutationQueue(fileURL: queue)
+        )
+        await recovered.sync()
+
+        #expect(recovered.pendingCount == 0)
+        #expect(await reconnected.callCount(matching: "time_entries") > 0)
     }
 
     @Test("changing the visible day reloads it")
@@ -190,6 +208,24 @@ struct TimeTrackerTests {
         await tracker.sync()
 
         #expect(tracker.totalHours == 2.11)
+    }
+
+    @Test("says which field it could not read")
+    func reportsDecodingFailures() async throws {
+        let transport = RoutingTransport([
+            RoutingTransport.Route(method: "GET", fragment: "users/me", body: #"{"id": 1}"#)
+        ])
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        guard case .offline(let reason) = tracker.connection else {
+            Issue.record("expected an offline connection state, got \(tracker.connection)")
+            return
+        }
+        #expect(reason.contains("firstName"))
+        #expect(reason.contains("users/me"))
     }
 
     @Test("filters targets by fuzzy query")

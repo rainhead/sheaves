@@ -11,7 +11,11 @@ public enum HarvestError: Error, Sendable, Equatable {
     /// 422 and friends; `message` is Harvest's own explanation where it gave one.
     case rejected(status: Int, message: String)
     case server(status: Int)
+    /// The response was not HTTP at all.
     case invalidResponse
+    /// The response was well-formed HTTP that did not match the expected shape.
+    /// `detail` names the field and path, which is the whole point of the case.
+    case decoding(endpoint: String, detail: String)
 }
 
 extension HarvestError: LocalizedError {
@@ -31,6 +35,8 @@ extension HarvestError: LocalizedError {
             "Harvest returned an error (\(status)). Try again shortly."
         case .invalidResponse:
             "Harvest returned something Sheaves couldn’t read."
+        case .decoding(let endpoint, let detail):
+            "Couldn’t read Harvest’s \(endpoint) response: \(detail)"
         }
     }
 
@@ -38,7 +44,9 @@ extension HarvestError: LocalizedError {
     public var isTransient: Bool {
         switch self {
         case .rateLimited, .server, .invalidResponse: true
-        case .notConfigured, .unauthorized, .notFound, .rejected: false
+        // Retrying cannot change a response shape, and for a queued write the change
+        // already landed — only reading the reply failed.
+        case .notConfigured, .unauthorized, .notFound, .rejected, .decoding: false
         }
     }
 }

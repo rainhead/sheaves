@@ -64,7 +64,7 @@ struct TargetPicker: View {
 
     private var resultList: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            SizedScrollView(maxHeight: CGFloat(maxVisible) * 36) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, target in
                         TargetRow(target: target, isSelected: index == selection)
@@ -77,7 +77,6 @@ struct TargetPicker: View {
                     }
                 }
             }
-            .frame(maxHeight: CGFloat(maxVisible) * 34)
             .onChange(of: selection) {
                 guard let target = selected else { return }
                 withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(target.id) }
