@@ -16,6 +16,7 @@ final class StatusItemController {
     private let openSettings: @MainActor () -> Void
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
+    private let content: NSHostingController<AnyView>
 
     /// Width of the leading icon, and so of the region that toggles the timer.
     private let iconRegionWidth: CGFloat = 24
@@ -25,13 +26,20 @@ final class StatusItemController {
         self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
+        content = NSHostingController(
+            rootView: AnyView(
+                DayView()
+                    .environment(tracker)
+                    .environment(\.openSettingsWindow, openSettings)
+            )
+        )
+        // Let the hosting controller drive the popover's size as SwiftUI's layout
+        // settles, rather than the popover keeping whatever size it was created with.
+        content.sizingOptions = [.preferredContentSize]
+
         popover.behavior = .transient
         popover.animates = false
-        popover.contentViewController = NSHostingController(
-            rootView: DayView()
-                .environment(tracker)
-                .environment(\.openSettingsWindow, openSettings)
-        )
+        popover.contentViewController = content
 
         if let button = statusItem.button {
             button.target = self
@@ -141,10 +149,23 @@ final class StatusItemController {
 
     private func showPopover() {
         guard let button = statusItem.button else { return }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+
+        // NSPopover positions itself from its content size at the moment it is shown.
+        // SwiftUI does not report a size until it has laid out, so showing first and
+        // letting the content grow afterwards left the popover anchored as though it
+        // were tiny — and it expanded off the top of the screen. Force a layout and
+        // hand over the real size before it picks a position.
+        content.view.layoutSubtreeIfNeeded()
+        let fitted = content.view.fittingSize
+        if fitted.height > 0 {
+            popover.contentSize = fitted
+        }
+
         // An accessory app is not active, and an inactive app's popover cannot take
         // key input — which would leave the search field unable to accept a keystroke.
+        // Activating first avoids a second reposition after the window becomes key.
         NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         Task { await tracker.sync() }
     }
