@@ -1,0 +1,284 @@
+import Foundation
+
+/// A typed client for the Harvest V2 API.
+///
+/// Harvest allows 100 requests per 15 seconds and answers 429 with `Retry-After`;
+/// the client honours that header and retries rather than surfacing the failure,
+/// so callers only see a `rateLimited` error once retries are exhausted.
+public actor HarvestClient {
+    public static let baseURL = URL(string: "https://api.harvestapp.com/v2/")!
+    /// Harvest returns 400 unless a request identifies its client.
+    public static let userAgent = "Sheaves (https://github.com/rainhead/sheaves)"
+
+    private let transport: any HarvestTransport
+    private var credentials: HarvestCredentials?
+    private let maxRetries = 3
+    /// Scales the wait between retries. Tests set it to zero; nothing else should.
+    private let backoffScale: Double
+
+    public init(
+        credentials: HarvestCredentials? = nil,
+        transport: any HarvestTransport = URLSessionTransport(),
+        backoffScale: Double = 1
+    ) {
+        self.credentials = credentials
+        self.transport = transport
+        self.backoffScale = backoffScale
+    }
+
+    public func setCredentials(_ credentials: HarvestCredentials?) {
+        self.credentials = credentials
+    }
+
+    public var isConfigured: Bool { credentials?.isComplete == true }
+
+    // MARK: - Account
+
+    public func currentUser() async throws -> HarvestUser {
+        try await get("users/me")
+    }
+
+    public func company() async throws -> HarvestCompany {
+        try await get("company")
+    }
+
+    /// Every project/task pair the current user is allowed to log time against.
+    public func projectAssignments() async throws -> [ProjectAssignment] {
+        try await getAllPages("users/me/project_assignments")
+    }
+
+    // MARK: - Time entries
+
+    public func timeEntries(
+        userID: Int,
+        from: CalendarDate,
+        to: CalendarDate
+    ) async throws -> [TimeEntry] {
+        try await getAllPages("time_entries", query: [
+            "user_id": String(userID),
+            "from": from.description,
+            "to": to.description,
+        ])
+    }
+
+    /// The user's running timer, if any. Harvest permits at most one.
+    public func runningTimeEntry(userID: Int) async throws -> TimeEntry? {
+        let page: Page<TimeEntry> = try await get("time_entries", query: [
+            "user_id": String(userID),
+            "is_running": "true",
+        ])
+        return page.items.first
+    }
+
+    /// Creates an entry with its timer already running.
+    ///
+    /// Omitting `hours` starts the timer on duration-tracking accounts, and omitting
+    /// `ended_time` does the same on timestamp accounts, so one body covers both.
+    public func startTimeEntry(
+        projectID: Int,
+        taskID: Int,
+        spentDate: CalendarDate = .today(),
+        notes: String? = nil
+    ) async throws -> TimeEntry {
+        try await send(
+            "time_entries",
+            method: "POST",
+            body: CreateTimeEntryPayload(
+                projectId: projectID,
+                taskId: taskID,
+                spentDate: spentDate,
+                notes: notes
+            )
+        )
+    }
+
+    public func stopTimeEntry(id: Int64) async throws -> TimeEntry {
+        try await send("time_entries/\(id)/stop", method: "PATCH", body: EmptyBody())
+    }
+
+    public func restartTimeEntry(id: Int64) async throws -> TimeEntry {
+        try await send("time_entries/\(id)/restart", method: "PATCH", body: EmptyBody())
+    }
+
+    public func updateTimeEntry(
+        id: Int64,
+        notes: String? = nil,
+        hours: Double? = nil,
+        projectID: Int? = nil,
+        taskID: Int? = nil,
+        spentDate: CalendarDate? = nil
+    ) async throws -> TimeEntry {
+        try await send(
+            "time_entries/\(id)",
+            method: "PATCH",
+            body: UpdateTimeEntryPayload(
+                projectId: projectID,
+                taskId: taskID,
+                spentDate: spentDate,
+                notes: notes,
+                hours: hours
+            )
+        )
+    }
+
+    public func deleteTimeEntry(id: Int64) async throws {
+        _ = try await perform(request(path: "time_entries/\(id)", method: "DELETE"))
+    }
+
+    // MARK: - Request plumbing
+
+    private func get<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        let data = try await perform(request(path: path, query: query))
+        return try Self.decode(T.self, from: data)
+    }
+
+    private func getAllPages<Item: PaginatedItem>(
+        _ path: String,
+        query: [String: String] = [:]
+    ) async throws -> [Item] {
+        var collected: [Item] = []
+        var page = 1
+        while true {
+            var query = query
+            query["page"] = String(page)
+            query["per_page"] = "2000"
+            let envelope: Page<Item> = try await get(path, query: query)
+            collected.append(contentsOf: envelope.items)
+            guard let next = envelope.nextPage else { break }
+            page = next
+        }
+        return collected
+    }
+
+    private func send<Body: Encodable & Sendable, T: Decodable & Sendable>(
+        _ path: String,
+        method: String,
+        body: Body
+    ) async throws -> T {
+        var request = try request(path: path, method: method)
+        request.httpBody = try Self.encoder.encode(body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let data = try await perform(request)
+        return try Self.decode(T.self, from: data)
+    }
+
+    private func request(path: String, method: String = "GET", query: [String: String] = [:]) throws -> URLRequest {
+        guard let credentials, credentials.isComplete else { throw HarvestError.notConfigured }
+        guard var components = URLComponents(
+            url: Self.baseURL.appending(path: path),
+            resolvingAgainstBaseURL: false
+        ) else { throw HarvestError.invalidResponse }
+        if !query.isEmpty {
+            components.queryItems = query
+                .sorted { $0.key < $1.key }
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        guard let url = components.url else { throw HarvestError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(credentials.accountID, forHTTPHeaderField: "Harvest-Account-Id")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    private func perform(_ request: URLRequest) async throws -> Data {
+        var attempt = 0
+        while true {
+            let (data, response) = try await transport.send(request)
+            switch response.statusCode {
+            case 200..<300:
+                return data
+            case 401, 403:
+                throw HarvestError.unauthorized
+            case 404:
+                throw HarvestError.notFound
+            case 429:
+                let retryAfter = Self.retryAfter(from: response)
+                guard attempt < maxRetries else { throw HarvestError.rateLimited(retryAfter: retryAfter) }
+                attempt += 1
+                try await Task.sleep(for: .seconds(retryAfter * backoffScale))
+            case 500...:
+                guard attempt < maxRetries else { throw HarvestError.server(status: response.statusCode) }
+                attempt += 1
+                try await Task.sleep(for: .seconds(Double(attempt) * backoffScale))
+            default:
+                throw HarvestError.rejected(
+                    status: response.statusCode,
+                    message: Self.errorMessage(from: data)
+                )
+            }
+        }
+    }
+
+    private static func retryAfter(from response: HTTPURLResponse) -> TimeInterval {
+        let header = response.value(forHTTPHeaderField: "Retry-After")
+        return header.flatMap(TimeInterval.init) ?? 15
+    }
+
+    /// Harvest reports validation failures as `{"message": "..."}` or a field-keyed map.
+    private static func errorMessage(from data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
+        if let message = object["message"] as? String { return message }
+        return object
+            .map { key, value in "\(key): \(value)" }
+            .sorted()
+            .joined(separator: "; ")
+    }
+
+    // MARK: - Coding
+
+    static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            // Harvest sends whole seconds, but tolerate fractional in case that changes.
+            if let date = try? Date(text, strategy: .iso8601) { return date }
+            if let date = try? Date(text, strategy: .iso8601.year().month().day()
+                .dateTimeSeparator(.standard).time(includingFractionalSeconds: true)
+                .timeZone(separator: .omitted)) { return date }
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 timestamp: \(text)")
+            )
+        }
+        return decoder
+    }()
+
+    static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return encoder
+    }()
+
+
+
+    private static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            throw HarvestError.invalidResponse
+        }
+    }
+}
+
+// MARK: - Request bodies
+
+private struct EmptyBody: Encodable, Sendable {}
+
+private struct CreateTimeEntryPayload: Encodable, Sendable {
+    let projectId: Int
+    let taskId: Int
+    let spentDate: CalendarDate
+    var notes: String?
+}
+
+private struct UpdateTimeEntryPayload: Encodable, Sendable {
+    var projectId: Int?
+    var taskId: Int?
+    var spentDate: CalendarDate?
+    var notes: String?
+    var hours: Double?
+}

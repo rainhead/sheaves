@@ -1,0 +1,63 @@
+name: Sheaves
+options:
+  bundleIdPrefix: com.rainhead
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  groupSortPosition: top
+
+packages:
+  SheavesCore:
+    path: Packages/SheavesCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Ad-hoc signing runs locally without an Apple Developer account. Set
+    # DEVELOPMENT_TEAM (see README) for a stable signature that keeps the
+    # Keychain from re-prompting after every rebuild.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  Sheaves:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/Mac/Sources
+    dependencies:
+      - package: SheavesCore
+        product: SheavesCore
+    info:
+      path: Apps/Mac/Resources/Info.plist
+      properties:
+        CFBundleName: Sheaves
+        CFBundleDisplayName: Sheaves
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Menu bar app: no Dock icon, no main window on launch.
+        LSUIElement: true
+        NSHumanReadableCopyright: "MIT licensed"
+    entitlements:
+      path: Apps/Mac/Resources/Sheaves.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rainhead.Sheaves
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+
+schemes:
+  Sheaves:
+    build:
+      targets:
+        Sheaves: all
+    run:
+      config: Debug
