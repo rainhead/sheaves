@@ -21,12 +21,20 @@ public struct KeychainStore: Sendable {
     }
 
     private var baseQuery: [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true,
         ]
+        #if os(iOS)
+        // iOS has only the data-protection keychain. Asking for it on macOS as well
+        // would be tidier, but macOS grants it only to apps signed with a keychain
+        // access group — which needs a real team — so an ad-hoc build would be
+        // refused outright. macOS therefore uses the file-based keychain.
+        query[kSecUseDataProtectionKeychain as String] = true
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        #endif
+        return query
     }
 
     public func read() throws -> HarvestCredentials? {
@@ -67,6 +75,25 @@ public struct KeychainStore: Sendable {
         let status = SecItemDelete(baseQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw Failure.status(status)
+        }
+    }
+}
+
+extension KeychainStore.Failure: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .malformedData:
+            return "The saved Harvest credentials could not be read. Disconnect and paste the token again."
+        case .status(let status):
+            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error"
+            switch status {
+            case errSecMissingEntitlement:
+                return "macOS refused Keychain access. Sheaves needs to be signed with a development team — set DEVELOPMENT_TEAM in project.yml. (\(status))"
+            case errSecUserCanceled, errSecAuthFailed:
+                return "Keychain access was denied. Allow Sheaves to use the login keychain and try again. (\(status))"
+            default:
+                return "\(detail) (\(status))"
+            }
         }
     }
 }
