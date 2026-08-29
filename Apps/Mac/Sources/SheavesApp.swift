@@ -34,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var settings = SettingsWindowController(tracker: tracker, hotKeys: hotKeyPreference)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMainMenu()
+
         statusItem = StatusItemController(
             tracker: tracker,
             openSettings: { [weak self] in self?.showSettings() }
@@ -54,8 +56,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKey(hotKeyPreference.shortcut)
     }
 
-    func showSettings() {
+    @objc func showSettings() {
         settings.show()
+    }
+
+    /// Installs a main menu even though an accessory app never displays one.
+    ///
+    /// AppKit routes ⌘X/⌘C/⌘V/⌘A/⌘Z to text fields as *menu key equivalents* —
+    /// NSTextField does not implement them itself. A SwiftUI `App` builds this menu
+    /// for you; a hand-rolled AppKit entry point does not, and without it pasting a
+    /// Harvest token into Settings silently does nothing, which is the very first
+    /// thing anyone has to do.
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Quit Sheaves",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a"
+        )
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Close",
+            action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w"
+        )
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func registerHotKey(_ shortcut: HotKeyShortcut) {
