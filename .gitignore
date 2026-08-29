@@ -11,6 +11,9 @@ xcuserdata/
 .swiftpm/
 Packages/*/.build/
 
+# Per-machine signing; see Config/Local.example.xcconfig
+Config/Local.xcconfig
+
 # Never commit credentials; the app keeps the Harvest token in the Keychain.
 *.pat
 secrets.json

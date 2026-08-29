@@ -1,0 +1,8 @@
+// Copy to Local.xcconfig (git-ignored) to sign with your own Apple Developer team.
+// Find your team ID at developer.apple.com/account, or in Xcode under
+// Settings › Accounts. A free personal team works.
+//
+// Xcode must be signed in to that Apple ID first: Xcode › Settings › Accounts.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

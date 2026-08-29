@@ -32,7 +32,6 @@ struct DayView: View {
         }
         .padding(12)
         .frame(width: 380)
-        .task { await tracker.sync() }
     }
 
     private var header: some View {

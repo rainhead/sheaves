@@ -1,0 +1,13 @@
+// Signing defaults: ad-hoc, so the project builds and runs with no Apple Developer
+// account. The cost is that the signature changes with every build, so macOS treats
+// each rebuild as a different app and re-prompts for the Keychain item holding the
+// Harvest token.
+//
+// To sign with your own team and stop that, copy Local.example.xcconfig to
+// Local.xcconfig and fill in your team ID. That file is git-ignored.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+// Optional: present only on machines that have opted into real signing.
+#include? "Local.xcconfig"

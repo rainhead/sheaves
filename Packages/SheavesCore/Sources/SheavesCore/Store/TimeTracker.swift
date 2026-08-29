@@ -42,6 +42,41 @@ public final class TimeTracker {
         entries.first(where: \.isRunning)
     }
 
+    /// The last thing worked on today, whether or not it is still running.
+    ///
+    /// Held separately from `entries` because the popover can browse other days, and
+    /// what the menu bar shows should not change just because the user looked at
+    /// last Tuesday.
+    public private(set) var lastActiveToday: TrackedEntry?
+
+    /// What the menu bar should offer: a timer to pause, one to resume, or nothing.
+    public var activity: Activity {
+        if let running = runningEntry { return .running(running) }
+        guard let recent = lastActiveToday,
+              !recent.isRunning,
+              now.timeIntervalSince(recent.updatedAt) <= Self.recentActivityWindow
+        else { return .idle }
+        return .recent(recent)
+    }
+
+    public enum Activity: Sendable, Equatable {
+        case idle
+        case running(TrackedEntry)
+        /// Stopped, but recently enough that resuming it is the likely next action.
+        case recent(TrackedEntry)
+
+        public var entry: TrackedEntry? {
+            switch self {
+            case .idle: nil
+            case .running(let entry), .recent(let entry): entry
+            }
+        }
+    }
+
+    /// How long a stopped timer stays one click away before the menu bar collapses
+    /// back to a bare icon.
+    public static let recentActivityWindow: TimeInterval = 90 * 60
+
     public var isToday: Bool { day == .today() }
 
     /// Total hours for the visible day, counting a running timer up to `now`.
@@ -149,6 +184,7 @@ public final class TimeTracker {
         entries = []
         recentTargets = []
         frequentTargets = []
+        lastActiveToday = nil
         accountDataFetchedAt = nil
         pendingCount = 0
         lastSyncedAt = nil
@@ -203,6 +239,7 @@ public final class TimeTracker {
 
             self.user = user
             self.entries = try await merge(dayEntries: dayEntries, running: running)
+            noteLastActivity()
             try await refreshAccountDataIfStale(userID: user.id)
             self.lastSyncedAt = Date()
             self.connection = .online
@@ -302,6 +339,7 @@ public final class TimeTracker {
             at: 0
         )
         noteRecent(target)
+        noteLastActivity()
         restartClock()
         await enqueue(.start(local: local, target: target, spentDate: day, notes: notes))
     }
@@ -315,6 +353,7 @@ public final class TimeTracker {
             $0.isPending = true
         }
         noteRecent(entry.target)
+        noteLastActivity()
         restartClock()
         await enqueue(.restart(entry.id))
     }
@@ -327,6 +366,7 @@ public final class TimeTracker {
             $0.timerStartedAt = nil
             $0.isPending = true
         }
+        noteLastActivity()
         restartClock()
         await enqueue(.stop(entry.id))
     }
@@ -396,6 +436,19 @@ public final class TimeTracker {
         if recentTargets.count > maxRecents {
             recentTargets.removeLast(recentTargets.count - maxRecents)
         }
+    }
+
+    /// Remembers the most recent thing worked on today, for the menu bar.
+    private func noteLastActivity() {
+        if let running = runningEntry {
+            lastActiveToday = running
+            return
+        }
+        // Only today's list can update this; browsing history must not disturb it.
+        guard isToday else { return }
+        lastActiveToday = entries
+            .filter { !$0.isRunning }
+            .max { $0.updatedAt < $1.updatedAt }
     }
 
     /// Ranks project/task pairs by how much the user really works on them.

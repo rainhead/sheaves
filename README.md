@@ -21,9 +21,14 @@ xcodegen generate
 open Sheaves.xcodeproj
 ```
 
-The project signs ad-hoc so it runs without an Apple Developer account. That
-signature changes on every rebuild, so macOS re-asks for Keychain access each time;
-setting `DEVELOPMENT_TEAM` in [`project.yml`](project.yml) to your team ID stops that.
+The project signs ad-hoc, so a fresh checkout builds and runs with no Apple
+Developer account. The catch is that an ad-hoc signature changes with every build,
+so macOS treats each rebuild as a different app and re-prompts for the Keychain item
+holding your token. To stop that, copy
+[`Config/Local.example.xcconfig`](Config/Local.example.xcconfig) to
+`Config/Local.xcconfig` (git-ignored) and fill in your team ID. A **free** Apple ID
+is enough — the $99 Developer Program is for distribution, not for running your own
+app on your own Mac.
 
 Then create a personal access token at
 [id.getharvest.com/developers](https://id.getharvest.com/developers) and paste it,
@@ -53,6 +58,19 @@ than left to wedge everything behind it. An entry started offline has no Harvest
 yet, which is why [`TrackedEntry`](Packages/SheavesCore/Sources/SheavesCore/Model/TrackedEntry.swift)
 identity is either a server id or a local one, swapped when the create lands.
 
+**The menu bar is a control, not a readout.** The status item shows a pause button
+while a timer runs and a play button for 90 minutes after one stops, so the common
+action costs one click and opens nothing; clicking the name opens the popover
+instead. That is why [`StatusItemController`](Apps/Mac/Sources/StatusItemController.swift)
+is hand-rolled AppKit — SwiftUI's `MenuBarExtra` has exactly one behaviour, which is
+to open its content on any click.
+
+**Suggestions are ranked by what you actually do.** Harvest returns every task on
+every assigned project, alphabetically, burying the two or three things you do daily.
+Sheaves ranks them by 90 days of your own entries, weighted so the score halves every
+three weeks: frequency alone pins a finished project to the top for weeks, recency
+alone lets one stray entry outrank a habit.
+
 **The UI never waits to draw.** A JSON
 [snapshot](Packages/SheavesCore/Sources/SheavesCore/Persistence/SnapshotStore.swift)
 of the last known state is restored at launch, so the popover is populated before the
@@ -77,6 +95,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | | |
 | --- | --- |
 | ⌃⌥⌘T | Quick entry, from any app (rebindable in Settings) |
+| Click ⏸ / ▶ in the menu bar | Pause or resume, without opening anything |
 | ↑ ↓ | Move through matches |
 | ⇥ | Jump to the notes field |
 | ⏎ | Start the selected timer |
