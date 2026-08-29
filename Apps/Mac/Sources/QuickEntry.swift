@@ -87,16 +87,23 @@ final class QuickEntryController {
     }
 
     private func centre(_ panel: NSPanel) {
-        // Not NSScreen.main: that is the screen holding the *key window*, and this
-        // app has none when the hotkey fires from another app — so it falls back to
-        // the primary display and the panel opens on the wrong monitor. The pointer
-        // is the best available signal for where the user is working.
+        panel.centreOnScreenUnderPointer()
+    }
+}
+
+extension NSWindow {
+    /// Centres on the screen the user is actually looking at.
+    ///
+    /// Not `NSScreen.main`: that is the screen holding the *key window*, and an
+    /// accessory app has none when a hotkey fires from another app — so it silently
+    /// falls back to the primary display and the panel opens on the wrong monitor.
+    /// The pointer is the best available signal for where the user is working.
+    func centreOnScreenUnderPointer() {
         let pointer = NSEvent.mouseLocation
-        let target = NSScreen.screens.first { $0.frame.contains(pointer) }
-            ?? NSScreen.main
+        let target = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         guard let screen = target?.visibleFrame else { return }
-        let size = panel.frame.size
-        panel.setFrameOrigin(
+        let size = frame.size
+        setFrameOrigin(
             NSPoint(
                 x: screen.midX - size.width / 2,
                 // Slightly above centre reads better than dead centre, as Spotlight does.
@@ -107,7 +114,7 @@ final class QuickEntryController {
 }
 
 /// A panel has to opt in to becoming key, or the search field never takes keystrokes.
-private final class FloatingPanel: NSPanel {
+final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 

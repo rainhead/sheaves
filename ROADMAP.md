@@ -6,15 +6,6 @@ hours it records, then everything else. Nothing here is a commitment.
 
 ## Next
 
-**Idle detection.** The one that matters. A timer left running over lunch, or
-overnight, quietly bills hours nobody worked — and this app exists to record hours
-accurately. Watch idle time (`CGEventSource.secondsSinceLastEventType`), sleep and
-wake (`NSWorkspace`), and screen lock; when the user comes back to a timer that ran
-through an absence, offer to trim it to when they actually stopped. Mutations already
-carry explicit hours, so trimming is a normal edit rather than a special case.
-
-## After that
-
 **Budget, in the panel.** `GET /v2/reports/project_budget` returns `budget`,
 `budget_spent` and `budget_remaining` per project in a single call, with `budget_by`
 saying whether those are hours or money. Showing the running project's remaining

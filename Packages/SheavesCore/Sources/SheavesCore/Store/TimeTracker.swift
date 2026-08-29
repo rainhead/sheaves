@@ -448,6 +448,107 @@ public final class TimeTracker {
         await enqueue(.delete(entry.id))
     }
 
+    // MARK: - Absences
+
+    /// Applies what the user chose about a timer that ran while nobody was here.
+    ///
+    /// Every outcome is an ordinary mutation carrying explicit hours, which is the
+    /// whole reason trimming needs no new machinery: the queue already knows how to
+    /// send an honest total for work that finished long before the request lands.
+    public func resolve(
+        _ absence: Absence,
+        on entry: TrackedEntry,
+        as resolution: AbsenceResolution
+    ) async {
+        guard !entry.isLocked else { return }
+        // Nil means this machine has no standing to speak for the entry; see
+        // `Absence.trimmedHours(for:)`.
+        guard let trimmed = absence.trimmedHours(for: entry) else { return }
+
+        switch resolution {
+        case .keep:
+            return
+        case .trimAndContinue:
+            await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: absence.ended)
+        case .trimAndStop:
+            await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: nil)
+        case .trimAndLog(let target):
+            await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: absence.ended)
+            await log(absence, against: target, on: entry.spentDate)
+        }
+    }
+
+    private func trim(
+        _ entry: TrackedEntry,
+        to hours: Double,
+        leftAt: Date,
+        resumingAt resumedAt: Date?
+    ) async {
+        mutateLocally(entry.id) {
+            $0.bankedHours = hours
+            $0.isRunning = resumedAt != nil
+            $0.timerStartedAt = resumedAt
+            $0.isPending = true
+        }
+        noteLastActivity()
+        restartClock()
+
+        // A create that has not reached Harvest yet carries its hours in its own
+        // start and end, so the trim amends that create rather than correcting an
+        // entry Harvest has never heard of.
+        var amended = false
+        if case .local(let uuid) = entry.id {
+            amended = await queue.amendCreate(local: uuid, endedAt: leftAt)
+        }
+
+        // Harvest's copy of the timer is still running and still counting the
+        // absence, so continuing is not one operation but three: stop it, correct
+        // the total, start it again from the moment they came back. An amended
+        // create needs no stop — it now ends where they left.
+        if !amended {
+            await enqueue(.stop(entry.id, hours: hours))
+        }
+        if let resumedAt {
+            // Safe for an amended create too: the queue drains in order and rewrites
+            // the local id once the create comes back with a real one.
+            await enqueue(.restart(entry.id, resumedAt: resumedAt, bankedHours: hours))
+        } else if amended {
+            await queueChanged()
+        }
+    }
+
+    /// Records the absence itself against another target — the meeting you were
+    /// actually in while the timer sat on something else.
+    private func log(_ absence: Absence, against target: TimerTarget, on spentDate: CalendarDate) async {
+        let local = UUID()
+        if spentDate == day {
+            entries.insert(
+                TrackedEntry(
+                    id: .local(local),
+                    project: target.project,
+                    task: target.task,
+                    client: target.client,
+                    spentDate: spentDate,
+                    bankedHours: absence.duration / 3600,
+                    isRunning: false,
+                    isPending: true
+                ),
+                at: 0
+            )
+        }
+        noteRecent(target)
+        await enqueue(
+            .create(
+                local: local,
+                target: target,
+                spentDate: spentDate,
+                notes: nil,
+                startedAt: absence.began,
+                endedAt: absence.ended
+            )
+        )
+    }
+
     // MARK: - Local bookkeeping
 
     private func enqueue(_ mutation: Mutation) async {
