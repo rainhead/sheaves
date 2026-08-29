@@ -105,7 +105,7 @@ public final class TimeTracker {
     public func suggestedTargets(matching query: String) -> [TimerTarget] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return orderedTargets }
-        return orderedTargets.filter { $0.searchText.fuzzyMatches(trimmed) }
+        return orderedTargets.filter { $0.searchText.matchesSearch(trimmed) }
     }
 
     // MARK: Collaborators
@@ -614,14 +614,46 @@ public final class TimeTracker {
     }
 }
 
+extension StringProtocol {
+    /// Case- and diacritic-insensitive form used for both haystack and needle.
+    fileprivate var folded: String {
+        folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+}
+
 extension String {
-    /// Subsequence match, the way a command palette filters: "acdes" finds "Acme / Design".
-    func fuzzyMatches(_ query: String) -> Bool {
-        var remaining = Substring(query.lowercased())
-        for character in lowercased() where character == remaining.first {
-            remaining = remaining.dropFirst()
-            if remaining.isEmpty { return true }
+    /// Whether this text matches what someone typed into the picker.
+    ///
+    /// Terms match only at word boundaries. A subsequence match found b, e, a and m
+    /// scattered through "Oregon State University Extension · Beeline · Programming"
+    /// and matched a project that has nothing to do with Beam Reach; matching
+    /// anywhere inside a word has the same flavour of surprise, finding "Reach" for
+    /// "each". Every whitespace-separated term must begin a word, so "beam prog"
+    /// narrows to Beam Reach's programming and nothing else. Initials still work for
+    /// speed: "bro" finds Beam Reach · Orcasound.
+    func matchesSearch(_ query: String) -> Bool {
+        let terms = query.split(whereSeparator: \.isWhitespace)
+        guard !terms.isEmpty else { return true }
+
+        let words = self.words
+        // Fold the query the same way as the text, or "REACH" misses "Reach".
+        let needles = terms.map(\.folded)
+        if needles.allSatisfy({ needle in words.contains { $0.hasPrefix(needle) } }) {
+            return true
         }
-        return remaining.isEmpty
+
+        guard needles.count == 1 else { return false }
+        return initials.hasPrefix(needles[0])
+    }
+
+    /// Words for matching purposes, so "SalishSea.io" also offers "io" and
+    /// "Phase 1" offers "1".
+    private var words: [String] {
+        split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(\.folded)
+    }
+
+    /// The first letter of each word, lowercased: "Beam Reach · Orcasound" -> "bro".
+    private var initials: String {
+        words.compactMap { $0.first }.map { String($0) }.joined()
     }
 }

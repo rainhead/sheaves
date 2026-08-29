@@ -243,7 +243,7 @@ struct TimeTrackerTests {
         await tracker.sync()
 
         #expect(tracker.suggestedTargets(matching: "").count == 1)
-        #expect(tracker.suggestedTargets(matching: "onlgraph").count == 1)
+        #expect(tracker.suggestedTargets(matching: "online").count == 1)
         #expect(tracker.suggestedTargets(matching: "zzz").isEmpty)
     }
 }

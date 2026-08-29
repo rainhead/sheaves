@@ -191,22 +191,55 @@ struct TrackedEntryTests {
 }
 
 @Suite("Palette matching")
-struct FuzzyMatchTests {
-    @Test("matches a subsequence the way a palette does")
-    func matchesSubsequence() {
-        #expect("123 Industries · Online Store".fuzzyMatches("onst"))
-        #expect("Acme · Marketing Website".fuzzyMatches("acmark"))
-        #expect("Acme · Marketing Website".fuzzyMatches("ACME"))
+struct SearchMatchingTests {
+    /// The bug this replaced: a subsequence match found b, e, a, m spread across an
+    /// unrelated project and so matched nearly every row.
+    @Test("does not match a client whose name merely contains the letters")
+    func doesNotMatchScatteredLetters() {
+        #expect(!"Oregon State University Extension · Beeline · Programming".matchesSearch("beam"))
+        #expect("Beam Reach · SalishSea.io · Programming".matchesSearch("beam"))
     }
 
-    @Test("rejects letters that appear out of order")
-    func rejectsWrongOrder() {
-        #expect(!"Acme · Marketing".fuzzyMatches("gnitekram"))
-        #expect(!"Acme".fuzzyMatches("acmex"))
+    @Test("matches the start of any word in the label")
+    func matchesWordPrefixes() {
+        let target = "Beam Reach · Orcasound · Project Management"
+        #expect(target.matchesSearch("orca"))
+        #expect(target.matchesSearch("management"))
+        #expect(target.matchesSearch("REACH"))
+        #expect("Beam Reach · SalishSea.io".matchesSearch("io"))
+    }
+
+    /// Matching inside a word is the same flavour of surprise as the subsequence
+    /// match this replaced: "each" should not find "Reach".
+    @Test("does not match from the middle of a word")
+    func requiresWordBoundaries() {
+        let target = "Beam Reach · Orcasound · Project Management"
+        #expect(!target.matchesSearch("each"))
+        #expect(!target.matchesSearch("sound"))
+        #expect(!target.matchesSearch("agement"))
+    }
+
+    @Test("narrows as more terms are typed")
+    func narrowsWithTerms() {
+        let beeline = "Oregon State University Extension · Beeline · Programming"
+        #expect(beeline.matchesSearch("beeline prog"))
+        #expect(!beeline.matchesSearch("beeline design"))
+    }
+
+    @Test("matches word initials for speed")
+    func matchesInitials() {
+        #expect("Beam Reach · Orcasound".matchesSearch("bro"))
+        #expect(!"Beam Reach · Orcasound".matchesSearch("bzq"))
+    }
+
+    @Test("ignores diacritics")
+    func ignoresDiacritics() {
+        #expect("Café Project · Design".matchesSearch("cafe"))
     }
 
     @Test("matches everything on an empty query")
     func emptyQuery() {
-        #expect("anything".fuzzyMatches(""))
+        #expect("anything".matchesSearch(""))
+        #expect("anything".matchesSearch("   "))
     }
 }
