@@ -23,15 +23,23 @@ carry explicit hours, so trimming is a normal edit rather than a special case.
 saying whether those are hours or money. Showing the running project's remaining
 budget beside its timer is nearly free.
 
-Two things to respect: the Reports API allows only 100 requests per 15 minutes, far
+Whether it appears at all is a runtime question, not a styling one. A project with
+`budget_by` of `none` has no budget, and a monetary budget is visible only to
+administrators and project managers with the billable-rates permission — so for some
+accounts the report comes back with nothing usable in it. There is no lesser version
+of this feature to fall back to: if there are no budgets to show, the whole thing
+should be absent rather than present and empty. Probe once, and let the answer decide
+whether the UI exists.
+
+Two other constraints: the Reports API allows only 100 requests per 15 minutes, far
 tighter than the 100 per 15 seconds everything else gets, so this wants its own
-refresh pace; and money budgets are visible only to administrators and project
-managers with the billable-rates permission, so it has to degrade without them.
-Budgets can also reset monthly (`budget_is_monthly`).
+refresh pace; and budgets can reset monthly (`budget_is_monthly`).
 
 ## Maybe, and what each would cost
 
-**A budget widget.** Deliberately after budget-in-the-panel, because the data is the
+**A budget widget.** Only if budgets turn out to be visible and worth watching —
+the same absence rule applies, and an account with no readable budgets has no reason
+to want this at all. Deliberately after budget-in-the-panel, because the data is the
 cheap part. A widget is a separate process: it cannot read the app's Keychain item or
 its cache, so it needs a Keychain access group and an App Group container, and
 `SnapshotStore` has to move out of the app's private container. Both need team-signed
