@@ -36,7 +36,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private lazy var settings = SettingsWindowController(tracker: tracker, hotKeys: hotKeyPreference)
 
+    /// True when the app was launched only to host a unit test bundle.
+    private var isHostingTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Tests link against this app, so launching it must not claim a menu bar
+        // slot, register a global hotkey or reach for the Keychain.
+        guard !isHostingTests else { return }
+
         installMainMenu()
 
         statusItem = StatusItemController(

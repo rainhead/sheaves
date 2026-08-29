@@ -54,10 +54,31 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
 
+  SheavesTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Apps/Mac/Tests
+    dependencies:
+      - target: Sheaves
+      - package: SheavesCore
+        product: SheavesCore
+    settings:
+      base:
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Sheaves.app/Contents/MacOS/Sheaves
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.rainhead.SheavesTests
+
 schemes:
   Sheaves:
     build:
       targets:
         Sheaves: all
+        SheavesTests: [test]
+    test:
+      config: Debug
+      targets:
+        - SheavesTests
     run:
       config: Debug

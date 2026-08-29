@@ -36,8 +36,15 @@ with the account ID shown beside it, into Sheaves' settings. The token is stored
 the Keychain and sent only to `api.harvestapp.com`.
 
 ```sh
-swift test --package-path Packages/SheavesCore
+swift test --package-path Packages/SheavesCore              # core logic
+xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
+  -destination 'platform=macOS' test                        # app logic
 ```
+
+The core suite is the bulk of it. The app suite exists because the parts that only
+compile against AppKit had no tests at all, and that is where the worst bugs turned
+up — a shortcut recorder that trapped on every key press, and a missing main menu
+that made ⌘V silently do nothing.
 
 ## How it works
 
