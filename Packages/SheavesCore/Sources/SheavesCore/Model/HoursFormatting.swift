@@ -23,15 +23,4 @@ public extension Double {
             return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
         }
     }
-
-    /// `1:24:07` — used while a timer runs, where seconds ticking is the point.
-    func formattedHoursWithSeconds() -> String {
-        let totalSeconds = Int((max(0, self) * 3600).rounded())
-        return String(
-            format: "%d:%02d:%02d",
-            totalSeconds / 3600,
-            (totalSeconds % 3600) / 60,
-            totalSeconds % 60
-        )
-    }
 }

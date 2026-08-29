@@ -126,7 +126,7 @@ struct QuickEntryView: View {
                     Text(running.target.projectLabel).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(running.hours(asOf: tracker.now).formattedHoursWithSeconds())
+                Text(running.hours(asOf: tracker.now).formattedHours(HoursFormat(company: tracker.company)))
                     .font(.callout.monospacedDigit())
                 Button("Stop") {
                     Task { await tracker.stopRunning() }

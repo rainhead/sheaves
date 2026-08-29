@@ -79,13 +79,9 @@ struct EntryRow: View {
                     .foregroundStyle(.secondary)
                     .help("Approved or invoiced — Harvest won’t accept changes")
             }
-            Text(
-                entry.isRunning
-                    ? entry.hours(asOf: tracker.now).formattedHoursWithSeconds()
-                    : entry.hours(asOf: tracker.now).formattedHours(format)
-            )
-            .font(.callout.monospacedDigit())
-            .fontWeight(entry.isRunning ? .semibold : .regular)
+            Text(entry.hours(asOf: tracker.now).formattedHours(format))
+                .font(.callout.monospacedDigit())
+                .fontWeight(entry.isRunning ? .semibold : .regular)
         }
     }
 

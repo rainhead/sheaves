@@ -94,10 +94,4 @@ struct HoursFormattingTests {
     func negatives() {
         #expect((-1.0).formattedHours(.hoursMinutes) == "0:00")
     }
-
-    @Test("shows seconds for a running timer")
-    func withSeconds() {
-        #expect(1.4.formattedHoursWithSeconds() == "1:24:00")
-        #expect((7.0 / 3600).formattedHoursWithSeconds() == "0:00:07")
-    }
 }

@@ -36,6 +36,15 @@ public struct CalendarDate: Hashable, Sendable, Codable, Comparable, CustomStrin
         return CalendarDate(shifted ?? startOfDay(in: calendar), in: calendar)
     }
 
+    /// Whole days from `other` to this date. Negative when `other` is later.
+    public func daysSince(_ other: CalendarDate, in calendar: Calendar = .current) -> Int {
+        calendar.dateComponents(
+            [.day],
+            from: other.startOfDay(in: calendar),
+            to: startOfDay(in: calendar)
+        ).day ?? 0
+    }
+
     /// The first day of this date's week, honouring the account's `week_start_day`.
     public func startOfWeek(weekStart: Weekday, in calendar: Calendar = .current) -> CalendarDate {
         var calendar = calendar

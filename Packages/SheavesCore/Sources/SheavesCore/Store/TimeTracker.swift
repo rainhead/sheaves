@@ -30,6 +30,8 @@ public final class TimeTracker {
     public private(set) var targets: [TimerTarget] = []
     public private(set) var entries: [TrackedEntry] = []
     public private(set) var recentTargets: [TimerTarget] = []
+    /// Ranked by what the user has actually logged in Harvest, best first.
+    public private(set) var frequentTargets: [TimerTarget] = []
     public private(set) var day: CalendarDate = .today()
     public private(set) var lastSyncedAt: Date?
     public private(set) var pendingCount: Int = 0
@@ -47,14 +49,28 @@ public final class TimeTracker {
         entries.reduce(0) { $0 + $1.hours(asOf: now) }
     }
 
-    /// Targets to offer first in the palette: recents, then everything else.
-    public func suggestedTargets(matching query: String) -> [TimerTarget] {
-        let ordered = recentTargets + targets.filter { recent in
-            !recentTargets.contains(where: { $0.id == recent.id })
+    /// Targets in the order worth offering them: what was started in this app most
+    /// recently, then what the user actually logs in Harvest, then the rest.
+    ///
+    /// Harvest hands back every task assigned to every project, alphabetically, which
+    /// buries the two or three things someone does daily under ones they have never
+    /// touched.
+    public var orderedTargets: [TimerTarget] {
+        // Only offer pairs still assigned to the user; history outlives assignments.
+        let available = Dictionary(targets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        var ordered: [TimerTarget] = []
+        for candidate in recentTargets + frequentTargets + targets {
+            guard let target = available[candidate.id], seen.insert(target.id).inserted else { continue }
+            ordered.append(target)
         }
+        return ordered
+    }
+
+    public func suggestedTargets(matching query: String) -> [TimerTarget] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return ordered }
-        return ordered.filter { $0.searchText.fuzzyMatches(trimmed) }
+        guard !trimmed.isEmpty else { return orderedTargets }
+        return orderedTargets.filter { $0.searchText.fuzzyMatches(trimmed) }
     }
 
     // MARK: Collaborators
@@ -71,6 +87,8 @@ public final class TimeTracker {
     /// `log show --last 10m --predicate 'subsystem == "com.rainhead.Sheaves"'`
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "sync")
     private static let accountDataLifetime: TimeInterval = 600
+    /// How far back to look when working out what the user actually works on.
+    private static let historyWindowDays = 90
 
     public init(
         client: HarvestClient = HarvestClient(),
@@ -130,6 +148,7 @@ public final class TimeTracker {
         targets = []
         entries = []
         recentTargets = []
+        frequentTargets = []
         accountDataFetchedAt = nil
         pendingCount = 0
         lastSyncedAt = nil
@@ -184,7 +203,7 @@ public final class TimeTracker {
 
             self.user = user
             self.entries = try await merge(dayEntries: dayEntries, running: running)
-            try await refreshAccountDataIfStale()
+            try await refreshAccountDataIfStale(userID: user.id)
             self.lastSyncedAt = Date()
             self.connection = .online
             pruneRecents()
@@ -208,18 +227,25 @@ public final class TimeTracker {
 
     /// Project assignments and company settings change rarely and cost two requests,
     /// so they are not refetched on every start/stop.
-    private func refreshAccountDataIfStale() async throws {
+    private func refreshAccountDataIfStale(userID: Int) async throws {
         let isStale = accountDataFetchedAt.map { Date().timeIntervalSince($0) > Self.accountDataLifetime } ?? true
         guard isStale || targets.isEmpty else { return }
 
+        let today = CalendarDate.today()
         async let company = client.company()
         async let assignments = client.projectAssignments()
+        async let history = client.timeEntries(
+            userID: userID,
+            from: today.adding(days: -Self.historyWindowDays),
+            to: today
+        )
         self.company = try await company
         let fetched = try await assignments
         self.targets = fetched.timerTargets()
+        self.frequentTargets = Self.rankByUsage(try await history, asOf: today)
         accountDataFetchedAt = Date()
         Self.log.info(
-            "account data: \(fetched.count, privacy: .public) assignments -> \(self.targets.count, privacy: .public) active targets"
+            "account data: \(fetched.count, privacy: .public) assignments -> \(self.targets.count, privacy: .public) active targets, \(self.frequentTargets.count, privacy: .public) used in the last \(Self.historyWindowDays, privacy: .public) days"
         )
     }
 
@@ -276,6 +302,7 @@ public final class TimeTracker {
             at: 0
         )
         noteRecent(target)
+        restartClock()
         await enqueue(.start(local: local, target: target, spentDate: day, notes: notes))
     }
 
@@ -288,6 +315,7 @@ public final class TimeTracker {
             $0.isPending = true
         }
         noteRecent(entry.target)
+        restartClock()
         await enqueue(.restart(entry.id))
     }
 
@@ -299,6 +327,7 @@ public final class TimeTracker {
             $0.timerStartedAt = nil
             $0.isPending = true
         }
+        restartClock()
         await enqueue(.stop(entry.id))
     }
 
@@ -369,6 +398,33 @@ public final class TimeTracker {
         }
     }
 
+    /// Ranks project/task pairs by how much the user really works on them.
+    ///
+    /// Frequency alone would pin last quarter's project to the top for weeks after it
+    /// ended; recency alone would let one stray entry outrank a daily habit. Each
+    /// entry contributes a weight that halves every few weeks, so the ordering
+    /// follows what someone is working on now without forgetting the whole quarter.
+    static func rankByUsage(_ entries: [TimeEntry], asOf today: CalendarDate) -> [TimerTarget] {
+        var scores: [String: Double] = [:]
+        var targets: [String: TimerTarget] = [:]
+
+        for entry in entries {
+            let target = TimerTarget(project: entry.project, task: entry.task, client: entry.client)
+            let daysAgo = Double(max(0, today.daysSince(entry.spentDate)))
+            scores[target.id, default: 0] += exp(-daysAgo / Double(halfLifeDays))
+            targets[target.id] = target
+        }
+
+        return scores
+            .sorted { lhs, rhs in
+                // Ties sort by id so the order never shuffles between syncs.
+                lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value > rhs.value
+            }
+            .compactMap { targets[$0.key] }
+    }
+
+    private static let halfLifeDays = 21
+
     /// Drops recents for projects the user is no longer assigned to.
     private func pruneRecents() {
         guard !targets.isEmpty else { return }
@@ -383,9 +439,9 @@ public final class TimeTracker {
         user = snapshot.user
         company = snapshot.company
         targets = snapshot.targets
-        recentTargets = snapshot.recentTargetIDs.compactMap { id in
-            snapshot.targets.first { $0.id == id }
-        }
+        let byID = Dictionary(snapshot.targets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        recentTargets = snapshot.recentTargetIDs.compactMap { byID[$0] }
+        frequentTargets = snapshot.frequentTargetIDs.compactMap { byID[$0] }
         entries = snapshot.entries.filter { $0.spentDate == day || $0.isRunning }
         lastSyncedAt = snapshot.savedAt
     }
@@ -398,6 +454,7 @@ public final class TimeTracker {
                 targets: targets,
                 entries: entries,
                 recentTargetIDs: recentTargets.map(\.id),
+                frequentTargetIDs: frequentTargets.map(\.id),
                 savedAt: lastSyncedAt ?? Date()
             )
         )
@@ -409,15 +466,23 @@ public final class TimeTracker {
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                // A running timer needs a second-by-second clock. Idle, the only
-                // thing `now` drives is the "synced N minutes ago" label, and
-                // redrawing the menu bar every second all day to serve that is waste.
-                let interval: Duration = self?.runningEntry == nil ? .seconds(15) : .seconds(1)
+                // Durations are shown to the minute, so a five-second tick is enough
+                // to turn one over promptly. Idle, `now` only drives the "synced N
+                // minutes ago" label, and redrawing the menu bar all day for that is
+                // waste. `restartClock` re-picks this the instant a timer changes,
+                // so starting one never waits out the idle interval.
+                let interval: Duration = self?.runningEntry == nil ? .seconds(30) : .seconds(5)
                 try? await Task.sleep(for: interval)
                 guard let self else { return }
                 self.now = Date()
             }
         }
+    }
+
+    /// Advances the clock now and re-picks the tick interval.
+    private func restartClock() {
+        now = Date()
+        startTicking()
     }
 }
 

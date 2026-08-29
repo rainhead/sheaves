@@ -8,6 +8,8 @@ public struct CachedSnapshot: Codable, Sendable {
     public var entries: [TrackedEntry]
     /// Most-recently-used target ids, newest first. Drives the palette's default order.
     public var recentTargetIDs: [String]
+    /// Target ids ranked by the user's own Harvest history, best first.
+    public var frequentTargetIDs: [String]
     public var savedAt: Date
 
     public init(
@@ -16,6 +18,7 @@ public struct CachedSnapshot: Codable, Sendable {
         targets: [TimerTarget] = [],
         entries: [TrackedEntry] = [],
         recentTargetIDs: [String] = [],
+        frequentTargetIDs: [String] = [],
         savedAt: Date = Date()
     ) {
         self.user = user
@@ -23,6 +26,7 @@ public struct CachedSnapshot: Codable, Sendable {
         self.targets = targets
         self.entries = entries
         self.recentTargetIDs = recentTargetIDs
+        self.frequentTargetIDs = frequentTargetIDs
         self.savedAt = savedAt
     }
 }

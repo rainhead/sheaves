@@ -52,8 +52,9 @@ struct TimeTrackerTests {
 
         #expect(await transport.callCount(matching: "project_assignments") == 1)
         #expect(await transport.callCount(matching: "company") == 1)
-        // The day itself is re-read every time; that is the point of syncing.
-        #expect(await transport.callCount(matching: "time_entries") == 6)
+        // Two reads per sync (the day, and whatever is running), plus the one-off
+        // history fetch that ranks the target list.
+        #expect(await transport.callCount(matching: "time_entries") == 7)
     }
 
     /// The whole point of the local-first model: the timer shows up even though
