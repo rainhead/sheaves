@@ -13,14 +13,18 @@ import SwiftUI
 final class SettingsWindowController {
     private let tracker: TimeTracker
     private let hotKeys: HotKeyPreference
+    private let loginItem: LoginItemPreference
     private var window: NSWindow?
 
-    init(tracker: TimeTracker, hotKeys: HotKeyPreference) {
+    init(tracker: TimeTracker, hotKeys: HotKeyPreference, loginItem: LoginItemPreference) {
         self.tracker = tracker
         self.hotKeys = hotKeys
+        self.loginItem = loginItem
     }
 
     func show() {
+        // Cheap, and the window is about to show a switch that must not lie.
+        loginItem.refresh()
         let window = window ?? makeWindow()
         self.window = window
         if !window.isVisible {
@@ -37,6 +41,7 @@ final class SettingsWindowController {
             rootView: SettingsView()
                 .environment(tracker)
                 .environment(hotKeys)
+                .environment(loginItem)
         )
         let window = NSWindow(contentViewController: hosting)
         window.title = "Sheaves Settings"
