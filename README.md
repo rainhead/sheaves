@@ -6,6 +6,10 @@ The clock you are on is always visible in the menu bar, ⌃⌥⌘T starts a time
 anywhere, and nothing blocks on the network — Sheaves shows local state immediately
 and reconciles with Harvest afterwards.
 
+![The Sheaves menu bar panel: a running timer with a stop button, a stopped entry
+with a resume button, and a type-to-filter list of project and task
+pairs](docs/images/menu-bar.png)
+
 ## Status
 
 Early. The macOS app tracks time; iOS is not built yet, but everything except the
@@ -54,6 +58,13 @@ Three ideas carry most of the design.
 round-tripping it through `Date` puts entries on the wrong day for anyone east or
 west of wherever the conversion happened. [`CalendarDate`](Packages/SheavesCore/Sources/SheavesCore/Model/CalendarDate.swift)
 keeps days as days and only becomes a `Date` against an explicit calendar.
+
+**Time is recorded, not re-measured.** Harvest's `/stop` banks time up to the moment
+the request *arrives*, and a create starts its timer on arrival too — so replaying
+bare commands after a spell offline destroys or invents hours in equal measure. Every
+[`Mutation`](Packages/SheavesCore/Sources/SheavesCore/Store/MutationQueue.swift) that
+affects elapsed time carries the time the user acted and sends explicit hours, so an
+entry is honest however late the request lands.
 
 **Local state is the truth until a sync succeeds.** Every action — start, stop,
 resume, edit — changes [`TimeTracker`](Packages/SheavesCore/Sources/SheavesCore/Store/TimeTracker.swift)
