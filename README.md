@@ -1,14 +1,16 @@
 # Sheaves
 
+[![Build](https://github.com/rainhead/sheaves/actions/workflows/build.yml/badge.svg)](https://github.com/rainhead/sheaves/actions/workflows/build.yml)
+
 A native SwiftUI menu bar client for [Harvest](https://www.getharvest.com) time tracking.
 
 The clock you are on is always visible in the menu bar, ⌃⌥⌘T starts a timer from
 anywhere, and nothing blocks on the network — Sheaves shows local state immediately
 and reconciles with Harvest afterwards.
 
-![The Sheaves menu bar panel: a running timer with a stop button, a stopped entry
-with a resume button, and a type-to-filter list of project and task
-pairs](docs/images/menu-bar.png)
+<img src="docs/images/menu-bar.png" width="424"
+  alt="The Sheaves menu bar panel: a running timer with a stop button, a stopped
+  entry with a resume button, and a type-to-filter list of project and task pairs">
 
 ## Status
 
