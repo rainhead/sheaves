@@ -6,9 +6,6 @@ hours it records, then everything else. Nothing here is a commitment.
 
 ## Next
 
-**Launch at login.** A menu bar app you have to remember to start is half a menu bar
-app. `SMAppService`, plus a toggle in Settings.
-
 **Idle detection.** The one that matters. A timer left running over lunch, or
 overnight, quietly bills hours nobody worked — and this app exists to record hours
 accurately. Watch idle time (`CGEventSource.secondsSinceLastEventType`), sleep and

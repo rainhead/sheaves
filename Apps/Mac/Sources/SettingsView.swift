@@ -1,9 +1,11 @@
+import AppKit
 import SheavesCore
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(TimeTracker.self) private var tracker
     @Environment(HotKeyPreference.self) private var hotKeys
+    @Environment(LoginItemPreference.self) private var loginItem
 
     @State private var accountID = ""
     @State private var token = ""
@@ -19,10 +21,16 @@ struct SettingsView: View {
                 connectedSection
             }
             shortcutSection
+            startupSection
         }
         .formStyle(.grouped)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+        // The user can turn the login item off in System Settings while this window
+        // sits open, so re-read it whenever they come back to Sheaves.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItem.refresh()
+        }
     }
 
     private var connectSection: some View {
@@ -105,6 +113,40 @@ struct SettingsView: View {
             Text("Shortcut")
         } footer: {
             Text("Opens the quick-entry panel from any app. Sheaves registers it with the window server, so no Accessibility permission is needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var startupSection: some View {
+        Section {
+            Toggle(
+                "Open Sheaves at login",
+                isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) })
+            )
+            switch loginItem.problem {
+            case .needsApproval:
+                Label(
+                    "macOS is holding this one. Turn Sheaves on under Login Items and it will stick.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
+                HStack {
+                    Spacer()
+                    Button("Open Login Items…") { loginItem.openSystemSettings() }
+                }
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            case nil:
+                EmptyView()
+            }
+        } header: {
+            Text("Startup")
+        } footer: {
+            Text("Sheaves has no Dock icon, so it opens straight into the menu bar with no window. System Settings › General › Login Items lists it alongside everything else that starts this way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

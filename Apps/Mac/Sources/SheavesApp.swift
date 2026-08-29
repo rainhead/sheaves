@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let tracker = TimeTracker()
     let hotKeyPreference = HotKeyPreference()
+    let loginItem = LoginItemPreference()
 
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "hotkey")
 
@@ -34,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tracker: tracker,
         openSettings: { [weak self] in self?.showSettings() }
     )
-    private lazy var settings = SettingsWindowController(tracker: tracker, hotKeys: hotKeyPreference)
+    private lazy var settings = SettingsWindowController(
+        tracker: tracker,
+        hotKeys: hotKeyPreference,
+        loginItem: loginItem
+    )
 
     /// True when the app was launched only to host a unit test bundle.
     private var isHostingTests: Bool {
@@ -67,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.registerHotKey(shortcut)
         }
         registerHotKey(hotKeyPreference.shortcut)
+
     }
 
     @objc func showSettings() {

@@ -47,6 +47,10 @@ Then create a personal access token at
 with the account ID shown beside it, into Sheaves' settings. The token is stored in
 the Keychain and sent only to `api.harvestapp.com`.
 
+Settings has a switch to open Sheaves at login, which registers the bundle where it
+sits right now — move the app and the switch has to go off and on again to point at
+the new location.
+
 ```sh
 swift test --package-path Packages/SheavesCore              # core logic
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
