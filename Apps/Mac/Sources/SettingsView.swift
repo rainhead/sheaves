@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var token = ""
     @State private var isConnecting = false
     @State private var errorMessage: String?
+    @State private var isConfirmingDisconnect = false
 
     var body: some View {
         Form {
@@ -27,7 +28,7 @@ struct SettingsView: View {
     private var connectSection: some View {
         Section {
             TextField("Account ID", text: $accountID)
-                .textContentType(.oneTimeCode)
+                .textContentType(.username)
             SecureField("Personal Access Token", text: $token)
 
             if let errorMessage {
@@ -59,9 +60,23 @@ struct SettingsView: View {
             LabeledContent("Projects", value: "\(tracker.targets.count) task assignments")
             HStack {
                 Spacer()
+                Button("Disconnect…", role: .destructive) { isConfirmingDisconnect = true }
+            }
+            .confirmationDialog(
+                "Disconnect from Harvest?",
+                isPresented: $isConfirmingDisconnect,
+                titleVisibility: .visible
+            ) {
                 Button("Disconnect", role: .destructive) {
                     Task { await tracker.disconnect() }
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    tracker.pendingCount > 0
+                        ? "\(tracker.pendingCount) change\(tracker.pendingCount == 1 ? "" : "s") have not reached Harvest yet and will be discarded along with the token."
+                        : "The token will be removed from your Keychain. Cached entries are cleared."
+                )
             }
         }
     }

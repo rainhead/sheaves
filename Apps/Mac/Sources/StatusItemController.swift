@@ -72,10 +72,31 @@ final class StatusItemController {
 
         button.image = NSImage(
             systemSymbolName: symbolName(for: activity),
-            accessibilityDescription: accessibilityLabel(for: activity)
+            accessibilityDescription: nil
         )
         button.attributedTitle = title(for: activity)
         button.toolTip = toolTip(for: activity)
+        // Spoken, not read as digits: "0:19" becomes "zero nineteen" otherwise. The
+        // label describes state rather than promising an action, because an
+        // accessibility press cannot hit the icon region and so opens the panel.
+        button.setAccessibilityLabel(accessibilityLabel(for: activity))
+        button.setAccessibilityValue(spokenState(for: activity))
+    }
+
+    private func accessibilityLabel(for activity: TimeTracker.Activity) -> String {
+        guard let entry = activity.entry else { return "Sheaves, nothing tracked" }
+        return "Sheaves, \(entry.task.name), \(entry.target.projectLabel)"
+    }
+
+    private func spokenState(for activity: TimeTracker.Activity) -> String {
+        guard let entry = activity.entry else { return "no timer running" }
+        let total = Int((entry.hours(asOf: tracker.now) * 60).rounded())
+        let duration = total < 60
+            ? "\(total) minute\(total == 1 ? "" : "s")"
+            : "\(total / 60) hour\(total / 60 == 1 ? "" : "s") \(total % 60) minute\(total % 60 == 1 ? "" : "s")"
+        return activity.entry.map { _ in
+            "\(duration), \(entry.isRunning ? "timer running" : "paused")"
+        } ?? duration
     }
 
     private func symbolName(for activity: TimeTracker.Activity) -> String {
@@ -115,19 +136,16 @@ final class StatusItemController {
         }
     }
 
-    private func accessibilityLabel(for activity: TimeTracker.Activity) -> String {
-        switch activity {
-        case .running: "Pause timer"
-        case .recent: "Resume timer"
-        case .idle: "Sheaves"
-        }
-    }
-
     // MARK: - Clicks
 
     @objc private func handleClick() {
         guard let button = statusItem.button else { return }
         let activity = tracker.activity
+
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showMenu(for: activity)
+            return
+        }
 
         // With nothing to toggle there is no second region, so the whole item opens
         // the popover — otherwise the only clickable thing would do nothing.
@@ -142,6 +160,52 @@ final class StatusItemController {
     private func isIconClick(on button: NSStatusBarButton) -> Bool {
         guard let event = NSApp.currentEvent, event.type == .leftMouseUp else { return false }
         return button.convert(event.locationInWindow, from: nil).x <= iconRegionWidth
+    }
+
+    /// The conventional menu bar extra right-click menu — and the only route to
+    /// pause, resume or quit that does not require a mouse aimed at a 24-point strip.
+    private func showMenu(for activity: TimeTracker.Activity) {
+        let menu = NSMenu()
+
+        if let entry = activity.entry {
+            let title = entry.isRunning ? "Pause \(entry.task.name)" : "Resume \(entry.task.name)"
+            let item = NSMenuItem(title: title, action: #selector(toggleTimer), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
+
+        let open = NSMenuItem(title: "Open Sheaves", action: #selector(openPanel), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettingsItem), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
+        menu.addItem(.separator())
+        menu.addItem(
+            NSMenuItem(title: "Quit Sheaves", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        )
+
+        // Attaching the menu makes the next click open it; clearing it afterwards
+        // keeps left-click on the button's own action.
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func toggleTimer() {
+        guard let entry = tracker.activity.entry else { return }
+        Task { await tracker.toggle(entry) }
+    }
+
+    @objc private func openPanel() {
+        showPanel()
+    }
+
+    @objc private func openSettingsItem() {
+        openSettings()
     }
 
     // MARK: - Panel

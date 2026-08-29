@@ -48,11 +48,16 @@ struct TargetPicker: View {
                 .foregroundStyle(.secondary)
             TextField(placeholder, text: $query)
                 .textFieldStyle(.plain)
+                .accessibilityLabel("Start a timer")
+                .accessibilityHint("Type to filter projects and tasks")
                 .focused($focus, equals: .search)
                 .onSubmit(start)
                 .onKeyPress(.downArrow) { move(by: 1) }
                 .onKeyPress(.upArrow) { move(by: -1) }
-                .onKeyPress(.tab) {
+                .onKeyPress(phases: .down) { press in
+                    // ⌥⇥ jumps to notes as a convenience; plain Tab must still hand
+                    // focus onwards, or the panel becomes a keyboard trap.
+                    guard press.key == .tab, press.modifiers.contains(.option) else { return .ignored }
                     focus = .notes
                     return .handled
                 }
@@ -67,13 +72,17 @@ struct TargetPicker: View {
             SizedScrollView(maxHeight: CGFloat(maxVisible) * 36) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, target in
-                        TargetRow(target: target, isSelected: index == selection)
-                            .id(target.id)
-                            .contentShape(.rect)
-                            .onTapGesture {
-                                selection = index
-                                start()
-                            }
+                        Button {
+                            selection = index
+                            start()
+                        } label: {
+                            TargetRow(target: target, isSelected: index == selection)
+                        }
+                        .buttonStyle(.plain)
+                        .id(target.id)
+                        .accessibilityLabel("\(target.task.name), \(target.projectLabel)")
+                        .accessibilityHint("Starts a timer")
+                        .accessibilityAddTraits(index == selection ? [.isSelected] : [])
                     }
                 }
             }
@@ -89,11 +98,8 @@ struct TargetPicker: View {
             .textFieldStyle(.plain)
             .font(.callout)
             .focused($focus, equals: .notes)
+            .accessibilityLabel("Notes for the new timer")
             .onSubmit(start)
-            .onKeyPress(.tab) {
-                focus = .search
-                return .handled
-            }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
@@ -126,6 +132,14 @@ private struct TargetRow: View {
     let target: TimerTarget
     let isSelected: Bool
 
+    private var selectedText: AnyShapeStyle {
+        AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+    }
+
+    private var selectedSecondaryText: AnyShapeStyle {
+        AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(target.task.name)
@@ -133,13 +147,18 @@ private struct TargetRow: View {
                 .lineLimit(1)
             Text(target.projectLabel)
                 .font(.caption)
-                .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
+                .foregroundStyle(isSelected ? selectedSecondaryText : AnyShapeStyle(.secondary))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 5))
+        .foregroundStyle(isSelected ? selectedText : AnyShapeStyle(.primary))
+        .background(
+            isSelected
+                ? AnyShapeStyle(Color(nsColor: .selectedContentBackgroundColor))
+                : AnyShapeStyle(.clear),
+            in: RoundedRectangle(cornerRadius: 5)
+        )
     }
 }

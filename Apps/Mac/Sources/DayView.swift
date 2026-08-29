@@ -40,8 +40,11 @@ struct DayView: View {
                 Task { await tracker.shiftDay(by: -1) }
             } label: {
                 Image(systemName: "chevron.left")
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Previous day")
+            .contentShape(.rect)
             .keyboardShortcut(.leftArrow, modifiers: .command)
 
             VStack(spacing: 0) {
@@ -61,8 +64,11 @@ struct DayView: View {
                 Task { await tracker.shiftDay(by: 1) }
             } label: {
                 Image(systemName: "chevron.right")
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Next day")
+            .contentShape(.rect)
             .keyboardShortcut(.rightArrow, modifiers: .command)
 
             Text(tracker.totalHours.formattedHours(format))
@@ -96,18 +102,24 @@ struct DayView: View {
             Spacer()
             Button(action: openSettings) {
                 Image(systemName: "gearshape")
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
             .help("Settings")
+            .accessibilityLabel("Settings")
+            .contentShape(.rect)
             .keyboardShortcut(",")
 
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Image(systemName: "power")
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
             .help("Quit Sheaves")
+            .accessibilityLabel("Quit Sheaves")
+            .contentShape(.rect)
             .keyboardShortcut("q")
         }
         .font(.caption)

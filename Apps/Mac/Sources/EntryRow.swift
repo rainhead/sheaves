@@ -9,6 +9,7 @@ struct EntryRow: View {
 
     @State private var isEditingNotes = false
     @State private var draftNotes = ""
+    @State private var isConfirmingDelete = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -37,10 +38,52 @@ struct EntryRow: View {
         .contextMenu {
             Button("Edit Notes…") { beginEditingNotes() }
                 .disabled(entry.isLocked)
+            Button("Delete…", role: .destructive) { isConfirmingDelete = true }
+                .disabled(entry.isLocked)
+        }
+        // Without this the row reads as disconnected fragments: task, project,
+        // notes, two status icons and a duration, with the icons explained only by
+        // a mouse-only tooltip.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAction(named: entry.isRunning ? "Stop timer" : "Resume timer") {
+            Task { await tracker.toggle(entry) }
+        }
+        .accessibilityAction(named: "Edit notes") { beginEditingNotes() }
+        .confirmationDialog(
+            "Delete this time entry?",
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
             Button("Delete", role: .destructive) {
                 Task { await tracker.delete(entry) }
             }
-            .disabled(entry.isLocked)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(entry.hours(asOf: tracker.now).formattedHours(format)) on \(entry.task.name) will be removed from Harvest. This cannot be undone.")
+        }
+    }
+
+    /// Spoken as one sentence, including what the status icons mean.
+    private var accessibilityLabel: String {
+        var parts = [entry.task.name, entry.target.projectLabel]
+        if let notes = entry.notes, !notes.isEmpty { parts.append(notes) }
+        parts.append(spokenDuration)
+        if entry.isRunning { parts.append("timer running") }
+        if entry.isPending { parts.append("waiting to sync") }
+        if entry.isLocked { parts.append("locked, approved or invoiced") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// "1:14" is read as "one fourteen"; say what it means.
+    private var spokenDuration: String {
+        let total = Int((entry.hours(asOf: tracker.now) * 60).rounded())
+        let hours = total / 60
+        let minutes = total % 60
+        switch (hours, minutes) {
+        case (0, let m): return "\(m) minute\(m == 1 ? "" : "s")"
+        case (let h, 0): return "\(h) hour\(h == 1 ? "" : "s")"
+        case (let h, let m): return "\(h) hour\(h == 1 ? "" : "s") \(m) minute\(m == 1 ? "" : "s")"
         }
     }
 
@@ -91,11 +134,13 @@ struct EntryRow: View {
         } label: {
             Image(systemName: entry.isRunning ? "stop.fill" : "play.fill")
                 .font(.caption)
-                .frame(width: 18, height: 18)
+                .frame(width: 26, height: 26)
         }
         .buttonStyle(.borderless)
         .disabled(entry.isLocked)
         .help(entry.isRunning ? "Stop timer" : "Resume timer")
+        .accessibilityLabel(entry.isRunning ? "Stop timer" : "Resume timer")
+        .contentShape(.rect)
     }
 
     private func beginEditingNotes() {

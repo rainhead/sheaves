@@ -168,3 +168,77 @@ struct RetryAfterTests {
         #expect(HarvestClient.retryAfter(from: response(["Retry-After": "soon"])) == 15)
     }
 }
+
+@Suite("Local id handoff")
+struct LocalIdentifierHandoffTests {
+    private func temporaryFile() -> URL {
+        URL.temporaryDirectory.appending(path: "sheaves-ids-\(UUID().uuidString).json")
+    }
+
+    private var target: TimerTarget {
+        TimerTarget(
+            project: Reference(id: 14308069, name: "Online Store - Phase 1"),
+            task: Reference(id: 8083366, name: "Programming")
+        )
+    }
+
+    private func writableAccount() -> RoutingTransport {
+        RoutingTransport([
+            RoutingTransport.Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),
+            RoutingTransport.Route(method: "PATCH", fragment: "/restart", body: Fixture.runningTimeEntry),
+            RoutingTransport.Route(method: "POST", fragment: "time_entries", body: Fixture.runningTimeEntry, status: 201),
+            RoutingTransport.Route(method: "PATCH", fragment: "time_entries", body: Fixture.timeEntry),
+        ])
+    }
+
+    /// Stopping a timer after its create drained, but before the store adopted the
+    /// real id, used to be discarded as "not found" — leaving the timer running on
+    /// Harvest forever.
+    @Test("honours a stop queued against an already-created local id")
+    func resolvesLocalIdAfterCreate() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = writableAccount()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+        let local = UUID()
+
+        await queue.enqueue(
+            .create(local: local, target: target, spentDate: .today(), notes: nil,
+                    startedAt: Date(), endedAt: Date())
+        )
+        let first = await queue.drain(using: client)
+        #expect(first.resolved[local] == 636708906)
+
+        // Queued only now — after the create drained, so no rewrite could have run.
+        await queue.enqueue(.stop(.local(local), hours: 0.25))
+        let second = await queue.drain(using: client)
+
+        #expect(second.applied == 1)
+        #expect(second.discarded.isEmpty)
+        #expect(await transport.calls(method: "PATCH", containing: "636708906/stop").count == 1)
+    }
+
+    @Test("remembers resolutions across a relaunch")
+    func resolutionsSurviveRelaunch() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = writableAccount()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let local = UUID()
+
+        let first = MutationQueue(fileURL: file)
+        await first.enqueue(
+            .create(local: local, target: target, spentDate: .today(), notes: nil,
+                    startedAt: Date(), endedAt: Date())
+        )
+        _ = await first.drain(using: client)
+
+        let reopened = MutationQueue(fileURL: file)
+        await reopened.enqueue(.stop(.local(local), hours: 0.25))
+        let report = await reopened.drain(using: client)
+
+        #expect(report.applied == 1)
+        #expect(report.discarded.isEmpty)
+    }
+}

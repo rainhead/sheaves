@@ -52,6 +52,9 @@ public enum Mutation: Codable, Sendable, Hashable {
 public struct DrainReport: Sendable {
     /// Mutations Harvest accepted.
     public var applied: Int = 0
+    /// Local ids that earned a Harvest id during this drain, so the store can adopt
+    /// them without waiting for a refetch.
+    public var resolved: [UUID: Int64] = [:]
     /// Mutations Harvest refused outright; these were dropped from the queue.
     public var discarded: [(mutation: Mutation, error: HarvestError)] = []
     /// Set when the queue stopped early because the failure looked temporary.
@@ -69,13 +72,38 @@ public struct DrainReport: Sendable {
 /// otherwise a single bad change would wedge every later one forever.
 public actor MutationQueue {
     private var pending: [Mutation] = []
+    /// Local ids that have earned a Harvest id, newest last.
+    ///
+    /// Rewriting only the mutations already queued is not enough: the user can stop a
+    /// timer after its create drained but before the store has adopted the real id,
+    /// and that stop would target a local id nothing recognises. It would be
+    /// discarded as "not found" and the timer would run on Harvest indefinitely.
+    private var resolved: [(local: UUID, serverID: Int64)] = []
     private var isDraining = false
     private let fileURL: URL
+    /// Enough history to cover any plausible in-flight mutation without growing forever.
+    private static let resolvedLimit = 200
+
+    private struct Stored: Codable {
+        var pending: [Mutation]
+        var resolved: [Resolution]
+
+        struct Resolution: Codable {
+            var local: UUID
+            var serverID: Int64
+        }
+    }
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        pending = (try? Data(contentsOf: fileURL))
-            .flatMap { try? JSONDecoder().decode([Mutation].self, from: $0) } ?? []
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        if let stored = try? JSONDecoder().decode(Stored.self, from: data) {
+            pending = stored.pending
+            resolved = stored.resolved.map { ($0.local, $0.serverID) }
+        } else if let legacy = try? JSONDecoder().decode([Mutation].self, from: data) {
+            // A queue written before resolutions were recorded.
+            pending = legacy
+        }
     }
 
     public init(appName: String = "Sheaves") {
@@ -117,7 +145,9 @@ public actor MutationQueue {
                     let entry = try await apply(mutation, using: client)
                     // Later queued changes still point at the placeholder id; repoint them.
                     if let entry {
+                        remember(local: local, serverID: entry.id)
                         rewrite(local: local, to: .server(entry.id))
+                        report.resolved[local] = entry.id
                     }
                 } else {
                     _ = try await apply(mutation, using: client)
@@ -163,7 +193,7 @@ public actor MutationQueue {
             return try await client.restartTimeEntry(id: entry.id)
 
         case .stop(let id, let hours):
-            guard let serverID = id.serverID else { throw HarvestError.notFound }
+            guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
             do {
                 _ = try await client.stopTimeEntry(id: serverID)
             } catch HarvestError.rejected {
@@ -172,7 +202,7 @@ public actor MutationQueue {
             return try await client.updateTimeEntry(id: serverID, hours: hours)
 
         case .restart(let id, let resumedAt, let bankedHours):
-            guard let serverID = id.serverID else { throw HarvestError.notFound }
+            guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
             let offline = max(0, Date().timeIntervalSince(resumedAt)) / 3600
             if offline > 1.0 / 3600 {
                 // Bank the time it ran offline *before* resuming, so the total is
@@ -182,11 +212,11 @@ public actor MutationQueue {
             return try await client.restartTimeEntry(id: serverID)
 
         case .update(let id, let notes, let hours):
-            guard let serverID = id.serverID else { throw HarvestError.notFound }
+            guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
             return try await client.updateTimeEntry(id: serverID, notes: notes, hours: hours)
 
         case .delete(let id):
-            guard let serverID = id.serverID else { throw HarvestError.notFound }
+            guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
             try await client.deleteTimeEntry(id: serverID)
             return nil
         }
@@ -221,7 +251,27 @@ public actor MutationQueue {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(pending) else { return }
+        let stored = Stored(
+            pending: pending,
+            resolved: resolved.map { Stored.Resolution(local: $0.local, serverID: $0.serverID) }
+        )
+        guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: fileURL, options: .atomic)
+    }
+
+    /// The Harvest id a local id earned, if this queue has seen it created.
+    private func serverID(for id: TrackedEntry.ID) -> Int64? {
+        switch id {
+        case .server(let serverID): return serverID
+        case .local(let uuid): return resolved.last { $0.local == uuid }?.serverID
+        }
+    }
+
+    private func remember(local: UUID, serverID: Int64) {
+        resolved.removeAll { $0.local == local }
+        resolved.append((local, serverID))
+        if resolved.count > Self.resolvedLimit {
+            resolved.removeFirst(resolved.count - Self.resolvedLimit)
+        }
     }
 }

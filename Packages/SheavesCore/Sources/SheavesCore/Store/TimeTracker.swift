@@ -228,6 +228,7 @@ public final class TimeTracker {
         advanceDayIfNeeded()
 
         let report = await queue.drain(using: client)
+        adopt(report.resolved)
         pendingCount = await queue.count
         if Task.isCancelled { return }
         if let blocker = report.stoppedWith {
@@ -479,6 +480,23 @@ public final class TimeTracker {
         recentTargets.insert(target, at: 0)
         if recentTargets.count > maxRecents {
             recentTargets.removeLast(recentTargets.count - maxRecents)
+        }
+    }
+
+    /// Swaps local placeholder ids for the Harvest ids their creates earned, without
+    /// waiting for the refetch — otherwise a stop in that window targets an id the
+    /// server has never heard of.
+    private func adopt(_ resolved: [UUID: Int64]) {
+        guard !resolved.isEmpty else { return }
+        for index in entries.indices {
+            guard case .local(let uuid) = entries[index].id,
+                  let serverID = resolved[uuid]
+            else { continue }
+            entries[index].id = .server(serverID)
+            entries[index].isPending = false
+        }
+        if case .local(let uuid) = lastActiveToday?.id, let serverID = resolved[uuid] {
+            lastActiveToday?.id = .server(serverID)
         }
     }
 
