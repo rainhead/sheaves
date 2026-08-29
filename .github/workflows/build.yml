@@ -1,0 +1,54 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push supersedes the first; nothing here is worth finishing twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    # macos-26 ships Xcode 26.6 by default, which is what the package's Swift 6
+    # language mode and onGeometryChange need.
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned rather than relying on the image default, so a runner image bump
+      # cannot silently change the compiler under us.
+      - name: Select Xcode 26.6
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install --quiet xcodegen
+
+      # The .xcodeproj is generated, not committed.
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test core
+        run: swift test --package-path Packages/SheavesCore
+
+      # Signing is ad-hoc by default (Config/Base.xcconfig); Config/Local.xcconfig
+      # is git-ignored, so CI needs no signing secrets.
+      - name: Test app
+        run: |
+          xcodebuild test \
+            -project Sheaves.xcodeproj \
+            -scheme Sheaves \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
