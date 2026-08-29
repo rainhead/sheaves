@@ -59,6 +59,11 @@ struct HotKeyShortcut: Codable, Sendable, Hashable {
 
     /// Keys with no printable character need a symbol of their own.
     private static func label(for keyCode: UInt16, typed: String) -> String? {
+        // Checked by lookup, not by range: Carbon's function-key codes are neither
+        // contiguous nor ascending (kVK_F1 is 122, kVK_F12 is 111), so `kVK_F1...kVK_F12`
+        // is an invalid range that traps the moment the pattern is evaluated.
+        if let number = functionKeyNumber(keyCode) { return "F\(number)" }
+
         switch Int(keyCode) {
         case kVK_Space: return "␣"
         case kVK_Return, kVK_ANSI_KeypadEnter: return "⏎"
@@ -69,7 +74,6 @@ struct HotKeyShortcut: Codable, Sendable, Hashable {
         case kVK_UpArrow: return "↑"
         case kVK_DownArrow: return "↓"
         case kVK_Escape: return nil  // reserved for cancelling the recorder
-        case kVK_F1...kVK_F12, kVK_F13...kVK_F20: return "F\(functionKeyNumber(keyCode) ?? 0)"
         default:
             let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             return trimmed.isEmpty ? nil : trimmed
