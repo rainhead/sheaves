@@ -97,8 +97,30 @@ struct PresenceMonitorTests {
         sensor.secondsSinceInput = 1
         monitor.poll(now: start + 50 * 60 + 1)
 
+        // One poll interval earlier than the call actually ended: a microphone found
+        // running could have started at any point since the last look, so its
+        // evidence is dated to that look rather than to the moment of noticing.
+        // Erring this way trims slightly more than was missed, never less.
         let absence = try #require(box.absences.first)
-        #expect(absence.began == callEnded)
+        #expect(absence.began == callEnded - PresenceMonitor.pollInterval)
+    }
+
+    /// Joining a call after a quiet stretch of reading must not open the prompt
+    /// *during* the call. Dating the microphone to the moment of noticing let the
+    /// gap before it reach the threshold and did exactly that.
+    @Test("a call joined just before the threshold does not raise one")
+    func callJoinedJustBeforeTheThresholdIsPresence() {
+        let sensor = FakeSensor()
+        let (monitor, box) = monitor(sensor)
+
+        // Fourteen and a half minutes reading, then a call starts.
+        run(monitor, sensor, minutes: 14.5)
+        #expect(box.absences.isEmpty)
+
+        sensor.isMicrophoneInUse = true
+        run2(monitor, sensor, from: 14.5 * 60 + 30, to: 40 * 60)
+
+        #expect(box.absences.isEmpty)
     }
 
     private func run2(_ monitor: PresenceMonitor, _ sensor: FakeSensor, from: Double, to: Double) {

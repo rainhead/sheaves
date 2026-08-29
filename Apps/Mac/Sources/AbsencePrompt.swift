@@ -12,8 +12,12 @@ final class AbsencePromptController {
     private let tracker: TimeTracker
     private var panel: NSPanel?
 
-    /// The absence currently on screen, so a second one cannot quietly replace it.
+    /// The absence currently on screen. Nil means the next one may be asked about.
     private(set) var pending: Absence?
+
+    /// Called once the answer has been applied, or the question waved away — the
+    /// moment it is safe to ask about the next absence against settled state.
+    var onFinished: (() -> Void)?
 
     init(tracker: TimeTracker) {
         self.tracker = tracker
@@ -25,10 +29,19 @@ final class AbsencePromptController {
             entry: entry,
             onResolve: { [weak self] resolution in
                 guard let self else { return }
-                Task { await self.tracker.resolve(absence, on: entry, as: resolution) }
+                // The panel goes at once — a click should not wait on the network —
+                // but the next question waits for this answer to be applied, so it
+                // is asked against the entry this one leaves behind.
                 self.dismiss()
+                Task {
+                    await self.tracker.resolve(absence, on: entry, as: resolution)
+                    self.onFinished?()
+                }
             },
-            onDismiss: { [weak self] in self?.dismiss() }
+            onDismiss: { [weak self] in
+                self?.dismiss()
+                self?.onFinished?()
+            }
         )
         .environment(tracker)
         .background(.regularMaterial)

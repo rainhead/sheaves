@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var hotKey: GlobalHotKey?
     private var presence: PresenceMonitor?
+    /// Absences waiting their turn to be asked about, oldest first.
+    private var absences: [Absence] = []
 
     private lazy var quickEntry = QuickEntryController(
         tracker: tracker,
@@ -76,10 +78,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registerHotKey(hotKeyPreference.shortcut)
 
+        absencePrompt.onFinished = { [weak self] in self?.askAboutNextAbsence() }
+
         let presence = PresenceMonitor()
         presence.onAbsence = { [weak self] absence in self?.offerToTrim(absence) }
         presence.start()
         self.presence = presence
+    }
+
+    @objc func showSettings() {
+        settings.show()
     }
 
     /// An absence is only worth raising if a timer of ours ran through it.
@@ -88,26 +96,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that timer ran — a timer started on the web or a phone — and this machine
     /// has nothing to say about work it never saw.
     private func offerToTrim(_ absence: Absence) {
-        // A newer absence replaces one still waiting for an answer rather than being
-        // dropped. Dropping it was the dangerous half of a stale prompt: the panel
-        // is built to sit open, and an unanswered question must never swallow the
-        // evidence for the absence that came after it.
-        if let showing = absencePrompt.pending {
-            Self.presenceLog.info(
-                "superseding an unanswered absence that ended \(showing.ended, privacy: .public)"
-            )
-        }
-        guard let running = tracker.runningEntry,
-              absence.trimmedHours(for: running) != nil
-        else {
-            Self.presenceLog.info("absence ignored: no timer of ours was running through it")
-            return
-        }
-        absencePrompt.present(absence, for: running)
+        // Queued, not substituted. Each absence describes a different stretch, and
+        // answering only the most recent one silently bills every stretch before it:
+        // a trim keeps everything earlier than where it starts.
+        absences.append(absence)
+        askAboutNextAbsence()
     }
 
-    @objc func showSettings() {
-        settings.show()
+    private func askAboutNextAbsence() {
+        guard absencePrompt.pending == nil else { return }
+        while !absences.isEmpty {
+            let absence = absences.removeFirst()
+            guard let running = tracker.runningEntry,
+                  absence.trimmedHours(for: running) != nil
+            else {
+                Self.presenceLog.info("absence ignored: no timer of ours was running through it")
+                continue
+            }
+            absencePrompt.present(absence, for: running)
+            return
+        }
     }
 
     /// Installs a main menu even though an accessory app never displays one.
