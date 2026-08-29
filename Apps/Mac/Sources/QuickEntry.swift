@@ -12,6 +12,7 @@ final class QuickEntryController {
     private let tracker: TimeTracker
     private let openSettings: @MainActor () -> Void
     private var panel: NSPanel?
+    private var content: NSHostingController<AnyView>?
 
     init(tracker: TimeTracker, openSettings: @escaping @MainActor () -> Void) {
         self.tracker = tracker
@@ -29,6 +30,16 @@ final class QuickEntryController {
     func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
+
+        // Size before positioning: the panel is centred, so where it goes depends on
+        // how tall the content turns out to be.
+        if let content {
+            content.view.layoutSubtreeIfNeeded()
+            let fitted = content.view.fittingSize
+            if fitted.width > 0, fitted.height > 0 {
+                panel.setContentSize(fitted)
+            }
+        }
         centre(panel)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -41,20 +52,23 @@ final class QuickEntryController {
 
     private func makePanel() -> NSPanel {
         let panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 340),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 200),
+            // Borderless, not titled: a titled window reserves and paints a titlebar
+            // strip even with the title hidden and the bar transparent, which showed
+            // up as unexplained whitespace above the content. This also matches the
+            // menu bar panel, which had no business looking like a different app.
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let root = QuickEntryView(onDismiss: { [weak self] in self?.hide() })
             .environment(tracker)
@@ -62,7 +76,13 @@ final class QuickEntryController {
                 self?.hide()
                 self?.openSettings()
             }
-        panel.contentView = NSHostingView(rootView: root)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+        let hosting = NSHostingController(rootView: AnyView(root))
+        hosting.sizingOptions = [.preferredContentSize]
+        panel.contentViewController = hosting
+        content = hosting
         return panel
     }
 
@@ -119,6 +139,7 @@ struct QuickEntryView: View {
         }
         .padding(16)
         .frame(width: 520, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
         .onExitCommand(perform: onDismiss)
     }
 

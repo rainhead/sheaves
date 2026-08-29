@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SheavesCore
 
 /// An AppKit entry point rather than a SwiftUI `App`.
@@ -23,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let tracker = TimeTracker()
     let hotKeyPreference = HotKeyPreference()
+
+    private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "hotkey")
 
     private var statusItem: StatusItemController?
     private var hotKey: GlobalHotKey?
@@ -121,6 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = GlobalHotKey(keyCode: shortcut.keyCode, modifiers: shortcut.carbonModifiers) { [weak self] in
             Task { @MainActor in self?.quickEntry.toggle() }
         }
-        hotKeyPreference.isRegistered = hotKey != nil
+        let registered = hotKey != nil
+        hotKeyPreference.isRegistered = registered
+        // Carbon reports a taken combination by failing silently; Settings shows this,
+        // but the log is the only trace when nobody is looking at Settings.
+        Self.log.info(
+            "quick entry hotkey \(shortcut.display, privacy: .public) registered: \(registered, privacy: .public)"
+        )
     }
 }
