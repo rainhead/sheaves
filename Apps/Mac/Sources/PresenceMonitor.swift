@@ -75,6 +75,20 @@ struct SystemPresenceSensor: PresenceSensor {
         return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
     }
 
+    /// Whether the device is running — which, on a device that both records and
+    /// plays, cannot be narrowed to recording.
+    ///
+    /// `kAudioDevicePropertyDeviceIsRunningSomewhere` ignores the scope it is asked
+    /// for: on this machine an input-only microphone reports running under the
+    /// *output* scope too, and an output-only speaker reports it under the input
+    /// scope, so there is no direction-scoped read to fall back on. Filtering to
+    /// devices that can record is as far as it goes, and a duplex device — a USB
+    /// interface, or the virtual device a meeting app installs — therefore reads as
+    /// presence while it is only playing audio.
+    ///
+    /// That failure suppresses a prompt rather than raising a false one. The
+    /// alternative, ignoring duplex devices, would miss every call made through an
+    /// audio interface, which is the case this feature exists for.
     private static func isCapturing(_ device: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
@@ -108,6 +122,9 @@ final class PresenceMonitor {
     private var detector: AbsenceDetector
     private let sensor: any PresenceSensor
     private var timer: Timer?
+    /// When the machine was last looked at, so a call found in progress can be
+    /// credited to the whole interval it may have been running for.
+    private var lastPoll: Date?
     private var workspaceObservers: [any NSObjectProtocol] = []
     private var distributedObservers: [any NSObjectProtocol] = []
 
@@ -168,14 +185,24 @@ final class PresenceMonitor {
         // still holds the microphone, and that is somebody's machine sitting in an
         // empty room, not somebody working.
         guard !sensor.isScreenLocked else { return }
+        defer { lastPoll = now }
+
+        // The microphone is read first, and its evidence is dated to the previous
+        // poll rather than to now.
+        //
+        // Both matter. A call that began at any point since the last look could have
+        // begun at the start of that interval, and dating it to `now` would let the
+        // gap before it reach the threshold — so joining a call after a quiet
+        // stretch of reading would open the prompt *during the call*, which is the
+        // one thing this must never do. Reading it before the idle clock means the
+        // presence is banked before any gap is measured.
+        if sensor.isMicrophoneInUse {
+            report(detector.notePresence(at: lastPoll ?? now))
+        }
 
         // The idle clock says how long *since* the last event, which is a better
         // answer than the moment this poll happened to run.
         report(detector.notePresence(at: now.addingTimeInterval(-sensor.secondsSinceInput)))
-
-        if sensor.isMicrophoneInUse {
-            report(detector.notePresence(at: now))
-        }
     }
 
     private func report(_ absence: Absence?) {

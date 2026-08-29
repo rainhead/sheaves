@@ -101,9 +101,12 @@ to open its content on any click.
 keyboard and mouse interrupts every meeting to ask whether you are still there;
 Harvest's own app does exactly that. Sheaves counts the microphone being in use as
 presence, so a call is time at work like any other. Reading
-`kAudioDevicePropertyDeviceIsRunningSomewhere` on the default input device asks
-about the *device*, not the audio, so it needs no microphone entitlement, prompts
-for no permission and can never hear anything. A locked screen still outranks it — a
+`kAudioDevicePropertyDeviceIsRunningSomewhere`, read across every device that can
+record, asks about the *device* rather than the audio — so it needs no microphone
+entitlement, prompts for no permission and can never hear anything. Every input
+device is checked and not merely the default one, because choosing a headset in
+Zoom while the system default stays on the built-in microphone is the ordinary
+case. A locked screen still outranks it — a
 meeting left open on a locked Mac is a machine alone in a room. And an absence only
 speaks for a timer that was running while somebody was here: one started on the web
 or a phone is left alone, because this Mac knows nothing about it. See
