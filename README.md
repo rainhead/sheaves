@@ -17,6 +17,12 @@ and reconciles with Harvest afterwards.
 Early. The macOS app tracks time; iOS is not built yet, but everything except the
 views lives in a platform-neutral package so it can be.
 
+It was built for one person's use, which is why it does what it does and no more.
+**If this is interesting to you, please get in touch** —
+[open an issue](https://github.com/rainhead/sheaves/issues) and say hello. If there
+is enough interest I will put a build on the App Store for a small fee, so it can be
+installed without a checkout and a toolchain.
+
 ## Running it
 
 Requires Xcode 26 or later.
