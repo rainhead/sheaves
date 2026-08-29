@@ -27,14 +27,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let loginItem = LoginItemPreference()
 
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "hotkey")
+    private static let presenceLog = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
 
     private var statusItem: StatusItemController?
     private var hotKey: GlobalHotKey?
+    private var presence: PresenceMonitor?
 
     private lazy var quickEntry = QuickEntryController(
         tracker: tracker,
         openSettings: { [weak self] in self?.showSettings() }
     )
+    private lazy var absencePrompt = AbsencePromptController(tracker: tracker)
     private lazy var settings = SettingsWindowController(
         tracker: tracker,
         hotKeys: hotKeyPreference,
@@ -73,6 +76,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registerHotKey(hotKeyPreference.shortcut)
 
+        let presence = PresenceMonitor()
+        presence.onAbsence = { [weak self] absence in self?.offerToTrim(absence) }
+        presence.start()
+        self.presence = presence
+    }
+
+    /// An absence is only worth raising if a timer of ours ran through it.
+    ///
+    /// `trimmedHours(for:)` is nil when nobody was at this Mac at any point while
+    /// that timer ran — a timer started on the web or a phone — and this machine
+    /// has nothing to say about work it never saw.
+    private func offerToTrim(_ absence: Absence) {
+        guard absencePrompt.pending == nil else { return }
+        guard let running = tracker.runningEntry,
+              absence.trimmedHours(for: running) != nil
+        else {
+            Self.presenceLog.info("absence ignored: no timer of ours was running through it")
+            return
+        }
+        absencePrompt.present(absence, for: running)
     }
 
     @objc func showSettings() {

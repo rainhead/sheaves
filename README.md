@@ -4,9 +4,11 @@
 
 A native SwiftUI menu bar client for [Harvest](https://www.getharvest.com) time tracking.
 
-The clock you are on is always visible in the menu bar, ⌃⌥⌘T starts a timer from
-anywhere, and nothing blocks on the network — Sheaves shows local state immediately
-and reconciles with Harvest afterwards.
+It notices when a timer has been running with nobody at the Mac and offers to trim
+the time — and it knows that being on a call is not being away, so it stays quiet
+through Zoom and Meet. The clock you are on is always visible in the menu bar,
+⌃⌥⌘T starts a timer from anywhere, and nothing blocks on the network: Sheaves shows
+local state immediately and reconciles with Harvest afterwards.
 
 <img src="docs/images/menu-bar.png" width="424"
   alt="The Sheaves menu bar panel: a running timer with a stop button, a stopped
@@ -94,6 +96,24 @@ action costs one click and opens nothing; clicking the name opens the popover
 instead. That is why [`StatusItemController`](Apps/Mac/Sources/StatusItemController.swift)
 is hand-rolled AppKit — SwiftUI's `MenuBarExtra` has exactly one behaviour, which is
 to open its content on any click.
+
+**Being on a call is not being away.** Idle detection that watches only the
+keyboard and mouse interrupts every meeting to ask whether you are still there;
+Harvest's own app does exactly that. Sheaves counts the microphone being in use as
+presence, so a call is time at work like any other. Reading
+`kAudioDevicePropertyDeviceIsRunningSomewhere` on the default input device asks
+about the *device*, not the audio, so it needs no microphone entitlement, prompts
+for no permission and can never hear anything. A locked screen still outranks it — a
+meeting left open on a locked Mac is a machine alone in a room. And an absence only
+speaks for a timer that was running while somebody was here: one started on the web
+or a phone is left alone, because this Mac knows nothing about it. See
+[`AbsenceDetector`](Packages/SheavesCore/Sources/SheavesCore/Store/AbsenceDetector.swift)
+and [`PresenceMonitor`](Apps/Mac/Sources/PresenceMonitor.swift).
+
+<img src="docs/images/absence-prompt.png" width="440"
+  alt="The Sheaves absence prompt: a timer that ran while nobody was here, with
+  buttons to trim and keep timing, trim and stop, log the time away against another
+  project, or keep it">
 
 **Suggestions are ranked by what you actually do.** Harvest returns every task on
 every assigned project, alphabetically, burying the two or three things you do daily.
