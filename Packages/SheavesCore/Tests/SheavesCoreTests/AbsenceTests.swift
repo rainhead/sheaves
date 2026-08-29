@@ -113,6 +113,24 @@ struct AbsenceTrimTests {
         #expect(Absence(began: startedAt, ended: startedAt + 3600).trimmedHours(for: entry) == 0)
     }
 
+    /// Start a timer, walk to the meeting. The click that started it *is* the last
+    /// input, and `timerStartedAt` is read a moment later inside the handler it
+    /// triggered — so the last presence precedes the start, and without tolerance
+    /// the commonest absence of all would be refused as somebody else's timer.
+    @Test("a timer started a moment after the last input is still ours")
+    func acceptsTimerStartedJustAfterTheLastInput() throws {
+        let entry = running(startedAt: startedAt + 0.05)
+        let absence = Absence(began: startedAt, ended: startedAt + 3600)
+        #expect(try #require(absence.trimmedHours(for: entry)) == 0)
+    }
+
+    @Test("the absence belongs to the day it happened on, not the timer's day")
+    func dayComesFromTheAbsence() {
+        let calendar = Calendar(identifier: .gregorian)
+        let absence = Absence(began: startedAt, ended: startedAt + 3600)
+        #expect(absence.day(in: calendar) == CalendarDate(startedAt, in: calendar))
+    }
+
     @Test("refuses an entry that is not running")
     func refusesStoppedEntry() {
         var entry = running(startedAt: startedAt)
@@ -238,6 +256,9 @@ struct AbsenceResolutionTests {
         let created = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
         #expect(created.hours == 0.5)
         #expect(created.projectID == meeting.project.id)
+        // The absence's own day. Taking it from the interrupted timer would put this
+        // morning's meeting on yesterday's timesheet whenever a timer ran overnight.
+        #expect(created.spentDate == absence.day().description)
         // The timer it was taken from keeps running.
         #expect(await transport.calls(method: "PATCH", containing: "/restart").count == 1)
     }
@@ -259,5 +280,53 @@ struct AbsenceResolutionTests {
         #expect(await transport.calls(method: "PATCH", containing: "/stop").isEmpty)
         #expect(await transport.calls(method: "PATCH", containing: "time_entries").isEmpty)
         #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+    }
+}
+
+/// A create still sitting in the queue reports its hours as the span from its start,
+/// which silently swallows any pause taken before the queue drained. Trimming one
+/// therefore sends the measured total explicitly rather than trusting that span.
+@Suite("Trimming a create that never reached Harvest")
+struct AbsenceAmendedCreateTests {
+    private func temporaryFile() -> URL {
+        URL.temporaryDirectory.appending(path: "sheaves-amend-\(UUID().uuidString).json")
+    }
+
+    @Test("sends the hours measured, not the span the create covers")
+    func correctsTheSpan() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = RoutingTransport([
+            RoutingTransport.Route(method: "POST", fragment: "time_entries", body: Fixture.timeEntry, status: 201),
+            RoutingTransport.Route(method: "PATCH", fragment: "time_entries", body: Fixture.timeEntry),
+        ])
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+        let local = UUID()
+        let target = TimerTarget(
+            project: Reference(id: 14308069, name: "Online Store - Phase 1"),
+            task: Reference(id: 8083366, name: "Programming")
+        )
+
+        // Worked 09:00–09:30, paused, back at 10:00, away from 10:20: fifty minutes.
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        await queue.enqueue(
+            .create(
+                local: local, target: target, spentDate: .today(), notes: nil,
+                startedAt: start, endedAt: nil
+            )
+        )
+        #expect(await queue.amendCreate(local: local, endedAt: start + 80 * 60))
+        await queue.enqueue(.update(.local(local), notes: nil, hours: 50.0 / 60))
+
+        let report = await queue.drain(using: client)
+        #expect(report.applied == 2)
+
+        // The create still reports the whole span, pause included…
+        let created = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
+        #expect(created.hours == 80.0 / 60)
+        // …so the total that stands has to be the one that was measured.
+        let corrections = await transport.calls(method: "PATCH", containing: "time_entries").compactMap(\.hours)
+        #expect(corrections == [50.0 / 60])
     }
 }

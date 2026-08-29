@@ -88,7 +88,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that timer ran — a timer started on the web or a phone — and this machine
     /// has nothing to say about work it never saw.
     private func offerToTrim(_ absence: Absence) {
-        guard absencePrompt.pending == nil else { return }
+        // A newer absence replaces one still waiting for an answer rather than being
+        // dropped. Dropping it was the dangerous half of a stale prompt: the panel
+        // is built to sit open, and an unanswered question must never swallow the
+        // evidence for the absence that came after it.
+        if let showing = absencePrompt.pending {
+            Self.presenceLog.info(
+                "superseding an unanswered absence that ended \(showing.ended, privacy: .public)"
+            )
+        }
         guard let running = tracker.runningEntry,
               absence.trimmedHours(for: running) != nil
         else {

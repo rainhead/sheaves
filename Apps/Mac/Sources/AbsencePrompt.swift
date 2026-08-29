@@ -165,7 +165,15 @@ struct AbsencePromptView: View {
                     onResolve(.trimAndStop)
                 }
             }
-            action("Log the time away separately…", detail: "For the meeting you were actually in") {
+            // Say what happens to the timer it is taken from: this keeps timing,
+            // except on a day that is over, where it stops for the same reason
+            // "Trim and stop" leads there.
+            action(
+                "Log the time away separately…",
+                detail: dayIsOver
+                    ? "Books it to the meeting you were in, and stops this timer"
+                    : "Books it to the meeting you were in, and keeps timing"
+            ) {
                 isChoosingTarget = true
             }
             action("Keep it", detail: "It was working time after all") {

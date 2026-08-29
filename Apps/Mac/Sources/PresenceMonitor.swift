@@ -27,15 +27,55 @@ struct SystemPresenceSensor: PresenceSensor {
         )
     }
 
-    /// True while anything on the machine holds the default input device.
+    /// True while anything on the machine is capturing from any input device.
     ///
     /// This is the whole reason Sheaves does not interrupt calls. Harvest's own app
     /// watches keyboard and mouse alone, so an hour of Zoom looks exactly like an
     /// hour at lunch. `kAudioDevicePropertyDeviceIsRunningSomewhere` is a property
     /// of the device rather than of the audio, so reading it needs no microphone
     /// entitlement, prompts for no permission, and never sees any content.
+    ///
+    /// Every input device is checked, not only the default one: Zoom, Teams and the
+    /// rest let you choose a microphone, and a headset or interface picked there
+    /// while the system default stays on the built-in mic would leave the call
+    /// invisible — precisely the case this exists to handle.
     var isMicrophoneInUse: Bool {
-        guard let device = Self.defaultInputDevice else { return false }
+        Self.inputDevices.contains(where: Self.isCapturing)
+    }
+
+    /// Read every time rather than cached: devices come and go with the cable.
+    private static var inputDevices: [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(0)
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
+        ) == noErr, size > 0 else { return [] }
+
+        var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices
+        ) == noErr else { return [] }
+
+        return devices.filter(hasInput)
+    }
+
+    /// A device with no input streams is a pair of speakers, and speakers are not
+    /// evidence that anybody is here.
+    private static func hasInput(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(0)
+        return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    private static func isCapturing(_ device: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -45,21 +85,6 @@ struct SystemPresenceSensor: PresenceSensor {
         var size = UInt32(MemoryLayout<UInt32>.size)
         let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &running)
         return status == noErr && running != 0
-    }
-
-    /// Read every time rather than cached: plugging in headphones changes it.
-    private static var defaultInputDevice: AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device
-        )
-        return status == noErr && device != 0 ? device : nil
     }
 
     var isScreenLocked: Bool {

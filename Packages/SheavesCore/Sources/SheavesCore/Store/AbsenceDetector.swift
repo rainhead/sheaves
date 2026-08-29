@@ -72,8 +72,24 @@ public extension Absence {
     /// invent a stopping point out of evidence nobody has.
     func trimmedHours(for entry: TrackedEntry) -> Double? {
         guard entry.isRunning, let startedAt = entry.timerStartedAt else { return nil }
-        guard began >= startedAt else { return nil }
-        return entry.bankedHours + began.timeIntervalSince(startedAt) / 3600
+        guard began >= startedAt - Self.startTolerance else { return nil }
+        // Never negative: within the tolerance the last input can precede the start.
+        return entry.bankedHours + max(0, began.timeIntervalSince(startedAt)) / 3600
+    }
+
+    /// A timer is started by a click or a keystroke, and that input *is* the last
+    /// evidence of presence — so for a timer started with the mouse, `began` lands a
+    /// few milliseconds *before* `timerStartedAt`, which is read inside the handler
+    /// the click triggered. Without a little slack the commonest absence of all —
+    /// start a timer, walk to the meeting — would be refused as somebody else's.
+    /// Two minutes is far below the gap that makes a timer someone else's.
+    static var startTolerance: TimeInterval { 120 }
+
+    /// The day the absence itself happened on, which is not always the day of the
+    /// timer it interrupted: a timer left running overnight belongs to yesterday,
+    /// while this morning's meeting belongs to today.
+    func day(in calendar: Calendar = .current) -> CalendarDate {
+        CalendarDate(began, in: calendar)
     }
 }
 

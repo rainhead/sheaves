@@ -460,6 +460,11 @@ public final class TimeTracker {
         on entry: TrackedEntry,
         as resolution: AbsenceResolution
     ) async {
+        // The question can sit on screen for hours, and in that time the entry can be
+        // stopped from a phone, edited on the web, or deleted. Answer for the entry
+        // as it is now: the captured copy is only a record of what was asked about.
+        // An entry that is gone, or no longer running, is no longer ours to trim.
+        guard let entry = entries.first(where: { $0.id == entry.id }) else { return }
         guard !entry.isLocked else { return }
         // Nil means this machine has no standing to speak for the entry; see
         // `Absence.trimmedHours(for:)`.
@@ -473,8 +478,11 @@ public final class TimeTracker {
         case .trimAndStop:
             await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: nil)
         case .trimAndLog(let target):
-            await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: absence.ended)
-            await log(absence, against: target, on: entry.spentDate)
+            // Carrying on would bank today's work onto a day that is over, so an
+            // entry from an earlier day stops here just as `.trimAndStop` would.
+            let resumesAt = entry.spentDate == .today() ? absence.ended : nil
+            await trim(entry, to: trimmed, leftAt: absence.began, resumingAt: resumesAt)
+            await log(absence, against: target)
         }
     }
 
@@ -503,23 +511,33 @@ public final class TimeTracker {
 
         // Harvest's copy of the timer is still running and still counting the
         // absence, so continuing is not one operation but three: stop it, correct
-        // the total, start it again from the moment they came back. An amended
-        // create needs no stop — it now ends where they left.
-        if !amended {
-            await enqueue(.stop(entry.id, hours: hours))
+        // the total, start it again from the moment they came back.
+        var mutations: [Mutation] = []
+        if amended {
+            // The create now ends where they left, but it still reports the hours as
+            // the span from its start — which silently includes any pause taken
+            // before the queue ever drained. Send the total we measured instead.
+            mutations.append(.update(entry.id, notes: nil, hours: hours))
+        } else {
+            mutations.append(.stop(entry.id, hours: hours))
         }
         if let resumedAt {
             // Safe for an amended create too: the queue drains in order and rewrites
             // the local id once the create comes back with a real one.
-            await enqueue(.restart(entry.id, resumedAt: resumedAt, bankedHours: hours))
-        } else if amended {
-            await queueChanged()
+            mutations.append(.restart(entry.id, resumedAt: resumedAt, bankedHours: hours))
         }
+        // Queued together, then sent: enqueueing one at a time syncs in between, so
+        // a quit in that window would persist a stop with no restart behind it and
+        // leave a timer the user asked to keep running stopped instead.
+        await enqueue(mutations)
     }
 
     /// Records the absence itself against another target — the meeting you were
     /// actually in while the timer sat on something else.
-    private func log(_ absence: Absence, against target: TimerTarget, on spentDate: CalendarDate) async {
+    private func log(_ absence: Absence, against target: TimerTarget) async {
+        // The absence's own day. A timer left running overnight belongs to
+        // yesterday; the meeting that interrupted it this morning does not.
+        let spentDate = absence.day()
         let local = UUID()
         if spentDate == day {
             entries.insert(
@@ -537,7 +555,7 @@ public final class TimeTracker {
             )
         }
         noteRecent(target)
-        await enqueue(
+        await enqueue([
             .create(
                 local: local,
                 target: target,
@@ -546,13 +564,21 @@ public final class TimeTracker {
                 startedAt: absence.began,
                 endedAt: absence.ended
             )
-        )
+        ])
     }
 
     // MARK: - Local bookkeeping
 
     private func enqueue(_ mutation: Mutation) async {
-        await queue.enqueue(mutation)
+        await enqueue([mutation])
+    }
+
+    /// Queues a whole sequence before draining, so a sequence that only makes sense
+    /// together is never half-persisted.
+    private func enqueue(_ mutations: [Mutation]) async {
+        for mutation in mutations {
+            await queue.enqueue(mutation)
+        }
         await queueChanged()
     }
 
