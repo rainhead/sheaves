@@ -37,6 +37,10 @@ struct EntryRow: View {
             entry.isRunning ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear),
             in: RoundedRectangle(cornerRadius: 6)
         )
+        // Without a shape, hover only registers over drawn text — a stopped row has
+        // a clear background, so most of it was not hoverable and "Add notes"
+        // appeared only when the pointer crossed the two lines of the label.
+        .contentShape(.rect)
         .onHover { isHovering = $0 }
         .contextMenu {
             Button(entry.notes?.isEmpty == false ? "Edit Notes…" : "Add Notes…") { beginEditingNotes() }
@@ -124,7 +128,10 @@ struct EntryRow: View {
             .buttonStyle(.plain)
             .help("Add notes")
             // Quiet until pointed at, so a day of entries is not a wall of prompts.
+            // Opacity rather than a conditional view: the row keeps its height, so
+            // the list does not shift under the pointer.
             .opacity(isHovering ? 1 : 0)
+            .animation(.easeOut(duration: 0.12), value: isHovering)
         }
     }
 
