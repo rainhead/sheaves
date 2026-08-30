@@ -108,3 +108,50 @@ struct HoursFormattingTests {
         #expect(1.4.formattedHours(.hoursMinutes, locale: Locale(identifier: "ar_EG")) == "١:٢٤")
     }
 }
+
+@Suite("Hours parsing")
+struct HoursParsingTests {
+    private let english = Locale(identifier: "en_US")
+
+    @Test("reads what people type")
+    func readsCommonForms() {
+        #expect(Double.hours(parsing: "1", locale: english) == 1.0)
+        #expect(Double.hours(parsing: "1:30", locale: english) == 1.5)
+        #expect(Double.hours(parsing: ":45", locale: english) == 0.75)
+        #expect(Double.hours(parsing: "1:5", locale: english) == 1.0 + 5.0 / 60)
+        #expect(Double.hours(parsing: "0:00", locale: english) == 0)
+        #expect(Double.hours(parsing: " 2 ", locale: english) == 2.0)
+        #expect(Double.hours(parsing: "1.5", locale: english) == 1.5)
+    }
+
+    @Test("respects the typist's locale")
+    func respectsLocale() {
+        #expect(Double.hours(parsing: "1,5", locale: Locale(identifier: "fr_FR")) == 1.5)
+        #expect(Double.hours(parsing: "1,5", locale: Locale(identifier: "de_DE")) == 1.5)
+    }
+
+    @Test("rejects what it cannot honestly read")
+    func rejectsJunk() {
+        #expect(Double.hours(parsing: "", locale: english) == nil)
+        #expect(Double.hours(parsing: "   ", locale: english) == nil)
+        #expect(Double.hours(parsing: "abc", locale: english) == nil)
+        #expect(Double.hours(parsing: "-1", locale: english) == nil)
+        #expect(Double.hours(parsing: "1:75", locale: english) == nil)
+        #expect(Double.hours(parsing: "1:-5", locale: english) == nil)
+    }
+
+    /// The edit field prefills with the formatted duration, so whatever the app
+    /// displays must read back as the value it displayed.
+    @Test("round-trips what the app displays")
+    func roundTripsDisplay() {
+        for identifier in ["en_US", "fr_FR", "ar_EG"] {
+            let locale = Locale(identifier: identifier)
+            for hours in [0.0, 0.25, 1.4, 10.5] {
+                let shown = hours.formattedHours(.hoursMinutes, locale: locale)
+                #expect(Double.hours(parsing: shown, locale: locale) == hours, "\(identifier) \(shown)")
+            }
+            let decimal = 1.4.formattedHours(.decimal, locale: locale)
+            #expect(Double.hours(parsing: decimal, locale: locale) == 1.4, "\(identifier) \(decimal)")
+        }
+    }
+}

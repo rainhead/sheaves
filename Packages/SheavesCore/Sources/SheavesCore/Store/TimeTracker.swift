@@ -605,6 +605,23 @@ public final class TimeTracker {
 
     public func updateHours(_ entry: TrackedEntry, to hours: Double) async {
         guard !entry.isLocked else { return }
+        // Typing onto a running timer replaces the total and keeps it counting —
+        // getting out of an untracked hour-long meeting and typing "1" must not
+        // also stop the clock. Harvest agrees: patching a live entry's hours sets
+        // the total and restarts its measurement from the moment the patch lands,
+        // which is why the queued mutation carries when the user chose the number.
+        guard !entry.isRunning else {
+            let asOf = Date()
+            mutateLocally(entry.id) {
+                $0.bankedHours = hours
+                $0.timerStartedAt = asOf
+                $0.isPending = true
+            }
+            noteLastActivity()
+            restartClock()
+            await enqueue(.adjust(entry.id, hours: hours, asOf: asOf))
+            return
+        }
         mutateLocally(entry.id) {
             $0.bankedHours = hours
             $0.isRunning = false

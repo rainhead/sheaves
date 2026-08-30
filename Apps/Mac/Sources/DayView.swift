@@ -20,6 +20,9 @@ struct DayView: View {
     /// Which entry, if any, has its notes field open. Held here so the panel can hand
     /// the keyboard over to it entirely, and so only one row can be editing.
     @State private var editingNotes: TrackedEntry.ID?
+    /// The duration field open on an entry, on the same terms as the notes.
+    @State private var editingHours: TrackedEntry.ID?
+    private var isEditingField: Bool { editingNotes != nil || editingHours != nil }
     @FocusState private var isPanelFocused: Bool
 
     private var format: HoursFormat { HoursFormat(company: tracker.company) }
@@ -87,11 +90,11 @@ struct DayView: View {
         .onAppear { isPanelFocused = true }
     }
 
-    /// Every key here defers to an open notes field. Relying on the text field to
-    /// swallow them would leave the arrows moving the selection out from under
-    /// somebody in the middle of typing.
+    /// Every key here defers to an open notes or duration field. Relying on the text
+    /// field to swallow them would leave the arrows moving the selection out from
+    /// under somebody in the middle of typing.
     private func move(by offset: Int) -> KeyPress.Result {
-        guard editingNotes == nil else { return .ignored }
+        guard !isEditingField else { return .ignored }
         let rows = self.rows
         guard !rows.isEmpty else { return .ignored }
         let current = effectiveSelection.flatMap { rows.firstIndex(of: $0) } ?? 0
@@ -102,7 +105,7 @@ struct DayView: View {
     /// ⏎ does whatever the selected row's button does: stop or resume an entry, start
     /// a project.
     private func activate() -> KeyPress.Result {
-        guard editingNotes == nil else { return .ignored }
+        guard !isEditingField else { return .ignored }
         switch effectiveSelection {
         case .entry(let id):
             // Locked, so the row's own button is disabled: the keyboard must not do
@@ -187,6 +190,10 @@ struct DayView: View {
                                 isEditingNotes: Binding(
                                     get: { editingNotes == entry.id },
                                     set: { editingNotes = $0 ? entry.id : nil }
+                                ),
+                                isEditingHours: Binding(
+                                    get: { editingHours == entry.id },
+                                    set: { editingHours = $0 ? entry.id : nil }
                                 )
                             )
                             .id(entry.id)

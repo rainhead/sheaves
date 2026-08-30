@@ -421,3 +421,31 @@ struct CreateFollowUpTests {
         #expect(await queue.isEmpty)
     }
 }
+
+/// Typing a total onto a running timer while the network is down must not freeze
+/// the clock at the typed number: Harvest counts on from the moment the patch
+/// arrives, so the queue folds in the time since the user chose it.
+@Suite("Adjusting a running timer")
+struct RunningAdjustmentTests {
+    @Test("an adjusted total gains the time since the user set it")
+    func adjustAddsElapsedSinceChosen() async throws {
+        let file = URL.temporaryDirectory.appending(path: "sheaves-adjust-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = RoutingTransport([
+            RoutingTransport.Route(method: "PATCH", fragment: "time_entries", body: Fixture.runningTimeEntry)
+        ])
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+
+        // "1" typed half an hour ago: Harvest must hear 1:30.
+        await queue.enqueue(
+            .adjust(.server(636708906), hours: 1.0, asOf: Date().addingTimeInterval(-1800))
+        )
+        let report = await queue.drain(using: client)
+
+        #expect(report.applied == 1)
+        let patch = try #require(await transport.calls(method: "PATCH", containing: "time_entries").first)
+        let hours = try #require(patch.hours)
+        #expect(abs(hours - 1.5) < 0.01)
+    }
+}
