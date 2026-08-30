@@ -271,3 +271,63 @@ struct ProjectAssignmentTests {
         #expect(targets[0].id == "14308069:8083365")
     }
 }
+
+@Suite("Pagination")
+struct PaginationTests {
+    /// The failure this guards against is silent. Harvest returns null for `page`,
+    /// `next_page` and `previous_page` on every page but the first and last of a
+    /// cursor-paginated response, so a client that walks page numbers collects the
+    /// first page, sees no next page, and reports success having dropped the rest.
+    @Test("follows links.next when the page numbers are null")
+    func followsCursorLinks() async throws {
+        let cursor = "https://api.harvestapp.com/v2/time_entries?cursor=abc123&per_page=2000"
+        let transport = StubTransport([
+            .init(body: Fixture.timeEntriesPage([Fixture.timeEntry], nextPage: nil, nextLink: cursor)),
+            .init(body: Fixture.timeEntriesPage([Fixture.runningTimeEntry], nextPage: nil)),
+        ])
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+
+        let entries = try await client.timeEntries(
+            userID: 1782959,
+            from: Fixture.today,
+            to: Fixture.today
+        )
+
+        #expect(entries.count == 2)
+        // The second request went to Harvest's own URL, cursor and all.
+        #expect(await transport.request(at: 1).url?.absoluteString == cursor)
+        // And it still carries the headers Harvest requires.
+        #expect(await transport.request(at: 1).value(forHTTPHeaderField: "Harvest-Account-Id") == "12345")
+    }
+
+    /// Page numbers stay the fallback for a response with no links section.
+    @Test("falls back to page numbers when no link is given")
+    func fallsBackToPageNumbers() async throws {
+        let transport = StubTransport([
+            .init(body: Fixture.timeEntriesPage([Fixture.timeEntry], nextPage: 2, page: 1, totalPages: 2)),
+            .init(body: Fixture.timeEntriesPage([Fixture.runningTimeEntry], nextPage: nil, page: 2, totalPages: 2)),
+        ])
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+
+        let entries = try await client.timeEntries(userID: 1782959, from: Fixture.today, to: Fixture.today)
+
+        #expect(entries.count == 2)
+        #expect(await transport.request(at: 1).url?.absoluteString.contains("page=2") == true)
+    }
+
+    /// A link pointing back at a page already fetched would otherwise never end.
+    @Test("stops rather than looping on a repeated link")
+    func stopsOnALoop() async throws {
+        let itself = "https://api.harvestapp.com/v2/time_entries?from=\(Fixture.today)&page=1&per_page=2000&to=\(Fixture.today)&user_id=1782959"
+        let transport = StubTransport([
+            .init(body: Fixture.timeEntriesPage([Fixture.timeEntry], nextLink: itself)),
+            .init(body: Fixture.timeEntriesPage([Fixture.timeEntry], nextLink: itself)),
+        ])
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+
+        let entries = try await client.timeEntries(userID: 1782959, from: Fixture.today, to: Fixture.today)
+
+        #expect(entries.count == 1)
+        #expect(await transport.requestCount == 1)
+    }
+}

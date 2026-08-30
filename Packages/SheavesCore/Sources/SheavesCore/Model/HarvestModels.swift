@@ -149,6 +149,14 @@ struct Page<Item: PaginatedItem>: Decodable, Sendable {
     let totalPages: Int
     let totalEntries: Int
     let nextPage: Int?
+    /// Harvest's own URL for the next page.
+    ///
+    /// Preferred over `nextPage`, and the reason this exists: on a cursor-paginated
+    /// response Harvest returns null for `page`, `next_page` and `previous_page` on
+    /// every page but the first and last, so walking page numbers stops after one
+    /// page and silently loses the rest. Harvest's documentation says to follow these
+    /// links rather than build pagination URLs.
+    let nextLink: URL?
 
     private struct AnyKey: CodingKey {
         let stringValue: String
@@ -158,9 +166,15 @@ struct Page<Item: PaginatedItem>: Decodable, Sendable {
         init(_ literal: String) { self.stringValue = literal }
     }
 
+    private struct Links: Decodable {
+        let next: String?
+    }
+
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: AnyKey.self)
         items = try container.decode([Item].self, forKey: AnyKey(Item.pageKey))
+        nextLink = try container.decodeIfPresent(Links.self, forKey: AnyKey("links"))?
+            .next.flatMap { URL(string: $0) }
         page = try container.decodeIfPresent(Int.self, forKey: AnyKey("page")) ?? 1
         totalPages = try container.decodeIfPresent(Int.self, forKey: AnyKey("totalPages")) ?? 1
         totalEntries = try container.decodeIfPresent(Int.self, forKey: AnyKey("totalEntries")) ?? items.count

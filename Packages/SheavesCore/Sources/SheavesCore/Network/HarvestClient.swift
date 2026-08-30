@@ -162,20 +162,41 @@ public actor HarvestClient {
         return try Self.decode(T.self, from: data, endpoint: path)
     }
 
+    /// Follows Harvest's own `links.next` rather than counting pages.
+    ///
+    /// Harvest's documentation is explicit that pagination URLs should be followed
+    /// rather than constructed, and the reason bites here: a cursor-paginated response
+    /// returns null for `page`, `next_page` and `previous_page` on every page but the
+    /// first and last. Walking page numbers therefore stops after one page and drops
+    /// the rest without any error to notice. Page numbers remain the fallback, for a
+    /// response that carries no links.
     private func getAllPages<Item: PaginatedItem>(
         _ path: String,
         query: [String: String] = [:]
     ) async throws -> [Item] {
+        var query = query
+        query["per_page"] = "2000"
+        query["page"] = "1"
+
         var collected: [Item] = []
-        var page = 1
-        while true {
-            var query = query
-            query["page"] = String(page)
-            query["per_page"] = "2000"
-            let envelope: Page<Item> = try await get(path, query: query)
+        var next: URL? = try Self.url(path: path, query: query)
+        // A malformed or looping `links.next` would otherwise fetch forever.
+        var visited: Set<URL> = []
+
+        while let url = next, visited.insert(url).inserted {
+            let data = try await perform(request(url: url))
+            let envelope = try Self.decode(Page<Item>.self, from: data, endpoint: path)
             collected.append(contentsOf: envelope.items)
-            guard let next = envelope.nextPage else { break }
-            page = next
+
+            if let link = envelope.nextLink {
+                next = link
+            } else if let page = envelope.nextPage {
+                var query = query
+                query["page"] = String(page)
+                next = try Self.url(path: path, query: query)
+            } else {
+                next = nil
+            }
         }
         return collected
     }
@@ -192,10 +213,9 @@ public actor HarvestClient {
         return try Self.decode(T.self, from: data, endpoint: path)
     }
 
-    private func request(path: String, method: String = "GET", query: [String: String] = [:]) throws -> URLRequest {
-        guard let credentials, credentials.isComplete else { throw HarvestError.notConfigured }
+    static func url(path: String, query: [String: String] = [:]) throws -> URL {
         guard var components = URLComponents(
-            url: Self.baseURL.appending(path: path),
+            url: baseURL.appending(path: path),
             resolvingAgainstBaseURL: false
         ) else { throw HarvestError.invalidResponse }
         if !query.isEmpty {
@@ -204,7 +224,16 @@ public actor HarvestClient {
                 .map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         guard let url = components.url else { throw HarvestError.invalidResponse }
+        return url
+    }
 
+    private func request(path: String, method: String = "GET", query: [String: String] = [:]) throws -> URLRequest {
+        try request(url: Self.url(path: path, query: query), method: method)
+    }
+
+    /// Headers for a URL Harvest handed us, which is how pagination is followed.
+    private func request(url: URL, method: String = "GET") throws -> URLRequest {
+        guard let credentials, credentials.isComplete else { throw HarvestError.notConfigured }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
