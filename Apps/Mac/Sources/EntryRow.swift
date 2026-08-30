@@ -92,7 +92,15 @@ struct EntryRow: View {
             titleVisibility: .visible
         ) {
             Button("Start on Today") {
-                Task { await tracker.start(entry.target, notes: entry.notes, on: .today()) }
+                // To today first, then start: the dedupe in `start` can only see
+                // the visible day's list, and starting blind from here duplicated
+                // an entry the user already had today. Going there also puts the
+                // new timer where the eye can follow it — a timer started on today
+                // from yesterday's view used to vanish the moment it stopped.
+                Task {
+                    await tracker.goToToday()
+                    await tracker.start(entry.target, notes: entry.notes)
+                }
             }
             Button("Resume on \(entryDayLabel)") {
                 Task { await tracker.resume(entry) }
