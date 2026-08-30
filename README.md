@@ -92,6 +92,16 @@ than left to wedge everything behind it. An entry started offline has no Harvest
 yet, which is why [`TrackedEntry`](Packages/SheavesCore/Sources/SheavesCore/Model/TrackedEntry.swift)
 identity is either a server id or a local one, swapped when the create lands.
 
+**Syncing is event-driven, plus a probe for everyone else's edits.** Every action
+syncs on the spot, and opening the panel does too — so a background probe exists
+only to catch changes made outside this app, like the web timesheet or a phone. Its
+cadence follows what the request costs: outside edits land within a minute while
+you are working on mains power, an idle machine checks occasionally, a battery
+slows both, and Low Power Mode stops the probe entirely. The cadence is
+[`TimeTracker.probeInterval`](Packages/SheavesCore/Sources/SheavesCore/Store/TimeTracker.swift);
+the Mac shell answers the power question through
+[`PowerSource`](Apps/Mac/Sources/PowerSource.swift).
+
 **The menu bar is a control, not a readout.** The status item shows a pause button
 while a timer runs and a play button for 90 minutes after one stops, so the common
 action costs one click and opens nothing; clicking the name opens the popover

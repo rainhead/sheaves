@@ -526,3 +526,58 @@ struct ReconnectTests {
         #expect(tracker.connection == .online)
     }
 }
+
+/// The background probe exists to catch changes made outside this app; these pin
+/// how its cadence follows power and recent usage rather than the exact numbers,
+/// which are tuning.
+@Suite("Probe cadence")
+struct ProbeCadenceTests {
+    private var running: TimeTracker.Activity {
+        .running(
+            TrackedEntry(
+                id: .server(1), project: Reference(id: 1, name: "P"),
+                task: Reference(id: 2, name: "T"), spentDate: .today(),
+                bankedHours: 0, isRunning: true, timerStartedAt: Date()
+            )
+        )
+    }
+
+    @Test("Low Power Mode stops the probe entirely")
+    func lowPowerStopsProbing() {
+        #expect(TimeTracker.probeInterval(for: running, on: .lowPower) == nil)
+        #expect(TimeTracker.probeInterval(for: .idle, on: .lowPower) == nil)
+    }
+
+    @Test("a battery probes less often than the mains, never never")
+    func batterySlowsButKeepsProbing() throws {
+        let activeMains = try #require(TimeTracker.probeInterval(for: running, on: .pluggedIn))
+        let activeBattery = try #require(TimeTracker.probeInterval(for: running, on: .battery))
+        let idleMains = try #require(TimeTracker.probeInterval(for: .idle, on: .pluggedIn))
+        let idleBattery = try #require(TimeTracker.probeInterval(for: .idle, on: .battery))
+        #expect(activeBattery > activeMains)
+        #expect(idleBattery > idleMains)
+    }
+
+    @Test("working hours probe more often than idle ones")
+    func recentUsageQuickensProbing() throws {
+        for power in [PowerState.pluggedIn, .battery] {
+            let active = try #require(TimeTracker.probeInterval(for: running, on: power))
+            let idle = try #require(TimeTracker.probeInterval(for: .idle, on: power))
+            #expect(active < idle)
+        }
+    }
+
+    @Test("a recently stopped timer counts as usage, not idleness")
+    func recentTimerCountsAsUsage() throws {
+        var entry = TrackedEntry(
+            id: .server(1), project: Reference(id: 1, name: "P"),
+            task: Reference(id: 2, name: "T"), spentDate: .today(),
+            bankedHours: 0.5, isRunning: false
+        )
+        entry.updatedAt = Date()
+        let recent = TimeTracker.Activity.recent(entry)
+        let interval = try #require(TimeTracker.probeInterval(for: recent, on: .pluggedIn))
+        let idle = try #require(TimeTracker.probeInterval(for: .idle, on: .pluggedIn))
+        #expect(interval < idle)
+    }
+}

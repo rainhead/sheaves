@@ -80,6 +80,25 @@ public final class TimeTracker {
     /// back to a bare icon.
     public static let recentActivityWindow: TimeInterval = 90 * 60
 
+    /// How long the visible day may go unchecked before the app asks Harvest
+    /// uninvited, or nil when it should not ask at all.
+    ///
+    /// Every user action already syncs on the spot; the probe exists to catch
+    /// changes made elsewhere — the web timesheet, a phone. Its cadence follows
+    /// what the request costs: someone mid-workday sees outside edits land within
+    /// a minute, a machine idle for hours checks occasionally, a battery slows
+    /// both, and Low Power Mode is the user saying to spend nothing — the probe
+    /// stops and syncing goes back to being purely event-driven.
+    nonisolated static func probeInterval(for activity: Activity, on power: PowerState) -> TimeInterval? {
+        switch (power, activity) {
+        case (.lowPower, _): nil
+        case (.pluggedIn, .idle): 10 * 60
+        case (.pluggedIn, _): 60
+        case (.battery, .idle): 30 * 60
+        case (.battery, _): 5 * 60
+        }
+    }
+
     public var isToday: Bool { day == .today() }
 
     /// The budget to show beside `entry`, or nil when there is nothing to show.
@@ -121,12 +140,23 @@ public final class TimeTracker {
 
     // MARK: Collaborators
 
+    /// Where the probe learns how the machine is powered. The Mac app swaps in an
+    /// IOKit-backed answer at launch; the default can only see Low Power Mode, so
+    /// it errs on treating a battery as plugged in.
+    public var powerState: @MainActor () -> PowerState = {
+        ProcessInfo.processInfo.isLowPowerModeEnabled ? .lowPower : .pluggedIn
+    }
+
     private let client: HarvestClient
     private let keychain: KeychainStore
     private let snapshots: SnapshotStore
     private let queue: MutationQueue
     private var ticker: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
+    /// When the last sync *began*, however it was triggered and however it ended.
+    /// The probe paces itself by this rather than `lastSyncedAt` so a failing
+    /// connection is retried on the probe's cadence, not on every tick.
+    private var lastSyncStartedAt: Date?
     private var accountDataFetchedAt: Date?
     private var budgetAvailability: BudgetAvailability = .unknown
     /// Client currencies by client id, and whether Harvest refused to say. Only an
@@ -279,6 +309,7 @@ public final class TimeTracker {
             connection = .needsCredentials
             return
         }
+        lastSyncStartedAt = Date()
         advanceDayIfNeeded()
 
         let report = await queue.drain(using: client)
@@ -875,6 +906,8 @@ public final class TimeTracker {
                 self.now = Date()
                 if !self.isPinnedToDay, self.day != CalendarDate.today() {
                     Task { await self.sync() }
+                } else if self.isProbeDue() {
+                    Task { await self.sync() }
                 }
             }
         }
@@ -885,4 +918,21 @@ public final class TimeTracker {
         now = Date()
         startTicking()
     }
+
+    /// Whether the day has gone unverified long enough, given power and recent
+    /// usage, to be worth a request nobody asked for.
+    private func isProbeDue() -> Bool {
+        guard connection.isConfigured else { return false }
+        guard let interval = Self.probeInterval(for: activity, on: powerState()) else { return false }
+        return Date().timeIntervalSince(lastSyncStartedAt ?? .distantPast) >= interval
+    }
+}
+
+/// How the machine is powered, as far as polite background traffic cares.
+public enum PowerState: Sendable, Equatable {
+    case pluggedIn
+    case battery
+    /// The user has asked the whole machine to conserve, so ambient network
+    /// activity should stop rather than merely slow.
+    case lowPower
 }
