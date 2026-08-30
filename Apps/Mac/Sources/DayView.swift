@@ -187,13 +187,22 @@ struct DayView: View {
                                 entry: entry,
                                 format: format,
                                 isSelected: effectiveSelection == .entry(entry.id),
+                                // Opening either field closes the other, wherever it
+                                // is: the keyboard defers to "the open field", which
+                                // must therefore be singular.
                                 isEditingNotes: Binding(
                                     get: { editingNotes == entry.id },
-                                    set: { editingNotes = $0 ? entry.id : nil }
+                                    set: {
+                                        editingNotes = $0 ? entry.id : nil
+                                        if $0 { editingHours = nil }
+                                    }
                                 ),
                                 isEditingHours: Binding(
                                     get: { editingHours == entry.id },
-                                    set: { editingHours = $0 ? entry.id : nil }
+                                    set: {
+                                        editingHours = $0 ? entry.id : nil
+                                        if $0 { editingNotes = nil }
+                                    }
                                 )
                             )
                             .id(entry.id)

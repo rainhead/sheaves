@@ -189,3 +189,44 @@ struct TrackedEntryTests {
         #expect(tracked.hours() == 2.11)
     }
 }
+
+/// The queue is an actor, so it is free to be mutated while a request is in
+/// flight: disconnecting mid-drain calls `removeAll` under a suspended `drain`.
+/// The landing request must notice the queue changed under it, not trap on it.
+@Suite("Draining under mutation")
+struct DrainReentrancyTests {
+    private var target: TimerTarget {
+        TimerTarget(
+            project: Reference(id: 14308069, name: "Online Store - Phase 1"),
+            task: Reference(id: 8083366, name: "Programming")
+        )
+    }
+
+    @Test("a queue emptied mid-request survives the request landing")
+    func removeAllDuringFlight() async throws {
+        let file = URL.temporaryDirectory.appending(path: "sheaves-reentrant-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let queue = MutationQueue(fileURL: file)
+        await queue.enqueue(
+            .create(local: UUID(), target: target, spentDate: .today(), notes: nil,
+                    startedAt: Date().addingTimeInterval(-3600), endedAt: nil)
+        )
+
+        let transport = GatedTransport()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let drain = Task { await queue.drain(using: client) }
+        while await transport.arrived == 0 {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        // Disconnect while the create is in flight, then let it land.
+        await queue.removeAll()
+        await transport.releaseAll()
+        let report = await drain.value
+
+        // The POST reached Harvest, but the cleared queue stays cleared: no
+        // resurrected follow-up, and above all no trap on the empty array.
+        #expect(report.applied == 1)
+        #expect(await queue.isEmpty)
+    }
+}

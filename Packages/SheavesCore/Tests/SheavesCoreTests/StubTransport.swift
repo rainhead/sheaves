@@ -515,3 +515,29 @@ extension RoutingTransport {
         ])
     }
 }
+
+/// Parks every request until the test releases it, so a drain can be caught with a
+/// request in flight — which is when the queue actor is free to be mutated under it.
+actor GatedTransport: HarvestTransport {
+    private var parked: [CheckedContinuation<Void, Never>] = []
+    private(set) var arrived = 0
+    private let body: String
+
+    init(body: String = Fixture.timeEntry) {
+        self.body = body
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        arrived += 1
+        await withCheckedContinuation { parked.append($0) }
+        let http = HTTPURLResponse(
+            url: request.url!, statusCode: 201, httpVersion: "HTTP/1.1", headerFields: nil
+        )!
+        return (Data(body.utf8), http)
+    }
+
+    func releaseAll() {
+        for continuation in parked { continuation.resume() }
+        parked.removeAll()
+    }
+}
