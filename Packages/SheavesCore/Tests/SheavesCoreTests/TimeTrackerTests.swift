@@ -219,38 +219,44 @@ struct TimeTrackerTests {
         #expect(tracker.runningEntry?.task.name == target.task.name)
     }
 
-    /// Play on yesterday's entry offers "on today instead"; the start that follows
-    /// must charge today even though the panel is showing yesterday.
-    @Test("starts on today from a past day's view when asked to")
-    func startsOnTodayFromPastDay() async throws {
-        let transport = RoutingTransport.standardAccount()
+    /// "Start on Today" must resume an entry the user already has today, not add a
+    /// duplicate — which is why the offer goes to today before starting: the dedupe
+    /// in `start` can only see the visible day's list.
+    @Test("the offer resumes today's existing entry rather than duplicating it")
+    func offerResumesExistingTodayEntry() async throws {
+        // Today already holds a stopped entry for the very target on offer.
+        let existing = Fixture.timeEntry
+            .replacingOccurrences(of: "636709355", with: "700000001")
+            .replacingOccurrences(of: "14307913", with: "14308069")
+        let transport = RoutingTransport.standardAccount(entries: [existing])
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
         let target = try #require(tracker.targets.first)
         await tracker.selectDay(.today().adding(days: -1))
 
-        await tracker.start(target, notes: "carried over", on: .today())
+        // The dialog's action: to today first, then start.
+        await tracker.goToToday()
+        await tracker.start(target, notes: "carried over")
 
-        let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
-        #expect(post.spentDate == CalendarDate.today().description)
-        #expect(post.notes == "carried over")
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(await transport.calls(method: "PATCH", containing: "700000001/restart").count == 1)
     }
 
-    /// Stopping the "on today instead" timer while still viewing the past day must
-    /// leave it one click away in the menu bar, not strand a stale running copy.
+    /// Stopping a today-dated timer while viewing a past day must leave it one
+    /// click away in the menu bar, not strand a stale running copy.
     @Test("a today-timer stopped from a past day's view stays recent")
     func offPanelStopStaysRecent() async throws {
-        let transport = RoutingTransport.standardAccount()
+        let transport = RoutingTransport.accountWithRunningTimer()
         let (tracker, snapshot, queue) = makeTracker(transport: transport)
         defer { cleanUp(snapshot, queue) }
         await tracker.sync()
-        let target = try #require(tracker.targets.first)
+        // The running timer is dated today; browse to yesterday, where it is folded
+        // into the visible list, and stop it from there.
         await tracker.selectDay(.today().adding(days: -1))
         await transport.goOffline()
-
-        await tracker.start(target, on: .today())
         let running = try #require(tracker.runningEntry)
+
         await tracker.stop(running)
 
         guard case .recent(let entry) = tracker.activity else {

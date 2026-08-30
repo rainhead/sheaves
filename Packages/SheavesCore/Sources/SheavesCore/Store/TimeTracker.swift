@@ -501,20 +501,19 @@ public final class TimeTracker {
 
     // MARK: - Timer actions
 
-    /// Starts (or resumes) a timer for `target` — on the visible day, unless the
-    /// caller names another. Play on a past day's entry offers "on today instead",
-    /// which is a start on a date the panel is not showing.
-    public func start(_ target: TimerTarget, notes: String? = nil, on date: CalendarDate? = nil) async {
-        let date = date ?? day
-        if let existing = entries.first(where: { $0.target.id == target.id && $0.spentDate == date }) {
+    /// Starts (or resumes) a timer for `target` on the visible day.
+    ///
+    /// The dedupe below can only see the visible day's list — which is why "start
+    /// on today instead" goes to today *first*: started blind from a past day's
+    /// view, it duplicated an entry the user already had today.
+    public func start(_ target: TimerTarget, notes: String? = nil) async {
+        if let existing = entries.first(where: { $0.target.id == target.id && $0.spentDate == day }) {
             await resume(existing)
             return
         }
 
         stopRunningLocally()
         let local = UUID()
-        // Into the visible list even when the date is elsewhere: it is running, and
-        // `merge` folds the running timer into whatever day is on screen anyway.
         entries.insert(
             TrackedEntry(
                 id: .local(local),
@@ -522,7 +521,7 @@ public final class TimeTracker {
                 task: target.task,
                 client: target.client,
                 notes: notes,
-                spentDate: date,
+                spentDate: day,
                 bankedHours: 0,
                 isRunning: true,
                 timerStartedAt: Date(),
@@ -537,7 +536,7 @@ public final class TimeTracker {
             .create(
                 local: local,
                 target: target,
-                spentDate: date,
+                spentDate: day,
                 notes: notes,
                 startedAt: Date(),
                 endedAt: nil
@@ -785,6 +784,11 @@ public final class TimeTracker {
     private func mutateLocally(_ id: TrackedEntry.ID, _ change: (inout TrackedEntry) -> Void) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         change(&entries[index])
+        // A local change is an update, and recency decides what the menu bar
+        // offers: without this, stopping a long-running timer offline reads as
+        // hours-old activity and the resume button vanishes. The next sync brings
+        // Harvest's own timestamp, which says the same thing.
+        entries[index].updatedAt = Date()
     }
 
     /// Harvest stops the running timer when another starts; mirror that locally so the
