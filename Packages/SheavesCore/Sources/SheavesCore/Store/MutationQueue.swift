@@ -24,6 +24,10 @@ public enum Mutation: Codable, Sendable, Hashable {
     /// `bankedHours` is the total before resuming; `resumedAt` is when the user did.
     case restart(TrackedEntry.ID, resumedAt: Date, bankedHours: Double)
     case update(TrackedEntry.ID, notes: String?, hours: Double?)
+    /// A new total typed onto a timer still running. Harvest sets the total and
+    /// counts on from the moment the patch *arrives*, so `asOf` — when the user
+    /// chose the number — is folded in as elapsed time however late that is.
+    case adjust(TrackedEntry.ID, hours: Double, asOf: Date)
     case delete(TrackedEntry.ID)
 
     /// The entry this mutation acts on, so the queue can rewrite local ids once
@@ -34,6 +38,7 @@ public enum Mutation: Codable, Sendable, Hashable {
         case .stop(let id, _): id
         case .restart(let id, _, _): id
         case .update(let id, _, _): id
+        case .adjust(let id, _, _): id
         case .delete(let id): id
         }
     }
@@ -44,6 +49,7 @@ public enum Mutation: Codable, Sendable, Hashable {
         case .stop(_, let hours): .stop(id, hours: hours)
         case .restart(_, let resumedAt, let banked): .restart(id, resumedAt: resumedAt, bankedHours: banked)
         case .update(_, let notes, let hours): .update(id, notes: notes, hours: hours)
+        case .adjust(_, let hours, let asOf): .adjust(id, hours: hours, asOf: asOf)
         case .delete: .delete(id)
         }
     }
@@ -264,6 +270,14 @@ public actor MutationQueue {
                 id: serverID,
                 notes: notes,
                 hours: hours.map(Self.storableHours)
+            )
+
+        case .adjust(let id, let hours, let asOf):
+            guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
+            let elapsed = max(0, Date().timeIntervalSince(asOf)) / 3600
+            return try await client.updateTimeEntry(
+                id: serverID,
+                hours: Self.storableHours(hours + elapsed)
             )
 
         case .delete(let id):

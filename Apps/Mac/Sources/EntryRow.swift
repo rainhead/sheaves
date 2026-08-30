@@ -10,10 +10,14 @@ struct EntryRow: View {
     /// Held by the panel rather than the row, so that only one row can be editing at
     /// a time and so the panel knows to leave the keyboard alone while one is.
     @Binding var isEditingNotes: Bool
+    /// Same arrangement for the duration, which is a field the way the notes are.
+    @Binding var isEditingHours: Bool
     @State private var draftNotes = ""
+    @State private var draftHours = ""
     @State private var isConfirmingDelete = false
     @State private var isHovering = false
     @FocusState private var isNotesFocused: Bool
+    @FocusState private var isHoursFocused: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -45,6 +49,8 @@ struct EntryRow: View {
         .contextMenu {
             Button(entry.notes?.isEmpty == false ? "Edit Notes…" : "Add Notes…") { beginEditingNotes() }
                 .disabled(entry.isLocked)
+            Button("Edit Time…") { beginEditingHours() }
+                .disabled(entry.isLocked)
             Button("Delete…", role: .destructive) { isConfirmingDelete = true }
                 .disabled(entry.isLocked)
         }
@@ -59,6 +65,7 @@ struct EntryRow: View {
         .accessibilityAction(named: entry.notes?.isEmpty == false ? "Edit notes" : "Add notes") {
             beginEditingNotes()
         }
+        .accessibilityAction(named: "Edit time") { beginEditingHours() }
         .confirmationDialog(
             "Delete this time entry?",
             isPresented: $isConfirmingDelete,
@@ -167,9 +174,37 @@ struct EntryRow: View {
                     .foregroundStyle(.secondary)
                     .help("Approved or invoiced — Harvest won’t accept changes")
             }
-            Text(entry.hours(asOf: tracker.now).formattedHours(format))
-                .font(.callout.monospacedDigit())
-                .fontWeight(entry.isRunning ? .semibold : .regular)
+            if isEditingHours {
+                TextField("0:00", text: $draftHours)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout.monospacedDigit())
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 58)
+                    .focused($isHoursFocused)
+                    .onSubmit(commitHours)
+                    .onExitCommand { isEditingHours = false }
+                    .onAppear {
+                        // Normally prefilled by `beginEditingHours`; also here, so a
+                        // render that opens the field directly (the documentation
+                        // images) shows what a user would see.
+                        if draftHours.isEmpty {
+                            draftHours = entry.hours(asOf: tracker.now).formattedHours(format)
+                        }
+                        isHoursFocused = true
+                    }
+            } else {
+                // A field pretending to be a label, exactly like the notes above:
+                // out of a meeting nobody timed, the fix is to click the duration
+                // and type "1".
+                Button(action: beginEditingHours) {
+                    Text(entry.hours(asOf: tracker.now).formattedHours(format))
+                        .font(.callout.monospacedDigit())
+                        .fontWeight(entry.isRunning ? .semibold : .regular)
+                }
+                .buttonStyle(.plain)
+                .disabled(entry.isLocked)
+                .help("Edit time")
+            }
         }
     }
 
@@ -192,6 +227,21 @@ struct EntryRow: View {
         guard !entry.isLocked else { return }
         draftNotes = entry.notes ?? ""
         isEditingNotes = true
+    }
+
+    private func beginEditingHours() {
+        guard !entry.isLocked else { return }
+        draftHours = entry.hours(asOf: tracker.now).formattedHours(format)
+        isEditingHours = true
+    }
+
+    private func commitHours() {
+        isEditingHours = false
+        guard let hours = Double.hours(parsing: draftHours) else { return }
+        // A stopped entry left as it was should not be marked pending over nothing;
+        // a running one always takes the new value, because its total is moving.
+        guard entry.isRunning || hours != entry.bankedHours else { return }
+        Task { await tracker.updateHours(entry, to: hours) }
     }
 
     private func commitNotes() {

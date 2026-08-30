@@ -33,7 +33,21 @@ enum DocumentationImages {
                 DayView().environment(tracker),
                 width: 380,
                 to: directory.appending(path: "menu-bar.png")
-            )
+            ),
+            // The duration open for typing, which a picture of the whole panel
+            // cannot show: the edit state lives in the panel's own selection.
+            try await write(
+                EntryRow(
+                    entry: tracker.entries.first { $0.isRunning } ?? tracker.entries[0],
+                    format: HoursFormat(company: tracker.company),
+                    isEditingNotes: .constant(false),
+                    isEditingHours: .constant(true)
+                )
+                .environment(tracker)
+                .padding(8),
+                width: 380,
+                to: directory.appending(path: "edit-hours.png")
+            ),
         ]
     }
 
