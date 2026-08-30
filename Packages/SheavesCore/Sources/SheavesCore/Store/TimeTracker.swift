@@ -922,7 +922,9 @@ public final class TimeTracker {
     /// Whether the day has gone unverified long enough, given power and recent
     /// usage, to be worth a request nobody asked for.
     private func isProbeDue() -> Bool {
-        guard connection.isConfigured else { return false }
+        // Not while one is in flight: syncs chain rather than cancel, so a slow
+        // one would bank a queue of ticks to replay back-to-back on recovery.
+        guard connection.isConfigured, syncTask == nil else { return false }
         guard let interval = Self.probeInterval(for: activity, on: powerState()) else { return false }
         return Date().timeIntervalSince(lastSyncStartedAt ?? .distantPast) >= interval
     }

@@ -171,7 +171,9 @@ struct OfflineTimingTests {
         )
         let report = await queue.drain(using: client)
 
-        #expect(report.applied == 1)
+        // Two mutations by the time it drains: the create, then the stop that
+        // replaced it in the queue once the POST had landed.
+        #expect(report.applied == 2)
         #expect(report.discarded.isEmpty)
         let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
         #expect(post.hours == nil)
@@ -326,5 +328,96 @@ struct LocalIdentifierHandoffTests {
 
         #expect(report.applied == 1)
         #expect(report.discarded.isEmpty)
+    }
+}
+
+
+/// The queue must never send the same create twice. A create that needs a second
+/// request — a restart, or a stop — commits to the queue the moment its POST
+/// succeeds, and the second request takes its place as an ordinary mutation; a
+/// failure between the two retries only the second.
+@Suite("Create follow-ups")
+struct CreateFollowUpTests {
+    private var target: TimerTarget {
+        TimerTarget(
+            project: Reference(id: 14308069, name: "Online Store - Phase 1"),
+            task: Reference(id: 8083366, name: "Programming")
+        )
+    }
+
+    private func temporaryFile() -> URL {
+        URL.temporaryDirectory.appending(path: "sheaves-followup-\(UUID().uuidString).json")
+    }
+
+    @Test("a transient restart failure never repeats the create")
+    func restartFailureDoesNotRepeatCreate() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let queue = MutationQueue(fileURL: file)
+        await queue.enqueue(
+            .create(local: UUID(), target: target, spentDate: .today(), notes: nil,
+                    startedAt: Date().addingTimeInterval(-3600), endedAt: nil)
+        )
+
+        // The create lands; the restart cannot.
+        let failing = RoutingTransport([
+            RoutingTransport.Route(method: "POST", fragment: "time_entries", body: Fixture.timeEntry, status: 201),
+            RoutingTransport.Route(method: "PATCH", fragment: "/restart", body: "{}", status: 500),
+        ])
+        let first = await queue.drain(
+            using: HarvestClient(credentials: Fixture.credentials, transport: failing, backoffScale: 0)
+        )
+        #expect(first.applied == 1)
+        #expect(first.stoppedWith != nil)
+        #expect(await failing.calls(method: "POST", containing: "time_entries").count == 1)
+
+        // Reopened from disk, as after a relaunch: only the restart goes out.
+        let healthy = RoutingTransport([
+            RoutingTransport.Route(method: "PATCH", fragment: "/restart", body: Fixture.runningTimeEntry),
+            RoutingTransport.Route(method: "PATCH", fragment: "time_entries", body: Fixture.timeEntry),
+        ])
+        let reopened = MutationQueue(fileURL: file)
+        let second = await reopened.drain(
+            using: HarvestClient(credentials: Fixture.credentials, transport: healthy, backoffScale: 0)
+        )
+        #expect(second.applied == 1)
+        #expect(second.discarded.isEmpty)
+        #expect(await healthy.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(await healthy.calls(method: "PATCH", containing: "/restart").count == 1)
+        #expect(await reopened.isEmpty)
+    }
+
+    @Test("a transient stop failure never repeats a sub-minute create")
+    func stopFailureDoesNotRepeatCreate() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let queue = MutationQueue(fileURL: file)
+        let startedAt = Date().addingTimeInterval(-5)
+        await queue.enqueue(
+            .create(local: UUID(), target: target, spentDate: .today(), notes: nil,
+                    startedAt: startedAt, endedAt: startedAt.addingTimeInterval(5))
+        )
+
+        let failing = RoutingTransport([
+            RoutingTransport.Route(method: "POST", fragment: "time_entries", body: Fixture.runningTimeEntry, status: 201),
+            RoutingTransport.Route(method: "PATCH", fragment: "/stop", body: "{}", status: 500),
+        ])
+        let first = await queue.drain(
+            using: HarvestClient(credentials: Fixture.credentials, transport: failing, backoffScale: 0)
+        )
+        #expect(first.applied == 1)
+        #expect(first.stoppedWith != nil)
+
+        let healthy = RoutingTransport([
+            RoutingTransport.Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),
+            RoutingTransport.Route(method: "PATCH", fragment: "time_entries", body: Fixture.timeEntry),
+        ])
+        let second = await queue.drain(
+            using: HarvestClient(credentials: Fixture.credentials, transport: healthy, backoffScale: 0)
+        )
+        #expect(second.applied == 1)
+        #expect(await healthy.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(await healthy.calls(method: "PATCH", containing: "/stop").count == 1)
+        #expect(await queue.isEmpty)
     }
 }
