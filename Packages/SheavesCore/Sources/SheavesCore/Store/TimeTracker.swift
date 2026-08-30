@@ -35,6 +35,9 @@ public final class TimeTracker {
     public private(set) var day: CalendarDate = .today()
     public private(set) var lastSyncedAt: Date?
     public private(set) var pendingCount: Int = 0
+    /// Budgets for the projects that have one this token may read, keyed by project
+    /// id. Permanently empty on accounts with none — see `refreshBudgetsIfStale`.
+    public private(set) var budgets: [Int: ProjectBudget] = [:]
     /// Advances once a second while a timer runs, so durations stay live.
     public private(set) var now: Date = Date()
 
@@ -79,6 +82,11 @@ public final class TimeTracker {
 
     public var isToday: Bool { day == .today() }
 
+    /// The budget to show beside `entry`, or nil when there is nothing to show.
+    public func budget(for entry: TrackedEntry) -> ProjectBudget? {
+        budgets[entry.project.id]
+    }
+
     /// Total hours for the visible day, counting a running timer up to `now`.
     public var totalHours: Double {
         entries.reduce(0) { $0 + $1.hours(asOf: now) }
@@ -117,6 +125,19 @@ public final class TimeTracker {
     private var ticker: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var accountDataFetchedAt: Date?
+    private var budgetAvailability: BudgetAvailability = .unknown
+
+    /// What the last budget probe learned, and when.
+    ///
+    /// Only a refusal is final. An account that budgets nothing today may budget
+    /// something next week, and a menu bar app opened at login can run for weeks —
+    /// so "none" is a slow question rather than a closed one.
+    private enum BudgetAvailability {
+        case unknown
+        case some(asOf: Date)
+        case none(asOf: Date)
+        case refused
+    }
     /// Set once the user navigates away from today, so the app stops following the
     /// calendar. Without this, a menu bar app left running for days keeps logging to
     /// whichever day it happened to launch on.
@@ -126,6 +147,13 @@ public final class TimeTracker {
     /// `log show --last 10m --predicate 'subsystem == "com.rainhead.Sheaves"'`
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "sync")
     private static let accountDataLifetime: TimeInterval = 600
+    /// Budgets come from the Reports API, whose allowance is 100 requests per 15
+    /// *minutes*. Five minutes keeps the count in single digits per window however
+    /// hard start and stop are hammered.
+    private static let budgetLifetime: TimeInterval = 300
+    /// How long an account with nothing to show is left alone. Long, because the
+    /// answer rarely changes; finite, because it can.
+    private static let emptyBudgetLifetime: TimeInterval = 3600
     /// How far back to look when working out what the user actually works on.
     private static let historyWindowDays = 90
 
@@ -188,8 +216,10 @@ public final class TimeTracker {
         entries = []
         recentTargets = []
         frequentTargets = []
+        budgets = [:]
         lastActiveToday = nil
         accountDataFetchedAt = nil
+        budgetAvailability = .unknown
         isPinnedToDay = false
         pendingCount = 0
         lastSyncedAt = nil
@@ -255,6 +285,7 @@ public final class TimeTracker {
             self.entries = try await merge(dayEntries: dayEntries, running: running)
             noteLastActivity()
             try await refreshAccountDataIfStale(userID: user.id)
+            await refreshBudgetsIfStale()
             self.lastSyncedAt = Date()
             self.connection = .online
             pruneRecents()
@@ -298,6 +329,51 @@ public final class TimeTracker {
         Self.log.info(
             "account data: \(fetched.count, privacy: .public) assignments -> \(self.targets.count, privacy: .public) active targets, \(self.frequentTargets.count, privacy: .public) used in the last \(Self.historyWindowDays, privacy: .public) days"
         )
+    }
+
+    /// Budgets, on a clock of their own.
+    ///
+    /// Two things set this apart from the rest of the sync. The Reports API allows
+    /// 100 requests per 15 minutes rather than per 15 seconds, so budgets refresh on
+    /// their own slow timer instead of riding every start and stop. And a budget is
+    /// a decoration: an account whose projects are all `budget_by: none`, or a token
+    /// without the permission a monetary budget needs, has nothing to show — so an
+    /// answer with nothing in it switches the feature off rather than leaving an
+    /// empty frame in the panel, and how long it stays off depends on how settled
+    /// the answer was. Nothing here can fail a sync, which is why it neither throws
+    /// nor touches `connection`.
+    private func refreshBudgetsIfStale() async {
+        let now = Date()
+        switch budgetAvailability {
+        case .refused: return
+        case .some(let asOf) where now.timeIntervalSince(asOf) < Self.budgetLifetime: return
+        case .none(let asOf) where now.timeIntervalSince(asOf) < Self.emptyBudgetLifetime: return
+        default: break
+        }
+
+        do {
+            let report = try await client.projectBudgets()
+            let readable = report.filter { $0.isActive && $0.hasReadableBudget }
+            budgets = Dictionary(readable.map { ($0.projectID, $0) }, uniquingKeysWith: { first, _ in first })
+            budgetAvailability = readable.isEmpty ? .none(asOf: Date()) : .some(asOf: Date())
+            Self.log.info(
+                "budgets: \(readable.count, privacy: .public) of \(report.count, privacy: .public) projects have one to show"
+            )
+        } catch is CancellationError {
+            return
+        } catch HarvestError.unauthorized {
+            // The report is readable only by an administrator, or a manager holding
+            // the billable-rates permission. A refusal is a settled answer rather
+            // than a failure worth retrying: the sync above has already proved the
+            // token good for everything else.
+            budgets = [:]
+            budgetAvailability = .refused
+            Self.log.info("budgets: this token may not read them; the budget display stays off")
+        } catch {
+            // Anything else is transient. Leave the last known budgets on screen and
+            // ask again on the next sync.
+            Self.log.error("budgets: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// A timer started on another day still belongs in the menu bar, so it is folded
@@ -695,6 +771,10 @@ public final class TimeTracker {
         recentTargets = snapshot.recentTargetIDs.compactMap { byID[$0] }
         frequentTargets = snapshot.frequentTargetIDs.compactMap { byID[$0] }
         entries = snapshot.entries.filter { $0.spentDate == day || $0.isRunning }
+        // Restored so the panel draws a budget immediately, but deliberately without
+        // restoring the probe: an empty cache cannot tell "this account has none"
+        // from "not asked yet", so the next sync asks again.
+        budgets = Dictionary(snapshot.budgets.map { ($0.projectID, $0) }, uniquingKeysWith: { first, _ in first })
         lastSyncedAt = snapshot.savedAt
     }
 
@@ -707,6 +787,7 @@ public final class TimeTracker {
                 entries: entries,
                 recentTargetIDs: recentTargets.map(\.id),
                 frequentTargetIDs: frequentTargets.map(\.id),
+                budgets: Array(budgets.values),
                 savedAt: lastSyncedAt ?? Date()
             )
         )

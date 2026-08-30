@@ -10,6 +10,9 @@ public struct CachedSnapshot: Codable, Sendable {
     public var recentTargetIDs: [String]
     /// Target ids ranked by the user's own Harvest history, best first.
     public var frequentTargetIDs: [String]
+    /// Only the projects with a budget worth drawing, so an account with none caches
+    /// an empty list rather than a row per project.
+    public var budgets: [ProjectBudget]
     public var savedAt: Date
 
     public init(
@@ -19,6 +22,7 @@ public struct CachedSnapshot: Codable, Sendable {
         entries: [TrackedEntry] = [],
         recentTargetIDs: [String] = [],
         frequentTargetIDs: [String] = [],
+        budgets: [ProjectBudget] = [],
         savedAt: Date = Date()
     ) {
         self.user = user
@@ -27,6 +31,7 @@ public struct CachedSnapshot: Codable, Sendable {
         self.entries = entries
         self.recentTargetIDs = recentTargetIDs
         self.frequentTargetIDs = frequentTargetIDs
+        self.budgets = budgets
         self.savedAt = savedAt
     }
 }

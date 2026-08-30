@@ -6,8 +6,9 @@ import Testing
 @MainActor
 struct TimeTrackerTests {
     /// Builds a tracker wired to scratch files, so tests never touch the real cache.
-    private func makeTracker(transport: RoutingTransport) -> (TimeTracker, URL, URL) {
-        let snapshotURL = URL.temporaryDirectory.appending(path: "sheaves-snapshot-\(UUID().uuidString).json")
+    private func makeTracker(transport: RoutingTransport, snapshotURL: URL? = nil) -> (TimeTracker, URL, URL) {
+        let snapshotURL = snapshotURL
+            ?? URL.temporaryDirectory.appending(path: "sheaves-snapshot-\(UUID().uuidString).json")
         let queueURL = URL.temporaryDirectory.appending(path: "sheaves-queue-\(UUID().uuidString).json")
         let tracker = TimeTracker(
             client: HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0),
@@ -55,6 +56,108 @@ struct TimeTrackerTests {
         // Two reads per sync (the day, and whatever is running), plus the one-off
         // history fetch that ranks the target list.
         #expect(await transport.callCount(matching: "time_entries") == 7)
+    }
+
+    @Test("keeps only the budgets it can actually draw")
+    func syncKeepsReadableBudgets() async throws {
+        // The running-timer account is on the one project the report budgets, which
+        // is the case the panel actually draws.
+        let transport = RoutingTransport.accountWithRunningTimer()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        #expect(tracker.budgets.count == 1)
+        let running = try #require(tracker.runningEntry)
+        #expect(running.project.id == 14308069)
+        #expect(tracker.budget(for: running)?.budgetRemaining == 8)
+        // The project with no budget and the one whose figures came back null are
+        // both absent, so nothing downstream has to tell them apart.
+        #expect(tracker.budgets[14307913] == nil)
+        #expect(tracker.budgets[14307915] == nil)
+    }
+
+    /// The Reports API allows 100 requests per 15 minutes, not per 15 seconds. A
+    /// burst of start/stop clicks must not spend that allowance.
+    @Test("does not refetch budgets on every sync")
+    func cachesBudgets() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+        await tracker.sync()
+        await tracker.sync()
+
+        #expect(await transport.callCount(matching: "project_budget") == 1)
+    }
+
+    /// The absence rule: there is no lesser version of a budget display, so a token
+    /// that may not read the report switches the feature off rather than leaving an
+    /// empty frame. A refusal is the one settled answer — unlike an account that
+    /// merely budgets nothing yet, it is never asked again.
+    @Test("stops asking for budgets once Harvest refuses")
+    func probesBudgetsOnce() async throws {
+        let transport = RoutingTransport.standardAccount(budgetStatus: 403)
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+        await tracker.sync()
+        await tracker.sync()
+
+        #expect(await transport.callCount(matching: "project_budget") == 1)
+        #expect(tracker.budgets.isEmpty)
+        // A refused report is not a broken sync.
+        #expect(tracker.connection == .online)
+    }
+
+    @Test("shows nothing when the account budgets nothing")
+    func accountWithoutBudgets() async throws {
+        let transport = RoutingTransport.standardAccount(budgets: Fixture.noProjectBudgetsPage)
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        #expect(tracker.budgets.isEmpty)
+        let entry = try #require(tracker.entries.first)
+        #expect(tracker.budget(for: entry) == nil)
+        #expect(tracker.connection == .online)
+    }
+
+    /// A budget is a decoration. Failing to load one must not tell the user their
+    /// time tracking is offline, and must not stop Sheaves trying again.
+    @Test("a failed budget report neither breaks nor ends the sync")
+    func budgetFailureIsHarmless() async throws {
+        let transport = RoutingTransport.standardAccount(budgetStatus: 500)
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+        #expect(tracker.connection == .online)
+        #expect(tracker.budgets.isEmpty)
+        #expect(tracker.entries.count == 1)
+
+        // Transient, so unlike a refusal it is retried.
+        let firstRun = await transport.callCount(matching: "project_budget")
+        await tracker.sync()
+        #expect(await transport.callCount(matching: "project_budget") > firstRun)
+    }
+
+    @Test("draws a budget from the cache before the first reply arrives")
+    func restoresBudgetsFromSnapshot() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+
+        let (restored, _, secondQueue) = makeTracker(transport: transport, snapshotURL: snapshot)
+        defer { cleanUp(secondQueue) }
+        await restored.bootstrap()
+
+        #expect(restored.budgets[14308069]?.budgetRemaining == 8)
     }
 
     /// The whole point of the local-first model: the timer shows up even though

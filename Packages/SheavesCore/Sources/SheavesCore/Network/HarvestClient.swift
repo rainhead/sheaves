@@ -130,6 +130,22 @@ public actor HarvestClient {
         _ = try await perform(request(path: "time_entries/\(id)", method: "DELETE"))
     }
 
+    // MARK: - Reports
+
+    /// Every project's budget, spend and remainder in one request.
+    ///
+    /// This is the Reports API, which allows 100 requests per 15 *minutes* — sixty
+    /// times tighter than the 100 per 15 seconds the rest of Harvest gives. The
+    /// client does not pace this; the caller must.
+    ///
+    /// The answer can be empty of anything useful: a project with `budget_by` of
+    /// `none` has no budget, and a monetary budget is readable only by an
+    /// administrator or by a manager with the billable-rates permission. Callers
+    /// should ask `hasReadableBudget` rather than assume a row carries figures.
+    public func projectBudgets() async throws -> [ProjectBudget] {
+        try await getAllPages("reports/project_budget")
+    }
+
     // MARK: - Request plumbing
 
     private func get<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> T {

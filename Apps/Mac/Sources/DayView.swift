@@ -18,6 +18,12 @@ struct DayView: View {
                 if case .offline(let reason) = tracker.connection {
                     FailureBanner(reason: reason)
                 }
+                // Anchored to what is on the clock rather than to the visible day:
+                // a budget is not a property of a day, and the question it answers
+                // is about the thing being worked on now.
+                if let active = tracker.activity.entry {
+                    BudgetBar(entry: active, format: format)
+                }
                 Divider()
                 // Today's entries come first: resuming something already started is
                 // the common case, and searching is for the exception.
