@@ -64,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSettings: { [weak self] in self?.showSettings() }
         )
 
+        tracker.powerState = { PowerSource.current() }
+
         Task {
             await tracker.bootstrap()
             // Nothing in the menu bar is usable without a token, and the popover is
