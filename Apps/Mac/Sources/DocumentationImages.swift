@@ -71,6 +71,11 @@ enum DocumentationImages {
             backing: .buffered,
             defer: false
         )
+        // Pinned, not inherited. A hosting view takes the system appearance, so the
+        // same command run after dark produced a dark panel and would have flipped
+        // the README's images without anyone deciding to.
+        window.appearance = NSAppearance(named: .aqua)
+        hosting.appearance = NSAppearance(named: .aqua)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
 

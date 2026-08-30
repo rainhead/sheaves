@@ -487,4 +487,42 @@ struct ReconnectTests {
         // rather than being written off with the previous token.
         #expect(await refusing.callCount(matching: "project_budget") == 2)
     }
+
+    /// Resetting the probe without clearing what it gates was the worse half of a fix:
+    /// a budget refresh only overwrites on success, so a transient failure after
+    /// connecting left the previous account's figures on screen under the new token.
+    @Test("a new token does not inherit the last account's budgets")
+    func connectClearsBudgets() async throws {
+        let snapshotURL = URL.temporaryDirectory.appending(path: "sheaves-\(UUID().uuidString).json")
+        let queueURL = URL.temporaryDirectory.appending(path: "sheaves-q-\(UUID().uuidString).json")
+        defer { for u in [snapshotURL, queueURL] { try? FileManager.default.removeItem(at: u) } }
+
+        // A cache standing in for the previous account, so there is something to inherit.
+        try SnapshotStore(fileURL: snapshotURL).save(
+            CachedSnapshot(budgets: [
+                ProjectBudget(
+                    projectID: 14308069, projectName: "Someone else's project",
+                    budgetBy: .projectCost, budget: 5000, budgetSpent: 100,
+                    budgetRemaining: 4900, currencyCode: "GBP"
+                )
+            ])
+        )
+
+        // New credentials, and a budget report that fails transiently rather than
+        // answering — the case where nothing would overwrite what was cached.
+        let transport = RoutingTransport.standardAccount(budgetStatus: 500)
+        let tracker = TimeTracker(
+            client: HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshotURL),
+            queue: MutationQueue(fileURL: queueURL)
+        )
+        await tracker.bootstrap()
+        #expect(tracker.budgets[14308069]?.currencyCode == "GBP", "the cache should have been restored")
+
+        try await tracker.connect(Fixture.credentials)
+
+        #expect(tracker.budgets.isEmpty)
+        #expect(tracker.connection == .online)
+    }
 }

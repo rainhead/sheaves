@@ -15,10 +15,15 @@ rm -rf "$CONTAINER"
 # The TEST_RUNNER_ prefix is required and is stripped on the way through: xcodebuild
 # forwards only variables carrying it into the test process. Without it the suite is
 # skipped, and a skipped suite still reports TEST SUCCEEDED.
+# mktemp rather than a fixed name: a predictable path in a world-writable directory
+# can be pre-created as a symlink, and this redirect would truncate whatever it points at.
+log="$(mktemp -t sheaves-render)"
+trap 'rm -f "$log"' EXIT
+
 TEST_RUNNER_SHEAVES_RENDER_IMAGES=1 xcodebuild \
   -project Sheaves.xcodeproj -scheme Sheaves -destination 'platform=macOS' \
   test -only-testing:SheavesTests/DocumentationImagesTests \
-  >/tmp/sheaves-render.log 2>&1 || { tail -40 /tmp/sheaves-render.log; exit 1; }
+  >"$log" 2>&1 || { tail -40 "$log"; exit 1; }
 
 shopt -s nullglob
 rendered=("$CONTAINER"/*.png)
