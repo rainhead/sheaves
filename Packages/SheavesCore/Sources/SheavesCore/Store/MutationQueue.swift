@@ -142,17 +142,26 @@ public actor MutationQueue {
         while let mutation = pending.first {
             do {
                 if case .create(let local, _, _, _, _, _) = mutation {
-                    let entry = try await apply(mutation, using: client)
+                    // A create can need a second request — a restart, or a stop.
+                    // Sending both inside one mutation meant a transient failure of
+                    // the second repeated the first: one duplicate entry per retry,
+                    // with the original left running. So the create is committed to
+                    // the queue the moment the POST succeeds, and the second request
+                    // takes its place as an ordinary mutation with ordinary retries.
+                    let (entry, followUp) = try await create(mutation, using: client)
                     // Later queued changes still point at the placeholder id; repoint them.
-                    if let entry {
-                        remember(local: local, serverID: entry.id)
-                        rewrite(local: local, to: .server(entry.id))
-                        report.resolved[local] = entry.id
+                    remember(local: local, serverID: entry.id)
+                    rewrite(local: local, to: .server(entry.id))
+                    report.resolved[local] = entry.id
+                    if let followUp {
+                        pending[0] = followUp
+                    } else {
+                        pending.removeFirst()
                     }
                 } else {
                     _ = try await apply(mutation, using: client)
+                    pending.removeFirst()
                 }
-                pending.removeFirst()
                 report.applied += 1
                 persist()
             } catch let error as HarvestError where error.isTransient {
@@ -183,37 +192,49 @@ public actor MutationQueue {
         (hours * 100).rounded() / 100
     }
 
-    private func apply(_ mutation: Mutation, using client: HarvestClient) async throws -> TimeEntry? {
-        switch mutation {
-        case .create(_, let target, let spentDate, let notes, let startedAt, let endedAt):
-            // Measure from when the user started, not from now.
-            let finish = endedAt ?? Date()
-            let hours = Self.storableHours(max(0, finish.timeIntervalSince(startedAt)) / 3600)
-            guard hours > 0 else {
-                // Nothing measurable to bank, and an explicit 0 would itself start
-                // the timer. Create the entry running — which is what a fresh click
-                // wants — and stop it again when the user already had.
-                let entry = try await client.createTimeEntry(
-                    projectID: target.project.id,
-                    taskID: target.task.id,
-                    spentDate: spentDate,
-                    notes: notes,
-                    hours: nil
-                )
-                guard endedAt == nil else { return try await client.stopTimeEntry(id: entry.id) }
-                return entry
-            }
+    /// Sends the POST for a queued create and names the mutation that must follow
+    /// it, if any. The caller queues that follow-up rather than this method sending
+    /// it, so a failure between the two requests cannot repeat the first.
+    private func create(
+        _ mutation: Mutation,
+        using client: HarvestClient
+    ) async throws -> (TimeEntry, followUp: Mutation?) {
+        guard case .create(_, let target, let spentDate, let notes, let startedAt, let endedAt) = mutation
+        else { preconditionFailure("create(_:using:) requires a create mutation") }
+
+        // Measure from when the user started, not from now.
+        let finish = endedAt ?? Date()
+        let hours = Self.storableHours(max(0, finish.timeIntervalSince(startedAt)) / 3600)
+        guard hours > 0 else {
+            // Nothing measurable to bank, and an explicit 0 would itself start
+            // the timer. Create the entry running — which is what a fresh click
+            // wants — and stop it again when the user already had.
             let entry = try await client.createTimeEntry(
                 projectID: target.project.id,
                 taskID: target.task.id,
                 spentDate: spentDate,
                 notes: notes,
-                hours: hours
+                hours: nil
             )
-            guard endedAt == nil else { return entry }
-            // Still running: the entry now holds the offline time, so resume it and
-            // let Harvest count onwards from here.
-            return try await client.restartTimeEntry(id: entry.id)
+            return (entry, endedAt == nil ? nil : .stop(.server(entry.id), hours: 0))
+        }
+        let entry = try await client.createTimeEntry(
+            projectID: target.project.id,
+            taskID: target.task.id,
+            spentDate: spentDate,
+            notes: notes,
+            hours: hours
+        )
+        guard endedAt == nil else { return (entry, nil) }
+        // Still running: the entry holds the offline time; the restart lets Harvest
+        // count onwards, banking whatever more accrues before it lands.
+        return (entry, .restart(.server(entry.id), resumedAt: Date(), bankedHours: hours))
+    }
+
+    private func apply(_ mutation: Mutation, using client: HarvestClient) async throws -> TimeEntry? {
+        switch mutation {
+        case .create:
+            preconditionFailure("creates go through create(_:using:), which names their follow-up")
 
         case .stop(let id, let hours):
             guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
