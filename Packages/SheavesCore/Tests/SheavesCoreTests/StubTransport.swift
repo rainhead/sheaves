@@ -102,7 +102,13 @@ enum Fixture {
     }
     """ }
 
-    static func timeEntriesPage(_ entries: [String], nextPage: Int? = nil, page: Int = 1, totalPages: Int = 1) -> String {
+    static func timeEntriesPage(
+        _ entries: [String],
+        nextPage: Int? = nil,
+        page: Int = 1,
+        totalPages: Int = 1,
+        nextLink: String? = nil
+    ) -> String {
         """
         {
           "time_entries": [\(entries.joined(separator: ","))],
@@ -111,7 +117,8 @@ enum Fixture {
           "total_entries": \(entries.count),
           "next_page": \(nextPage.map(String.init) ?? "null"),
           "previous_page": null,
-          "page": \(page)
+          "page": \(page),
+          "links": { "next": \(nextLink.map { "\"\($0)\"" } ?? "null") }
         }
         """
     }
