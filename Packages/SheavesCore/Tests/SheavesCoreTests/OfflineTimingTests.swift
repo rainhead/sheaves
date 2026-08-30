@@ -122,6 +122,92 @@ struct OfflineTimingTests {
         #expect(abs(hours - 1.5) < 0.01)
     }
 
+    /// A click that reaches Harvest within seconds has nothing measurable to bank.
+    /// Sending the sub-second elapsed time used to encode as scientific notation
+    /// (`2.8e-05`), which Harvest refuses as "a negative total" — so every click
+    /// flashed an error and started nothing. The entry is created running instead,
+    /// with no hours at all.
+    @Test("a fresh click creates the timer running, sending no hours to mis-parse")
+    func freshClickSendsNoHours() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = writableAccount()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+
+        await queue.enqueue(
+            .create(
+                local: UUID(), target: target, spentDate: .today(), notes: nil,
+                startedAt: Date(), endedAt: nil
+            )
+        )
+        let report = await queue.drain(using: client)
+
+        #expect(report.applied == 1)
+        #expect(report.discarded.isEmpty)
+        let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
+        #expect(post.hours == nil)
+        // Born running; restarting it would be refused as already running.
+        #expect(await transport.calls(method: "PATCH", containing: "/restart").isEmpty)
+    }
+
+    /// The same trap for a timer already finished: an explicit 0 starts the timer
+    /// running on Harvest, so a sub-minute finished entry is created running and
+    /// stopped again rather than sent as an unparseable sliver of hours.
+    @Test("a finished sub-minute entry is created running and then stopped")
+    func tinyFinishedEntryIsCreatedThenStopped() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = writableAccount()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+
+        let startedAt = Date().addingTimeInterval(-5)
+        await queue.enqueue(
+            .create(
+                local: UUID(), target: target, spentDate: .today(), notes: nil,
+                startedAt: startedAt, endedAt: startedAt.addingTimeInterval(5)
+            )
+        )
+        let report = await queue.drain(using: client)
+
+        #expect(report.applied == 1)
+        #expect(report.discarded.isEmpty)
+        let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
+        #expect(post.hours == nil)
+        #expect(await transport.calls(method: "PATCH", containing: "/stop").count == 1)
+        #expect(await transport.calls(method: "PATCH", containing: "/restart").isEmpty)
+    }
+
+    /// Harvest stores two decimals; anything finer encodes unpredictably and buys
+    /// nothing. 456 seconds is 0.126666… hours and must go out as 0.13.
+    @Test("hours are rounded to the two decimals Harvest can store")
+    func hoursAreRoundedToHarvestPrecision() async throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let transport = writableAccount()
+        let client = HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0)
+        let queue = MutationQueue(fileURL: file)
+
+        let startedAt = Date().addingTimeInterval(-3600)
+        await queue.enqueue(
+            .create(
+                local: UUID(), target: target, spentDate: .today(), notes: nil,
+                startedAt: startedAt, endedAt: startedAt.addingTimeInterval(456)
+            )
+        )
+        await queue.enqueue(.stop(.server(636709355), hours: 2.8e-05))
+        await queue.drain(using: client)
+
+        let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
+        #expect(post.hours == 0.13)
+        let correction = try #require(
+            await transport.calls(method: "PATCH", containing: "time_entries")
+                .first { !$0.path.contains("/stop") && !$0.path.contains("/restart") }
+        )
+        #expect(correction.hours == 0)
+    }
+
     /// A timer started and stopped before the queue ever drained should reach Harvest
     /// as one finished entry, not a create followed by a stop.
     @Test("amends a queued create rather than queueing a second mutation")
@@ -205,7 +291,7 @@ struct LocalIdentifierHandoffTests {
 
         await queue.enqueue(
             .create(local: local, target: target, spentDate: .today(), notes: nil,
-                    startedAt: Date(), endedAt: Date())
+                    startedAt: Date().addingTimeInterval(-900), endedAt: Date())
         )
         let first = await queue.drain(using: client)
         #expect(first.resolved[local] == 636708906)
@@ -230,7 +316,7 @@ struct LocalIdentifierHandoffTests {
         let first = MutationQueue(fileURL: file)
         await first.enqueue(
             .create(local: local, target: target, spentDate: .today(), notes: nil,
-                    startedAt: Date(), endedAt: Date())
+                    startedAt: Date().addingTimeInterval(-900), endedAt: Date())
         )
         _ = await first.drain(using: client)
 

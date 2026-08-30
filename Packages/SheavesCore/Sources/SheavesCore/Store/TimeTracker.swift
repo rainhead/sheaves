@@ -289,6 +289,11 @@ public final class TimeTracker {
             connection = .offline(reason: blocker.localizedDescription)
             return
         }
+        for (mutation, error) in report.discarded {
+            Self.log.error(
+                "dropped refused mutation \(String(describing: mutation), privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
         if let (_, error) = report.discarded.last {
             // A refused change is dropped rather than retried forever; say so, but
             // carry on — the refresh below will show what Harvest actually holds.

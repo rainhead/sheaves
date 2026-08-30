@@ -322,11 +322,12 @@ struct AbsenceAmendedCreateTests {
         let report = await queue.drain(using: client)
         #expect(report.applied == 2)
 
-        // The create still reports the whole span, pause included…
+        // The create still reports the whole span, pause included, rounded to the
+        // two decimals Harvest keeps…
         let created = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
-        #expect(created.hours == 80.0 / 60)
+        #expect(created.hours == 1.33)
         // …so the total that stands has to be the one that was measured.
         let corrections = await transport.calls(method: "PATCH", containing: "time_entries").compactMap(\.hours)
-        #expect(corrections == [50.0 / 60])
+        #expect(corrections == [0.83])
     }
 }
