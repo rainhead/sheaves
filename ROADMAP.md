@@ -6,34 +6,25 @@ hours it records, then everything else. Nothing here is a commitment.
 
 ## Next
 
-**Budget, in the panel.** `GET /v2/reports/project_budget` returns `budget`,
-`budget_spent` and `budget_remaining` per project in a single call, with `budget_by`
-saying whether those are hours or money. Showing the running project's remaining
-budget beside its timer is nearly free.
-
-Whether it appears at all is a runtime question, not a styling one. A project with
-`budget_by` of `none` has no budget, and a monetary budget is visible only to
-administrators and project managers with the billable-rates permission — so for some
-accounts the report comes back with nothing usable in it. There is no lesser version
-of this feature to fall back to: if there are no budgets to show, the whole thing
-should be absent rather than present and empty. Probe once, and let the answer decide
-whether the UI exists.
-
-Two other constraints: the Reports API allows only 100 requests per 15 minutes, far
-tighter than the 100 per 15 seconds everything else gets, so this wants its own
-refresh pace; and budgets can reset monthly (`budget_is_monthly`).
+**Nothing claimed.** Budget-in-the-panel is done: the running project's remaining
+budget sits under the day header, with a bar for how much of it is gone, and it is
+absent on accounts with no budget Sheaves may read. It exists partly to answer a
+question — is a budget worth glancing at often enough to earn a second surface? A
+few real days with [`BudgetBar`](Apps/Mac/Sources/BudgetBar.swift) decide whether
+the widget below is worth its entitlements, or whether editing a day is the better
+use of the next stretch.
 
 ## Maybe, and what each would cost
 
-**A budget widget.** Only if budgets turn out to be visible and worth watching —
-the same absence rule applies, and an account with no readable budgets has no reason
-to want this at all. Deliberately after budget-in-the-panel, because the data is the
-cheap part. A widget is a separate process: it cannot read the app's Keychain item or
-its cache, so it needs a Keychain access group and an App Group container, and
-`SnapshotStore` has to move out of the app's private container. Both need team-signed
-entitlements, which also breaks the ad-hoc path that lets anyone clone and build. Put
-the panel version in front of a real day of work first and find out whether a second,
-less glanceable surface earns that.
+**A budget widget.** Only if budgets turn out to be worth watching — the same
+absence rule applies, and an account with no readable budgets has no reason to want
+this at all. The data is already done: `TimeTracker` holds the budgets and the panel
+draws them. What is left is the process boundary. A widget cannot read the app's
+Keychain item or its cache, so it needs a Keychain access group and an App Group
+container, and `SnapshotStore` has to move out of the app's private container. Both
+need team-signed entitlements, which also breaks the ad-hoc path that lets anyone
+clone and build. That price is the reason to spend a few real days with the panel
+version first.
 
 **iOS.** `SheavesCore` is platform-neutral for this, and the views are the only work.
 But porting the Mac interface to a phone is the least interesting version. The parts

@@ -120,6 +120,17 @@ Sheaves ranks them by 90 days of your own entries, weighted so the score halves 
 three weeks: frequency alone pins a finished project to the top for weeks, recency
 alone lets one stray entry outrank a habit.
 
+**A budget appears only if there is one.** Harvest's project budget report answers
+`budget_by: none` for a project that budgets nothing, and empty figures for a
+monetary budget, which only administrators and managers holding the billable-rates
+permission may read. On some accounts there is nothing to draw, and there is no
+lesser version to fall back on — so
+[`BudgetBar`](Apps/Mac/Sources/BudgetBar.swift) is absent rather than present and
+empty, and a refusal is taken as a settled answer rather than retried. It is also
+the one thing here on Harvest's Reports API, whose allowance is 100 requests per 15
+*minutes* rather than per 15 seconds, so budgets refresh on a slow clock of their
+own instead of riding every start and stop.
+
 **The UI never waits to draw.** A JSON
 [snapshot](Packages/SheavesCore/Sources/SheavesCore/Persistence/SnapshotStore.swift)
 of the last known state is restored at launch, so the popover is populated before the

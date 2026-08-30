@@ -199,6 +199,89 @@ enum Fixture {
     }
     """
 
+    /// The three shapes the report actually returns: a readable hours budget, a
+    /// project with no budget at all, and a monetary budget whose figures came back
+    /// null because this token may not read them.
+    static let projectBudgetPage = """
+    {
+      "results": [
+        {
+          "client_id": 5735776,
+          "client_name": "123 Industries",
+          "project_id": 14308069,
+          "project_name": "Online Store - Phase 1",
+          "project_code": "OS1",
+          "budget_is_monthly": false,
+          "budget_by": "project",
+          "is_active": true,
+          "budget": 40.0,
+          "budget_spent": 32.0,
+          "budget_remaining": 8.0
+        },
+        {
+          "client_id": 5735774,
+          "client_name": "ABC Corp",
+          "project_id": 14307913,
+          "project_name": "Marketing Website",
+          "project_code": "",
+          "budget_is_monthly": false,
+          "budget_by": "none",
+          "is_active": true,
+          "budget": null,
+          "budget_spent": null,
+          "budget_remaining": null
+        },
+        {
+          "client_id": 5735774,
+          "client_name": "ABC Corp",
+          "project_id": 14307915,
+          "project_name": "Retainer",
+          "project_code": "",
+          "budget_is_monthly": true,
+          "budget_by": "task_fees",
+          "is_active": true,
+          "budget": null,
+          "budget_spent": null,
+          "budget_remaining": null
+        }
+      ],
+      "per_page": 2000,
+      "total_pages": 1,
+      "total_entries": 3,
+      "next_page": null,
+      "previous_page": null,
+      "page": 1
+    }
+    """
+
+    /// An account that budgets nothing — the case where the whole feature should be
+    /// absent rather than present and empty.
+    static let noProjectBudgetsPage = """
+    {
+      "results": [
+        {
+          "client_id": 5735776,
+          "client_name": "123 Industries",
+          "project_id": 14308069,
+          "project_name": "Online Store - Phase 1",
+          "project_code": "OS1",
+          "budget_is_monthly": false,
+          "budget_by": "none",
+          "is_active": true,
+          "budget": null,
+          "budget_spent": null,
+          "budget_remaining": null
+        }
+      ],
+      "per_page": 2000,
+      "total_pages": 1,
+      "total_entries": 1,
+      "next_page": null,
+      "previous_page": null,
+      "page": 1
+    }
+    """
+
     static let currentUser = """
     {
       "id": 1782959,
@@ -304,8 +387,13 @@ actor RoutingTransport: HarvestTransport {
 
 extension RoutingTransport {
     /// A working account: one project with one active task, plus writable timers.
-    static func standardAccount(entries: [String] = [Fixture.timeEntry]) -> RoutingTransport {
+    static func standardAccount(
+        entries: [String] = [Fixture.timeEntry],
+        budgets: String = Fixture.projectBudgetPage,
+        budgetStatus: Int = 200
+    ) -> RoutingTransport {
         RoutingTransport([
+            Route(method: "GET", fragment: "reports/project_budget", body: budgets, status: budgetStatus),
             Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
             Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
             Route(method: "GET", fragment: "company", body: Fixture.company),
@@ -321,6 +409,7 @@ extension RoutingTransport {
     static func accountWithRunningTimer() -> RoutingTransport {
         let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
         return RoutingTransport([
+            Route(method: "GET", fragment: "reports/project_budget", body: Fixture.projectBudgetPage),
             Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
             Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
             Route(method: "GET", fragment: "company", body: Fixture.company),
