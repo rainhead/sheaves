@@ -202,14 +202,8 @@ public final class TimeTracker {
         do {
             let user = try await client.currentUser()
             try keychain.write(credentials)
+            forgetAccountData()
             self.user = user
-            // A refusal belongs to the token that earned it. Both probes below treat a
-            // 403 as final, and an expired token drops to `.needsCredentials` without
-            // anyone calling `disconnect` — so pasting a better token would otherwise
-            // reconnect into a session that had already given up asking.
-            budgetAvailability = .unknown
-            currencies = [:]
-            currenciesRefused = false
             await sync()
             startTicking()
         } catch {
@@ -223,9 +217,23 @@ public final class TimeTracker {
         ticker?.cancel()
         syncTask?.cancel()
         try? keychain.delete()
-        snapshots.clear()
         await queue.removeAll()
         await client.setCredentials(nil)
+        forgetAccountData()
+        pendingCount = 0
+        connection = .needsCredentials
+    }
+
+    /// Everything that describes whichever account was connected a moment ago.
+    ///
+    /// Shared by `disconnect` and `connect`, because credentials changing means the
+    /// same thing in both directions: nothing already on screen is known to describe
+    /// the new ones. Clearing only the probe state was worse than clearing none of it
+    /// — the panel kept the previous account's budgets, and a transient failure on the
+    /// next report left them there, since a budget refresh only overwrites on success.
+    /// The cache goes too, or the same stale data returns at the next launch.
+    private func forgetAccountData() {
+        snapshots.clear()
         user = nil
         company = nil
         targets = []
@@ -239,9 +247,7 @@ public final class TimeTracker {
         accountDataFetchedAt = nil
         budgetAvailability = .unknown
         isPinnedToDay = false
-        pendingCount = 0
         lastSyncedAt = nil
-        connection = .needsCredentials
     }
 
     // MARK: - Syncing
