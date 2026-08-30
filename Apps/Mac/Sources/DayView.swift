@@ -22,6 +22,9 @@ struct DayView: View {
     @State private var editingNotes: TrackedEntry.ID?
     /// The duration field open on an entry, on the same terms as the notes.
     @State private var editingHours: TrackedEntry.ID?
+    /// The entry whose play press is waiting on the today-or-then question, so the
+    /// keyboard's ⏎ raises the same offer the mouse gets.
+    @State private var confirmingResume: TrackedEntry.ID?
     private var isEditingField: Bool { editingNotes != nil || editingHours != nil }
     @FocusState private var isPanelFocused: Bool
 
@@ -113,7 +116,13 @@ struct DayView: View {
             // not, so a locked entry left running was reachable this way alone.
             guard let entry = tracker.entries.first(where: { $0.id == id }), !entry.isLocked
             else { return .ignored }
-            Task { await tracker.toggle(entry) }
+            // The same fork the play button offers: resuming a past day's entry
+            // would charge the old day, so it asks rather than assumes.
+            if !entry.isRunning, entry.spentDate != .today() {
+                confirmingResume = entry.id
+            } else {
+                Task { await tracker.toggle(entry) }
+            }
         case .project(let id):
             guard let project = projects.first(where: { $0.id == id }),
                   let task = project.task(chosenFrom: chosenTasks)
@@ -203,6 +212,10 @@ struct DayView: View {
                                         editingHours = $0 ? entry.id : nil
                                         if $0 { editingNotes = nil }
                                     }
+                                ),
+                                isConfirmingResume: Binding(
+                                    get: { confirmingResume == entry.id },
+                                    set: { confirmingResume = $0 ? entry.id : nil }
                                 )
                             )
                             .id(entry.id)

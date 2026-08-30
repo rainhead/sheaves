@@ -41,7 +41,8 @@ enum DocumentationImages {
                     entry: tracker.entries.first { $0.isRunning } ?? tracker.entries[0],
                     format: HoursFormat(company: tracker.company),
                     isEditingNotes: .constant(false),
-                    isEditingHours: .constant(true)
+                    isEditingHours: .constant(true),
+                    isConfirmingResume: .constant(false)
                 )
                 .environment(tracker)
                 .padding(8),
