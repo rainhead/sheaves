@@ -90,15 +90,55 @@ struct BudgetTests {
         #expect(budget.isOverBudget == false)
     }
 
-    @Test("formats a monetary budget as money")
+    @Test("formats a monetary budget in the client's currency")
     func formatsMoney() {
+        let budget = ProjectBudget(
+            projectID: 1, projectName: "P", budgetBy: .projectCost,
+            budget: 10000, budgetSpent: 7600, budgetRemaining: 2400,
+            currencyCode: "USD"
+        )
+
+        #expect(budget.formattedRemaining(.hoursMinutes, locale: english) == "$2,400")
+        #expect(budget.formattedBudget(.hoursMinutes, locale: english) == "$10,000")
+    }
+
+    /// The bug this exists to prevent: Harvest names no currency anywhere a budget
+    /// appears, so formatting money in the device's locale renders a European client's
+    /// budget in dollars for anyone with a US Mac — wrong, and wrong in a way that
+    /// looks entirely reasonable.
+    @Test("uses the client's currency, not the device's")
+    func honoursForeignCurrency() {
+        let budget = ProjectBudget(
+            projectID: 1, projectName: "P", budgetBy: .projectCost,
+            budget: 10000, budgetSpent: 7600, budgetRemaining: 2400,
+            currencyCode: "EUR"
+        )
+
+        let shown = budget.formattedRemaining(.hoursMinutes, locale: english)
+        #expect(shown?.contains("€") == true)
+        #expect(shown?.contains("$") == false)
+    }
+
+    /// A token that may not read clients cannot learn the currency. An unlabelled
+    /// number is incomplete; a guessed symbol would be misleading, which is worse.
+    @Test("shows a bare number when the currency is unknown")
+    func omitsUnknownCurrency() {
         let budget = ProjectBudget(
             projectID: 1, projectName: "P", budgetBy: .projectCost,
             budget: 10000, budgetSpent: 7600, budgetRemaining: 2400
         )
 
-        #expect(budget.formattedRemaining(.hoursMinutes, locale: english) == "$2,400")
-        #expect(budget.formattedBudget(.hoursMinutes, locale: english) == "$10,000")
+        #expect(budget.formattedRemaining(.hoursMinutes, locale: english) == "2,400")
+    }
+
+    @Test("an hours budget never consults a currency")
+    func hoursIgnoreCurrency() {
+        let budget = ProjectBudget(
+            projectID: 1, projectName: "P", budgetBy: .project,
+            budget: 40, budgetSpent: 32, budgetRemaining: 8, currencyCode: "EUR"
+        )
+
+        #expect(budget.formattedRemaining(.hoursMinutes, locale: english) == "8:00")
     }
 
     /// Overspend is the one number worth showing loudest, and the hours formatter

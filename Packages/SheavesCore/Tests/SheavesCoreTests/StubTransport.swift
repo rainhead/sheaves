@@ -225,6 +225,18 @@ enum Fixture {
     }
     """
 
+    /// Two clients, one billing in a currency that is not the device's.
+    static let clientsPage = """
+    {
+      "clients": [
+        { "id": 5735776, "name": "123 Industries", "is_active": true, "currency": "EUR" },
+        { "id": 5735774, "name": "ABC Corp", "is_active": true, "currency": "USD" }
+      ],
+      "per_page": 2000, "total_pages": 1, "total_entries": 2,
+      "next_page": null, "previous_page": null, "page": 1
+    }
+    """
+
     static let company = """
     {
       "base_uri": "https://acme.harvestapp.com",
@@ -300,6 +312,30 @@ enum Fixture {
       "next_page": null,
       "previous_page": null,
       "page": 1
+    }
+    """
+
+    /// The same project, budgeted in money rather than hours, so the currency join has
+    /// something to join to.
+    static let monetaryBudgetPage = """
+    {
+      "results": [
+        {
+          "client_id": 5735776,
+          "client_name": "123 Industries",
+          "project_id": 14308069,
+          "project_name": "Online Store - Phase 1",
+          "project_code": "OS1",
+          "budget_is_monthly": false,
+          "budget_by": "project_cost",
+          "is_active": true,
+          "budget": 40.0,
+          "budget_spent": 32.0,
+          "budget_remaining": 8.0
+        }
+      ],
+      "per_page": 2000, "total_pages": 1, "total_entries": 1,
+      "next_page": null, "previous_page": null, "page": 1
     }
     """
 
@@ -440,10 +476,13 @@ extension RoutingTransport {
         entries: [String] = [Fixture.timeEntry],
         budgets: String = Fixture.projectBudgetPage,
         budgetStatus: Int = 200,
-        assignments: String = Fixture.projectAssignmentsPage
+        assignments: String = Fixture.projectAssignmentsPage,
+        clients: String = Fixture.clientsPage,
+        clientStatus: Int = 200
     ) -> RoutingTransport {
         RoutingTransport([
             Route(method: "GET", fragment: "reports/project_budget", body: budgets, status: budgetStatus),
+            Route(method: "GET", fragment: "v2/clients", body: clients, status: clientStatus),
             Route(method: "GET", fragment: "users/me/project_assignments", body: assignments),
             Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
             Route(method: "GET", fragment: "company", body: Fixture.company),
@@ -460,6 +499,7 @@ extension RoutingTransport {
         let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
         return RoutingTransport([
             Route(method: "GET", fragment: "reports/project_budget", body: Fixture.projectBudgetPage),
+            Route(method: "GET", fragment: "v2/clients", body: Fixture.clientsPage),
             Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
             Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
             Route(method: "GET", fragment: "company", body: Fixture.company),

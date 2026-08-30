@@ -85,6 +85,27 @@ public struct TimeEntry: Identifiable, Codable, Sendable, Hashable {
     public var isEditable: Bool { !isLocked }
 }
 
+/// A Harvest client, fetched for one field: `currency`.
+///
+/// Harvest reports a budget's currency nowhere a budget appears — not on the project
+/// budget report, not on `company`, and not on the client stub embedded in a project
+/// assignment. It exists only here.
+public struct ClientRecord: Identifiable, Codable, Sendable, Hashable {
+    public let id: Int
+    public let name: String
+    public let isActive: Bool
+    /// An ISO 4217 code such as "USD". Optional because Harvest omits it for a client
+    /// left on the company default.
+    public let currency: String?
+
+    public init(id: Int, name: String, isActive: Bool = true, currency: String? = nil) {
+        self.id = id
+        self.name = name
+        self.isActive = isActive
+        self.currency = currency
+    }
+}
+
 public struct ProjectAssignment: Identifiable, Codable, Sendable, Hashable {
     public let id: Int
     public let isActive: Bool
@@ -116,6 +137,10 @@ extension TimeEntry: PaginatedItem {
 
 extension ProjectAssignment: PaginatedItem {
     public static var pageKey: String { "projectAssignments" }
+}
+
+extension ClientRecord: PaginatedItem {
+    public static var pageKey: String { "clients" }
 }
 
 struct Page<Item: PaginatedItem>: Decodable, Sendable {

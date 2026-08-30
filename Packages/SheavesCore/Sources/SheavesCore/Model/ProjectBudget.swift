@@ -38,6 +38,9 @@ public enum BudgetBasis: String, Codable, Sendable, Hashable {
 public struct ProjectBudget: Identifiable, Codable, Sendable, Hashable {
     public var projectID: Int
     public var projectName: String
+    /// Kept so a monetary budget can be joined to its client's currency, which is the
+    /// only place Harvest reports one.
+    public var clientID: Int?
     public var clientName: String?
     public var isActive: Bool
     public var budgetBy: BudgetBasis
@@ -47,6 +50,9 @@ public struct ProjectBudget: Identifiable, Codable, Sendable, Hashable {
     public var budget: Double?
     public var budgetSpent: Double?
     public var budgetRemaining: Double?
+    /// Filled in after the fact, from the client record. Absent when the token may not
+    /// read clients, and a monetary budget then shows no symbol rather than a wrong one.
+    public var currencyCode: String?
 
     public var id: Int { projectID }
 
@@ -54,23 +60,29 @@ public struct ProjectBudget: Identifiable, Codable, Sendable, Hashable {
     /// are the already-converted names rather than what Harvest sends on the wire.
     private enum CodingKeys: String, CodingKey {
         case projectID = "projectId"
+        case clientID = "clientId"
         case projectName, clientName, isActive, budgetBy, budgetIsMonthly
         case budget, budgetSpent, budgetRemaining
+        // Not on the wire; carried so the cache keeps it across a launch.
+        case currencyCode
     }
 
     public init(
         projectID: Int,
         projectName: String,
+        clientID: Int? = nil,
         clientName: String? = nil,
         isActive: Bool = true,
         budgetBy: BudgetBasis,
         budgetIsMonthly: Bool = false,
         budget: Double? = nil,
         budgetSpent: Double? = nil,
-        budgetRemaining: Double? = nil
+        budgetRemaining: Double? = nil,
+        currencyCode: String? = nil
     ) {
         self.projectID = projectID
         self.projectName = projectName
+        self.clientID = clientID
         self.clientName = clientName
         self.isActive = isActive
         self.budgetBy = budgetBy
@@ -78,6 +90,7 @@ public struct ProjectBudget: Identifiable, Codable, Sendable, Hashable {
         self.budget = budget
         self.budgetSpent = budgetSpent
         self.budgetRemaining = budgetRemaining
+        self.currencyCode = currencyCode
     }
 
     /// Whether there is a budget here worth drawing at all.
@@ -117,14 +130,21 @@ public struct ProjectBudget: Identifiable, Codable, Sendable, Hashable {
         budget.map { formattedAmount($0, format, locale: locale) }
     }
 
-    /// Harvest names no currency anywhere a monetary budget appears — not on the
-    /// report and not on `company` — so money is shown in the locale's own currency.
-    /// That is right for the one-account, one-currency case this app is built for,
-    /// and wrong for anyone billing in a currency they do not live in.
+    /// Harvest names no currency anywhere a budget appears — not on the report, not on
+    /// `company`, and not on the client stub inside a project assignment. It comes from
+    /// the client record instead, which only an administrator or a manager who may edit
+    /// clients can read.
+    ///
+    /// Without it, the figure is shown as a bare number. Falling back to the locale's
+    /// currency would render a EUR budget as `$2,400` for anyone with a US Mac: wrong,
+    /// and wrong in a way that looks perfectly reasonable. An unlabelled number is
+    /// merely incomplete, and this feature would rather be incomplete than misleading.
     private func formattedAmount(_ amount: Double, _ format: HoursFormat, locale: Locale) -> String {
         guard budgetBy.isMonetary else { return amount.formattedHours(format, locale: locale) }
-        let code = locale.currency?.identifier ?? "USD"
-        return amount.formatted(.currency(code: code).precision(.fractionLength(0)).locale(locale))
+        guard let currencyCode else {
+            return amount.formatted(.number.precision(.fractionLength(0)).locale(locale))
+        }
+        return amount.formatted(.currency(code: currencyCode).precision(.fractionLength(0)).locale(locale))
     }
 }
 

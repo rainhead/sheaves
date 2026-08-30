@@ -381,3 +381,76 @@ struct SnapshotStoreTests {
         #expect(try #require(store.load()).budgets.first?.budgetRemaining == 8)
     }
 }
+
+@Suite("Budget currencies")
+@MainActor
+struct BudgetCurrencyTests {
+    private func makeTracker(transport: RoutingTransport) -> (TimeTracker, URL, URL) {
+        let snapshotURL = URL.temporaryDirectory.appending(path: "sheaves-snapshot-\(UUID().uuidString).json")
+        let queueURL = URL.temporaryDirectory.appending(path: "sheaves-queue-\(UUID().uuidString).json")
+        let tracker = TimeTracker(
+            client: HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshotURL),
+            queue: MutationQueue(fileURL: queueURL)
+        )
+        return (tracker, snapshotURL, queueURL)
+    }
+
+    private func cleanUp(_ urls: URL...) {
+        for url in urls { try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// An account budgeting only in hours never needs a currency, so it must not spend
+    /// a request — and a 403 on clients is exactly what a regular user gets.
+    @Test("does not ask for clients when no budget is money")
+    func skipsCurrencyForHoursBudgets() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        // The fixture's only readable budget is measured in hours.
+        #expect(tracker.budgets[14308069]?.budgetBy == .project)
+        #expect(await transport.callCount(matching: "v2/clients") == 0)
+    }
+
+    @Test("labels a monetary budget with its client's currency")
+    func joinsCurrency() async throws {
+        let transport = RoutingTransport.standardAccount(budgets: Fixture.monetaryBudgetPage)
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        // Client 5735776 bills in EUR, whatever the machine running this is set to.
+        #expect(tracker.budgets[14308069]?.currencyCode == "EUR")
+        #expect(await transport.callCount(matching: "v2/clients") == 1)
+    }
+
+    /// The permission for clients is nearly the one a monetary budget already needs,
+    /// but not exactly, so the refusal has to leave the budget usable.
+    @Test("still shows a refused-currency budget, without a symbol")
+    func survivesRefusedClients() async throws {
+        let transport = RoutingTransport.standardAccount(
+            budgets: Fixture.monetaryBudgetPage,
+            clients: "{}",
+            clientStatus: 403
+        )
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+
+        await tracker.sync()
+
+        #expect(tracker.connection == .online)
+        let budget = try #require(tracker.budgets[14308069])
+        #expect(budget.currencyCode == nil)
+        #expect(budget.budgetRemaining == 8)
+        #expect(budget.formattedRemaining(.hoursMinutes, locale: Locale(identifier: "en_US")) == "8")
+
+        // A refusal is a settled answer, so it is not asked again.
+        await tracker.sync()
+        #expect(await transport.callCount(matching: "v2/clients") == 1)
+    }
+}
