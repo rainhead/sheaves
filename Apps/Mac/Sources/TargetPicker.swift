@@ -225,17 +225,15 @@ private struct TargetRow: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    Text(task?.name ?? "")
-                        .font(.callout)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(secondaryText)
-                }
+                Text(task?.name ?? "")
+                    .font(.callout)
+                    .lineLimit(1)
             }
+            // No hand-drawn indicator and no `.menuIndicator(.hidden)`. Hiding the
+            // system one and supplying a chevron of its own put the chevron before
+            // the task name; letting the style draw its own puts it after, which is
+            // where every other popup button on the system has it.
             .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("Task")
             .accessibilityValue(task?.name ?? "")
