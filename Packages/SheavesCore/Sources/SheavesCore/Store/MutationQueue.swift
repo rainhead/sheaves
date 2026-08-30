@@ -174,12 +174,35 @@ public actor MutationQueue {
         return report
     }
 
+    /// Harvest keeps hours to two decimals, and its parser refuses the scientific
+    /// notation that a tiny Double encodes to — a sub-second elapsed time comes
+    /// back as "would create a negative total for the selected project and task".
+    /// Every hours figure is therefore rounded to what Harvest can store before
+    /// it is sent; two-decimal values always encode as plain decimals.
+    static func storableHours(_ hours: Double) -> Double {
+        (hours * 100).rounded() / 100
+    }
+
     private func apply(_ mutation: Mutation, using client: HarvestClient) async throws -> TimeEntry? {
         switch mutation {
         case .create(_, let target, let spentDate, let notes, let startedAt, let endedAt):
             // Measure from when the user started, not from now.
             let finish = endedAt ?? Date()
-            let hours = max(0, finish.timeIntervalSince(startedAt)) / 3600
+            let hours = Self.storableHours(max(0, finish.timeIntervalSince(startedAt)) / 3600)
+            guard hours > 0 else {
+                // Nothing measurable to bank, and an explicit 0 would itself start
+                // the timer. Create the entry running — which is what a fresh click
+                // wants — and stop it again when the user already had.
+                let entry = try await client.createTimeEntry(
+                    projectID: target.project.id,
+                    taskID: target.task.id,
+                    spentDate: spentDate,
+                    notes: notes,
+                    hours: nil
+                )
+                guard endedAt == nil else { return try await client.stopTimeEntry(id: entry.id) }
+                return entry
+            }
             let entry = try await client.createTimeEntry(
                 projectID: target.project.id,
                 taskID: target.task.id,
@@ -199,7 +222,7 @@ public actor MutationQueue {
             } catch HarvestError.rejected {
                 // Already stopped server-side — the hours still need correcting.
             }
-            return try await client.updateTimeEntry(id: serverID, hours: hours)
+            return try await client.updateTimeEntry(id: serverID, hours: Self.storableHours(hours))
 
         case .restart(let id, let resumedAt, let bankedHours):
             guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
@@ -207,13 +230,20 @@ public actor MutationQueue {
             if offline > 1.0 / 3600 {
                 // Bank the time it ran offline *before* resuming, so the total is
                 // never patched while the timer is live.
-                _ = try await client.updateTimeEntry(id: serverID, hours: bankedHours + offline)
+                _ = try await client.updateTimeEntry(
+                    id: serverID,
+                    hours: Self.storableHours(bankedHours + offline)
+                )
             }
             return try await client.restartTimeEntry(id: serverID)
 
         case .update(let id, let notes, let hours):
             guard let serverID = serverID(for: id) else { throw HarvestError.notFound }
-            return try await client.updateTimeEntry(id: serverID, notes: notes, hours: hours)
+            return try await client.updateTimeEntry(
+                id: serverID,
+                notes: notes,
+                hours: hours.map(Self.storableHours)
+            )
 
         case .delete(let id):
             guard let serverID = serverID(for: id) else { throw HarvestError.notFound }

@@ -56,7 +56,7 @@ struct MutationQueueTests {
         let local = UUID()
         await queue.enqueue(
             .create(local: local, target: target, spentDate: .today(), notes: nil,
-                    startedAt: Date(), endedAt: Date())
+                    startedAt: Date().addingTimeInterval(-1800), endedAt: Date())
         )
         await queue.enqueue(.stop(.local(local), hours: 0.5))
         let report = await queue.drain(using: client)
