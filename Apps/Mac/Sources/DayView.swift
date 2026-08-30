@@ -3,11 +3,46 @@ import SwiftUI
 
 /// The menu bar popover: the visible day, what is on the clock, and a place to start
 /// something new without reaching for the mouse.
+/// A row the arrow keys can land on. The day's entries and the project list are one
+/// column on screen, so they are one list to the keyboard; identity is by id rather
+/// than by index because starting or stopping a timer reorders the entries under it.
+enum PanelRow: Hashable {
+    case entry(TrackedEntry.ID)
+    case project(Int)
+}
+
 struct DayView: View {
     @Environment(TimeTracker.self) private var tracker
     @Environment(\.openSettingsWindow) private var openSettings
 
+    @State private var selection: PanelRow?
+    @State private var chosenTasks: [Int: Int] = [:]
+    /// Which entry, if any, has its notes field open. Held here so the panel can hand
+    /// the keyboard over to it entirely, and so only one row can be editing.
+    @State private var editingNotes: TrackedEntry.ID?
+    @FocusState private var isPanelFocused: Bool
+
     private var format: HoursFormat { HoursFormat(company: tracker.company) }
+
+    private var projects: [ProjectTargets] { tracker.orderedProjects }
+
+    private var rows: [PanelRow] {
+        tracker.entries.map { PanelRow.entry($0.id) } + projects.map { PanelRow.project($0.id) }
+    }
+
+    /// Falls back to the first project rather than the first entry, so ⏎ on a freshly
+    /// opened panel still starts the top-ranked timer instead of stopping a running
+    /// one. Recomputed rather than stored, so a selection whose row has gone — an
+    /// entry deleted, a project unassigned — lands somewhere real.
+    private var effectiveSelection: PanelRow? {
+        if let selection, rows.contains(selection) { return selection }
+        return projects.first.map { .project($0.id) }
+    }
+
+    private var highlightedProject: Int? {
+        guard case .project(let id) = effectiveSelection else { return nil }
+        return projects.firstIndex { $0.id == id }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -29,15 +64,58 @@ struct DayView: View {
                 // the common case, and searching is for the exception.
                 entryList
                 Divider()
-                TargetPicker { target in
-                    Task { await tracker.start(target) }
-                }
+                ProjectList(
+                    projects: projects,
+                    highlighted: highlightedProject,
+                    chosenTasks: $chosenTasks,
+                    onStart: { target in Task { await tracker.start(target) } }
+                )
             }
             Divider()
             footer
         }
         .padding(12)
         .frame(width: 380)
+        // The ring is suppressed because the selected row already draws itself, and
+        // two highlights read as two selections.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isPanelFocused)
+        .onKeyPress(.downArrow) { move(by: 1) }
+        .onKeyPress(.upArrow) { move(by: -1) }
+        .onKeyPress(.return) { activate() }
+        .onAppear { isPanelFocused = true }
+    }
+
+    /// Every key here defers to an open notes field. Relying on the text field to
+    /// swallow them would leave the arrows moving the selection out from under
+    /// somebody in the middle of typing.
+    private func move(by offset: Int) -> KeyPress.Result {
+        guard editingNotes == nil else { return .ignored }
+        let rows = self.rows
+        guard !rows.isEmpty else { return .ignored }
+        let current = effectiveSelection.flatMap { rows.firstIndex(of: $0) } ?? 0
+        selection = rows[min(max(current + offset, 0), rows.count - 1)]
+        return .handled
+    }
+
+    /// ⏎ does whatever the selected row's button does: stop or resume an entry, start
+    /// a project.
+    private func activate() -> KeyPress.Result {
+        guard editingNotes == nil else { return .ignored }
+        switch effectiveSelection {
+        case .entry(let id):
+            guard let entry = tracker.entries.first(where: { $0.id == id }) else { return .ignored }
+            Task { await tracker.toggle(entry) }
+        case .project(let id):
+            guard let project = projects.first(where: { $0.id == id }),
+                  let task = project.task(chosenFrom: chosenTasks)
+            else { return .ignored }
+            Task { await tracker.start(project.target(task: task)) }
+        case nil:
+            return .ignored
+        }
+        return .handled
     }
 
     private var header: some View {
@@ -95,7 +173,15 @@ struct DayView: View {
             SizedScrollView(maxHeight: 260) {
                 LazyVStack(spacing: 2) {
                     ForEach(tracker.entries) { entry in
-                        EntryRow(entry: entry, format: format)
+                        EntryRow(
+                            entry: entry,
+                            format: format,
+                            isSelected: effectiveSelection == .entry(entry.id),
+                            isEditingNotes: Binding(
+                                get: { editingNotes == entry.id },
+                                set: { editingNotes = $0 ? entry.id : nil }
+                            )
+                        )
                     }
                 }
             }

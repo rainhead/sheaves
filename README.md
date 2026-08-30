@@ -157,9 +157,8 @@ Carbon reports that by failing silently, which is worth surfacing.
 | --- | --- |
 | ⌃⌥⌘T | Quick entry, from any app (rebindable in Settings) |
 | Click ⏸ / ▶ in the menu bar | Pause or resume, without opening anything |
-| ↑ ↓ | Move through matches |
-| ⇥ | Jump to the notes field |
-| ⏎ | Start the selected timer |
+| ↑ ↓ | Move through projects |
+| ⏎ | Start the selected project's timer |
 | ⌘← ⌘→ | Previous / next day |
 
 ## Licence

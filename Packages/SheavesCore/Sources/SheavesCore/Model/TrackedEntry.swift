@@ -112,9 +112,55 @@ public struct TimerTarget: Identifiable, Sendable, Hashable, Codable {
         guard let client, !client.name.isEmpty else { return project.name }
         return "\(client.name) · \(project.name)"
     }
+}
 
-    public var searchText: String {
-        [client?.name, project.name, task.name].compactMap(\.self).joined(separator: " ")
+/// A project a timer can be started against, with the tasks available on it.
+///
+/// The picker lists projects rather than project/task pairs. A project with six
+/// tasks was six rows carrying the same second line, which buried how few projects
+/// there really are; the task is a choice made within the row instead.
+public struct ProjectTargets: Identifiable, Sendable, Hashable {
+    public var project: Reference
+    public var client: Reference?
+    /// Best first, by the same ranking that decides the order of the projects.
+    public var tasks: [Reference]
+
+    public init(project: Reference, client: Reference? = nil, tasks: [Reference]) {
+        self.project = project
+        self.client = client
+        self.tasks = tasks
+    }
+
+    public var id: Int { project.id }
+
+    /// The pair to start, given whichever task the row is showing.
+    public func target(task: Reference) -> TimerTarget {
+        TimerTarget(project: project, task: task, client: client)
+    }
+}
+
+public extension Sequence where Element == TimerTarget {
+    /// Collapses ranked pairs into one entry per project.
+    ///
+    /// Order is taken from the sequence on both axes: a project appears where its
+    /// best-ranked task put it, and its tasks keep the order they were ranked in. So
+    /// filtering pairs by a query and grouping afterwards leaves the task that
+    /// matched at the head of its project's list, which is what lets typing a task
+    /// name still choose that task.
+    func groupedByProject() -> [ProjectTargets] {
+        var order: [Int] = []
+        var grouped: [Int: ProjectTargets] = [:]
+        for target in self {
+            let id = target.project.id
+            if grouped[id] == nil {
+                order.append(id)
+                grouped[id] = ProjectTargets(project: target.project, client: target.client, tasks: [])
+            }
+            if !grouped[id]!.tasks.contains(where: { $0.id == target.task.id }) {
+                grouped[id]!.tasks.append(target.task)
+            }
+        }
+        return order.compactMap { grouped[$0] }
     }
 }
 
