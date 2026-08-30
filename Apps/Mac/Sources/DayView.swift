@@ -174,19 +174,28 @@ struct DayView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 10)
         } else {
-            SizedScrollView(maxHeight: 260) {
-                LazyVStack(spacing: 2) {
-                    ForEach(tracker.entries) { entry in
-                        EntryRow(
-                            entry: entry,
-                            format: format,
-                            isSelected: effectiveSelection == .entry(entry.id),
-                            isEditingNotes: Binding(
-                                get: { editingNotes == entry.id },
-                                set: { editingNotes = $0 ? entry.id : nil }
+            // The arrow keys can move the selection past the bottom of a long day, so
+            // the list has to follow it — as the project list below already does.
+            ScrollViewReader { proxy in
+                SizedScrollView(maxHeight: 260) {
+                    LazyVStack(spacing: 2) {
+                        ForEach(tracker.entries) { entry in
+                            EntryRow(
+                                entry: entry,
+                                format: format,
+                                isSelected: effectiveSelection == .entry(entry.id),
+                                isEditingNotes: Binding(
+                                    get: { editingNotes == entry.id },
+                                    set: { editingNotes = $0 ? entry.id : nil }
+                                )
                             )
-                        )
+                            .id(entry.id)
+                        }
                     }
+                }
+                .onChange(of: effectiveSelection) {
+                    guard case .entry(let id) = effectiveSelection else { return }
+                    withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(id) }
                 }
             }
         }
