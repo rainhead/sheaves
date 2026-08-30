@@ -159,14 +159,19 @@ public actor MutationQueue {
                     remember(local: local, serverID: entry.id)
                     rewrite(local: local, to: .server(entry.id))
                     report.resolved[local] = entry.id
-                    if let followUp {
-                        pending[0] = followUp
-                    } else {
-                        pending.removeFirst()
+                    // The actor is free while the request is in flight, so the queue
+                    // can have been emptied under it — `removeAll` on disconnect.
+                    // Touch it only where the drained mutation still stands.
+                    if pending.first == mutation {
+                        if let followUp {
+                            pending[0] = followUp
+                        } else {
+                            pending.removeFirst()
+                        }
                     }
                 } else {
                     _ = try await apply(mutation, using: client)
-                    pending.removeFirst()
+                    if pending.first == mutation { pending.removeFirst() }
                 }
                 report.applied += 1
                 persist()
@@ -174,7 +179,7 @@ public actor MutationQueue {
                 report.stoppedWith = error
                 break
             } catch let error as HarvestError {
-                pending.removeFirst()
+                if pending.first == mutation { pending.removeFirst() }
                 report.discarded.append((mutation, error))
                 persist()
             } catch is CancellationError {
