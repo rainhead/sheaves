@@ -140,6 +140,7 @@ private struct Account: HarvestTransport {
         [
             ("users/me/project_assignments", assignments),
             ("reports/project_budget", budgets),
+            ("v2/clients", clients),
             ("is_running=true", page(#"[\#(running)]"#, key: "time_entries")),
             ("time_entries", page(#"[\#(running),\#(stopped)]"#, key: "time_entries")),
             ("company", company),
@@ -262,6 +263,21 @@ private struct Account: HarvestTransport {
             ]
             """,
             key: "results"
+        )
+    }
+
+    /// Both clients bill in dollars. Without this the budgets render as bare numbers,
+    /// because Harvest names a currency nowhere else.
+    private static var clients: String {
+        page(
+            """
+            [
+              { "id": 1, "name": "Beam Reach", "is_active": true, "currency": "USD" },
+              { "id": 2, "name": "Oregon State University Extension",
+                "is_active": true, "currency": "USD" }
+            ]
+            """,
+            key: "clients"
         )
     }
 

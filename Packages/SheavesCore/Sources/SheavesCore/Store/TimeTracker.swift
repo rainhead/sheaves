@@ -129,6 +129,12 @@ public final class TimeTracker {
     private var syncTask: Task<Void, Never>?
     private var accountDataFetchedAt: Date?
     private var budgetAvailability: BudgetAvailability = .unknown
+    /// Client currencies by client id, and whether Harvest refused to say. Only an
+    /// administrator or a manager who may edit clients can read them — nearly the same
+    /// permission a monetary budget already needs, so a token that can see money can
+    /// usually also see what kind.
+    private var currencies: [Int: String] = [:]
+    private var currenciesRefused = false
 
     /// What the last budget probe learned, and when.
     ///
@@ -220,6 +226,8 @@ public final class TimeTracker {
         recentTargets = []
         frequentTargets = []
         budgets = [:]
+        currencies = [:]
+        currenciesRefused = false
         lastActiveToday = nil
         accountDataFetchedAt = nil
         budgetAvailability = .unknown
@@ -356,7 +364,17 @@ public final class TimeTracker {
 
         do {
             let report = try await client.projectBudgets()
-            let readable = report.filter { $0.isActive && $0.hasReadableBudget }
+            var readable = report.filter { $0.isActive && $0.hasReadableBudget }
+            // Only when there is money to label. An account budgeting purely in hours
+            // never needs the currency, so it never spends the request.
+            if readable.contains(where: { $0.budgetBy.isMonetary }) {
+                await refreshCurrencies()
+                readable = readable.map { budget in
+                    var budget = budget
+                    budget.currencyCode = budget.clientID.flatMap { currencies[$0] }
+                    return budget
+                }
+            }
             budgets = Dictionary(readable.map { ($0.projectID, $0) }, uniquingKeysWith: { first, _ in first })
             budgetAvailability = readable.isEmpty ? .none(asOf: Date()) : .some(asOf: Date())
             Self.log.info(
@@ -376,6 +394,32 @@ public final class TimeTracker {
             // Anything else is transient. Leave the last known budgets on screen and
             // ask again on the next sync.
             Self.log.error("budgets: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The currency each client bills in.
+    ///
+    /// Harvest reports a currency only on the client record, so labelling a monetary
+    /// budget costs a request the budget report itself cannot avoid. Clients change
+    /// about never, so this rides the budget refresh rather than having a clock of its
+    /// own, and a refusal is permanent: without it a monetary budget shows a bare
+    /// number, which is incomplete where a guessed symbol would be wrong.
+    private func refreshCurrencies() async {
+        guard !currenciesRefused else { return }
+        do {
+            let records = try await client.clients()
+            currencies = Dictionary(
+                records.compactMap { record in record.currency.map { (record.id, $0) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+            Self.log.info("currencies: \(self.currencies.count, privacy: .public) clients name one")
+        } catch is CancellationError {
+            return
+        } catch HarvestError.unauthorized {
+            currenciesRefused = true
+            Self.log.info("currencies: this token may not read clients; money shows no symbol")
+        } catch {
+            Self.log.error("currencies: \(error.localizedDescription, privacy: .public)")
         }
     }
 

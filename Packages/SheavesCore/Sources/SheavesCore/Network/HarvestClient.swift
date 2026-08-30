@@ -130,6 +130,15 @@ public actor HarvestClient {
         _ = try await perform(request(path: "time_entries/\(id)", method: "DELETE"))
     }
 
+    /// Clients, for their currencies.
+    ///
+    /// Readable only by an administrator or a manager who may edit clients; anyone
+    /// else gets 403. That is nearly the same permission a monetary budget already
+    /// requires, so a token that can see money can usually also see what kind.
+    public func clients() async throws -> [ClientRecord] {
+        try await getAllPages("clients")
+    }
+
     // MARK: - Reports
 
     /// Every project's budget, spend and remainder in one request.
