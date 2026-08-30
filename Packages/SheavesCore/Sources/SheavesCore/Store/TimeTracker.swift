@@ -203,6 +203,13 @@ public final class TimeTracker {
             let user = try await client.currentUser()
             try keychain.write(credentials)
             self.user = user
+            // A refusal belongs to the token that earned it. Both probes below treat a
+            // 403 as final, and an expired token drops to `.needsCredentials` without
+            // anyone calling `disconnect` — so pasting a better token would otherwise
+            // reconnect into a session that had already given up asking.
+            budgetAvailability = .unknown
+            currencies = [:]
+            currenciesRefused = false
             await sync()
             startTicking()
         } catch {

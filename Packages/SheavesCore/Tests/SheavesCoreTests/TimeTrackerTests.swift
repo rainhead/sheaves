@@ -454,3 +454,37 @@ struct BudgetCurrencyTests {
         #expect(await transport.callCount(matching: "v2/clients") == 1)
     }
 }
+
+@Suite("Reconnecting")
+@MainActor
+struct ReconnectTests {
+    /// A 403 on the budget report is treated as final, which is right for one token and
+    /// wrong across two. An expired token drops the connection to `.needsCredentials`
+    /// without `disconnect` being called, so a session could reconnect with a better
+    /// token and still never ask again.
+    @Test("a new token starts the budget probe over")
+    func connectResetsRefusals() async throws {
+        let snapshotURL = URL.temporaryDirectory.appending(path: "sheaves-\(UUID().uuidString).json")
+        let queueURL = URL.temporaryDirectory.appending(path: "sheaves-q-\(UUID().uuidString).json")
+        defer { for u in [snapshotURL, queueURL] { try? FileManager.default.removeItem(at: u) } }
+
+        // First token: allowed to track time, refused the budget report.
+        let refusing = RoutingTransport.standardAccount(budgetStatus: 403)
+        let tracker = TimeTracker(
+            client: HarvestClient(credentials: Fixture.credentials, transport: refusing, backoffScale: 0),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshotURL),
+            queue: MutationQueue(fileURL: queueURL)
+        )
+        await tracker.sync()
+        await tracker.sync()
+        #expect(tracker.budgets.isEmpty)
+        #expect(await refusing.callCount(matching: "project_budget") == 1)
+
+        try await tracker.connect(Fixture.credentials)
+
+        // The same scripted account still refuses, but the probe was asked again
+        // rather than being written off with the previous token.
+        #expect(await refusing.callCount(matching: "project_budget") == 2)
+    }
+}
