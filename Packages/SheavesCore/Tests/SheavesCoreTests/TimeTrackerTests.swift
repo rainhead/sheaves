@@ -338,3 +338,46 @@ struct TimeTrackerTests {
         #expect(reason.contains("users/me"))
     }
 }
+
+@Suite("Cached snapshots")
+struct SnapshotStoreTests {
+    /// A cache is the thing that should degrade rather than fail. Adding `budgets`
+    /// made the synthesized decoder reject every snapshot written before it, which
+    /// threw away the entries, the recents and the usage ranking too — on exactly the
+    /// launch where the app most wants them.
+    @Test("reads a snapshot written before budgets existed")
+    func decodesPreBudgetSnapshot() throws {
+        let url = URL.temporaryDirectory.appending(path: "sheaves-old-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("""
+        {
+          "targets": [],
+          "entries": [],
+          "recentTargetIDs": ["1:10"],
+          "frequentTargetIDs": [],
+          "savedAt": 776000000
+        }
+        """.utf8).write(to: url)
+
+        let restored = try #require(SnapshotStore(fileURL: url).load())
+
+        #expect(restored.recentTargetIDs == ["1:10"])
+        #expect(restored.budgets.isEmpty)
+    }
+
+    @Test("round-trips budgets")
+    func roundTripsBudgets() throws {
+        let url = URL.temporaryDirectory.appending(path: "sheaves-new-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = SnapshotStore(fileURL: url)
+
+        try store.save(CachedSnapshot(budgets: [
+            ProjectBudget(
+                projectID: 7, projectName: "P", budgetBy: .project,
+                budget: 40, budgetSpent: 32, budgetRemaining: 8
+            )
+        ]))
+
+        #expect(try #require(store.load()).budgets.first?.budgetRemaining == 8)
+    }
+}

@@ -34,6 +34,26 @@ public struct CachedSnapshot: Codable, Sendable {
         self.budgets = budgets
         self.savedAt = savedAt
     }
+
+    /// Decoded field by field, every one optional, so that adding a field does not
+    /// invalidate every cache written before it existed.
+    ///
+    /// The synthesized decoder treats a new non-optional field as required, so the
+    /// first launch after one is added throws, `load()` answers nil, and the panel
+    /// opens empty — losing the entries, the recents and the usage ranking as well as
+    /// the field that was added. A cache is exactly the thing that should degrade
+    /// rather than fail.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        user = try container.decodeIfPresent(HarvestUser.self, forKey: .user)
+        company = try container.decodeIfPresent(HarvestCompany.self, forKey: .company)
+        targets = try container.decodeIfPresent([TimerTarget].self, forKey: .targets) ?? []
+        entries = try container.decodeIfPresent([TrackedEntry].self, forKey: .entries) ?? []
+        recentTargetIDs = try container.decodeIfPresent([String].self, forKey: .recentTargetIDs) ?? []
+        frequentTargetIDs = try container.decodeIfPresent([String].self, forKey: .frequentTargetIDs) ?? []
+        budgets = try container.decodeIfPresent([ProjectBudget].self, forKey: .budgets) ?? []
+        savedAt = try container.decodeIfPresent(Date.self, forKey: .savedAt) ?? Date()
+    }
 }
 
 /// Reads and writes the cache as a single JSON file.
