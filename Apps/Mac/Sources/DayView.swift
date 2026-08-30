@@ -105,7 +105,11 @@ struct DayView: View {
         guard editingNotes == nil else { return .ignored }
         switch effectiveSelection {
         case .entry(let id):
-            guard let entry = tracker.entries.first(where: { $0.id == id }) else { return .ignored }
+            // Locked, so the row's own button is disabled: the keyboard must not do
+            // what the mouse is forbidden. `resume` already refuses, but `stop` does
+            // not, so a locked entry left running was reachable this way alone.
+            guard let entry = tracker.entries.first(where: { $0.id == id }), !entry.isLocked
+            else { return .ignored }
             Task { await tracker.toggle(entry) }
         case .project(let id):
             guard let project = projects.first(where: { $0.id == id }),
