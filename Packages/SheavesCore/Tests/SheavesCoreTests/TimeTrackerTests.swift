@@ -267,6 +267,57 @@ struct TimeTrackerTests {
         #expect(!entry.isRunning)
     }
 
+    /// The offer's weak spot: offline, going to today clears the list and the
+    /// failed sync leaves it empty, so the dedupe is blind. The tracker still
+    /// remembers today's last entry, and that is enough to resume, not duplicate.
+    @Test("the offer resumes today's remembered entry even when the load fails")
+    func offerFallsBackToRememberedEntryOffline() async throws {
+        let existing = Fixture.timeEntry
+            .replacingOccurrences(of: "636709355", with: "700000001")
+            .replacingOccurrences(of: "14307913", with: "14308069")
+        let transport = RoutingTransport.standardAccount(entries: [existing])
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+        await tracker.selectDay(.today().adding(days: -1))
+        await transport.goOffline()
+
+        await tracker.goToToday()
+        await tracker.start(target, notes: "carried over")
+
+        #expect(tracker.runningEntry?.id == .server(700000001))
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+    }
+
+    /// Genuinely resuming a past day's entry must not evict what the menu bar
+    /// knows about today: stopping that timer should fall back to offering
+    /// today's own last entry, not collapse to idle around a stale running copy.
+    @Test("a past-day timer never evicts today's activity from the menu bar")
+    func pastDayTimerLeavesTodayActivityAlone() async throws {
+        let yesterday = CalendarDate.today().adding(days: -1)
+        let pastEntry = Fixture.timeEntry
+            .replacingOccurrences(of: "636709355", with: "700000002")
+            .replacingOccurrences(of: Fixture.today.description, with: yesterday.description)
+        let transport = RoutingTransport.standardAccount(entries: [Fixture.timeEntry, pastEntry])
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let past = try #require(tracker.entries.first { $0.id == .server(700000002) })
+        await transport.goOffline()
+
+        await tracker.resume(past)
+        let running = try #require(tracker.runningEntry)
+        await tracker.stop(running)
+
+        // Whether it clears the recency window depends on the entry's age; what
+        // must hold is that today's entry survived and no running copy is stuck.
+        let remembered = try #require(tracker.lastActiveToday)
+        #expect(remembered.id == .server(636709355))
+        #expect(remembered.spentDate == .today())
+        #expect(!remembered.isRunning)
+    }
+
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
         let transport = RoutingTransport.accountWithRunningTimer()

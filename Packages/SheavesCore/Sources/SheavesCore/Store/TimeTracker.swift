@@ -511,6 +511,18 @@ public final class TimeTracker {
             await resume(existing)
             return
         }
+        // A failed load leaves the visible list empty, and an empty list cannot
+        // dedupe — so on today, fall back on the one entry the tracker always
+        // remembers. Without this, "start on today" while offline duplicated an
+        // entry that already existed on Harvest.
+        if day == .today(), let recent = lastActiveToday,
+           !recent.isRunning, recent.spentDate == day, recent.target.id == target.id {
+            if !entries.contains(where: { $0.id == recent.id }) {
+                entries.insert(recent, at: 0)
+            }
+            await resume(recent)
+            return
+        }
 
         stopRunningLocally()
         let local = UUID()
@@ -837,9 +849,14 @@ public final class TimeTracker {
 
     /// Remembers the most recent thing worked on today, for the menu bar.
     private func noteLastActivity() {
+        // Only today's running timer is today's activity: a past day's entry
+        // resumed on its own day must not evict what the menu bar knows about
+        // today, or stopping it strands a running copy nothing can resume.
         if let running = runningEntry {
-            lastActiveToday = running
-            return
+            if running.spentDate == .today() {
+                lastActiveToday = running
+                return
+            }
         }
         // Judged by the entry's own date, not the visible day: a timer started "on
         // today instead" lives in a past day's list, and stopping it there must
