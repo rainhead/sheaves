@@ -237,6 +237,30 @@ struct TimeTrackerTests {
         #expect(post.notes == "carried over")
     }
 
+    /// Stopping the "on today instead" timer while still viewing the past day must
+    /// leave it one click away in the menu bar, not strand a stale running copy.
+    @Test("a today-timer stopped from a past day's view stays recent")
+    func offPanelStopStaysRecent() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+        await tracker.selectDay(.today().adding(days: -1))
+        await transport.goOffline()
+
+        await tracker.start(target, on: .today())
+        let running = try #require(tracker.runningEntry)
+        await tracker.stop(running)
+
+        guard case .recent(let entry) = tracker.activity else {
+            Issue.record("expected .recent, got \(tracker.activity)")
+            return
+        }
+        #expect(entry.spentDate == .today())
+        #expect(!entry.isRunning)
+    }
+
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
         let transport = RoutingTransport.accountWithRunningTimer()

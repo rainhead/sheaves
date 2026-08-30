@@ -837,11 +837,19 @@ public final class TimeTracker {
             lastActiveToday = running
             return
         }
-        // Only today's list can update this; browsing history must not disturb it.
-        guard isToday else { return }
-        lastActiveToday = entries
-            .filter { !$0.isRunning }
+        // Judged by the entry's own date, not the visible day: a timer started "on
+        // today instead" lives in a past day's list, and stopping it there must
+        // still leave it one click away — not strand a stale running copy here.
+        let stopped = entries
+            .filter { !$0.isRunning && $0.spentDate == .today() }
             .max { $0.updatedAt < $1.updatedAt }
+        if isToday {
+            // Today's list is authoritative, even about there being nothing.
+            lastActiveToday = stopped
+        } else if let stopped {
+            // A past day's list can only add what it happens to know about today.
+            lastActiveToday = stopped
+        }
     }
 
     /// Ranks project/task pairs by how much the user really works on them.
