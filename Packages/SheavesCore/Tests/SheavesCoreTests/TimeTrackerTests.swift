@@ -318,6 +318,35 @@ struct TimeTrackerTests {
         #expect(!remembered.isRunning)
     }
 
+    /// Resuming a past-day entry implicitly stops whatever today timer is running.
+    /// That stop is an update: a timer that had run for hours must not drop out of
+    /// the recency window the moment something else starts.
+    @Test("an implicitly stopped today timer stays one click away")
+    func implicitStopStaysRecent() async throws {
+        let yesterday = CalendarDate.today().adding(days: -1)
+        let pastEntry = Fixture.timeEntry
+            .replacingOccurrences(of: "636709355", with: "700000002")
+            .replacingOccurrences(of: Fixture.today.description, with: yesterday.description)
+        // The fixture's running timer started long before any recency window.
+        let transport = RoutingTransport.standardAccount(entries: [Fixture.runningTimeEntry, pastEntry])
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let past = try #require(tracker.entries.first { $0.id == .server(700000002) })
+        await transport.goOffline()
+
+        await tracker.resume(past)
+        let running = try #require(tracker.runningEntry)
+        await tracker.stop(running)
+
+        guard case .recent(let entry) = tracker.activity else {
+            Issue.record("expected .recent, got \(tracker.activity)")
+            return
+        }
+        #expect(entry.id == .server(636708906))
+        #expect(!entry.isRunning)
+    }
+
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
         let transport = RoutingTransport.accountWithRunningTimer()

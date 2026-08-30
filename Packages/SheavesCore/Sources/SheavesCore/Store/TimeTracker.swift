@@ -807,9 +807,14 @@ public final class TimeTracker {
     /// UI never shows two clocks running at once.
     private func stopRunningLocally() {
         guard let index = entries.firstIndex(where: \.isRunning) else { return }
-        entries[index].bankedHours = entries[index].hours(asOf: Date())
+        let stoppedAt = Date()
+        entries[index].bankedHours = entries[index].hours(asOf: stoppedAt)
         entries[index].isRunning = false
         entries[index].timerStartedAt = nil
+        // An implicit stop is an update like any other; without the stamp, a
+        // timer that ran for hours drops straight out of the recency window the
+        // moment something else starts.
+        entries[index].updatedAt = stoppedAt
     }
 
     private func noteRecent(_ target: TimerTarget) {
