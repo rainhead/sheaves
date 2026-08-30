@@ -108,8 +108,11 @@ struct EntryRow: View {
     }
 
     /// What play or ⏎ should do: toggle, unless resuming would quietly charge a
-    /// past day — then raise the offer instead.
+    /// past day — then raise the offer instead. Locked means locked on every path:
+    /// the accessibility action routes here too, and it must not offer what the
+    /// disabled button will not.
     private func requestToggle() {
+        guard !entry.isLocked else { return }
         if !entry.isRunning, entry.spentDate != .today() {
             isConfirmingResume = true
         } else {
