@@ -286,9 +286,13 @@ final class StatusItemController {
     /// attention moving away.
     private func installDismissWatchers() {
         guard dismissObservers.isEmpty else { return }
+        // A sheet on the panel — a delete confirmation, the resume-on-today offer —
+        // makes the panel resign key to its own dialog, which must not read as
+        // attention moving away: hiding the panel would take the question with it.
         let close: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.isTrackingOwnMenu else { return }
+                guard let self, !self.isTrackingOwnMenu, self.panel.attachedSheet == nil
+                else { return }
                 self.hidePanel()
             }
         }
@@ -328,7 +332,8 @@ final class StatusItemController {
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.isTrackingOwnMenu else { return }
+                guard let self, !self.isTrackingOwnMenu, self.panel.attachedSheet == nil
+                else { return }
                 self.hidePanel()
             }
         }

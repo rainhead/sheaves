@@ -219,6 +219,24 @@ struct TimeTrackerTests {
         #expect(tracker.runningEntry?.task.name == target.task.name)
     }
 
+    /// Play on yesterday's entry offers "on today instead"; the start that follows
+    /// must charge today even though the panel is showing yesterday.
+    @Test("starts on today from a past day's view when asked to")
+    func startsOnTodayFromPastDay() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+        await tracker.selectDay(.today().adding(days: -1))
+
+        await tracker.start(target, notes: "carried over", on: .today())
+
+        let post = try #require(await transport.calls(method: "POST", containing: "time_entries").first)
+        #expect(post.spentDate == CalendarDate.today().description)
+        #expect(post.notes == "carried over")
+    }
+
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
         let transport = RoutingTransport.accountWithRunningTimer()

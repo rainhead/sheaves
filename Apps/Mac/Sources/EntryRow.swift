@@ -12,6 +12,9 @@ struct EntryRow: View {
     @Binding var isEditingNotes: Bool
     /// Same arrangement for the duration, which is a field the way the notes are.
     @Binding var isEditingHours: Bool
+    /// Play on a past day's entry asks first — resuming it would charge the old
+    /// day. The panel holds this too, so the keyboard's ⏎ can raise the same offer.
+    @Binding var isConfirmingResume: Bool
     @State private var draftNotes = ""
     @State private var draftHours = ""
     @State private var isConfirmingDelete = false
@@ -60,7 +63,7 @@ struct EntryRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAction(named: entry.isRunning ? "Stop timer" : "Resume timer") {
-            Task { await tracker.toggle(entry) }
+            requestToggle()
         }
         .accessibilityAction(named: entry.notes?.isEmpty == false ? "Edit notes" : "Add notes") {
             beginEditingNotes()
@@ -77,6 +80,40 @@ struct EntryRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("\(entry.hours(asOf: tracker.now).formattedHours(format)) on \(entry.task.name) will be removed from Harvest. This cannot be undone.")
+        }
+        // Play on a past entry usually means "do that work now", not "backfill an
+        // old day" — so it asks, the way Harvest's own app does. Both choices are
+        // spelled out because neither is a cancel: one starts a fresh timer today
+        // with the same project, task and notes; the other genuinely reopens the
+        // old day.
+        .confirmationDialog(
+            "This entry is from \(entryDayLabel).",
+            isPresented: $isConfirmingResume,
+            titleVisibility: .visible
+        ) {
+            Button("Start on Today") {
+                Task { await tracker.start(entry.target, notes: entry.notes, on: .today()) }
+            }
+            Button("Resume on \(entryDayLabel)") {
+                Task { await tracker.resume(entry) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Starting on Today leaves \(entryDayLabel)’s time as it is.")
+        }
+    }
+
+    private var entryDayLabel: String {
+        entry.spentDate.startOfDay().formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+
+    /// What play or ⏎ should do: toggle, unless resuming would quietly charge a
+    /// past day — then raise the offer instead.
+    private func requestToggle() {
+        if !entry.isRunning, entry.spentDate != .today() {
+            isConfirmingResume = true
+        } else {
+            Task { await tracker.toggle(entry) }
         }
     }
 
@@ -210,7 +247,7 @@ struct EntryRow: View {
 
     private var toggleButton: some View {
         Button {
-            Task { await tracker.toggle(entry) }
+            requestToggle()
         } label: {
             Image(systemName: entry.isRunning ? "stop.fill" : "play.fill")
                 .font(.caption)
