@@ -176,6 +176,55 @@ enum Fixture {
     }
     """
 
+    /// One project with two active tasks, for the questions that are about choosing
+    /// between tasks rather than between projects.
+    static let twoTaskProjectAssignmentsPage = """
+    {
+      "project_assignments": [
+        {
+          "id": 130403296,
+          "is_project_manager": true,
+          "is_active": true,
+          "use_default_rates": true,
+          "budget": null,
+          "created_at": "2026-06-26T21:52:18Z",
+          "updated_at": "2026-06-26T21:52:18Z",
+          "hourly_rate": 100.0,
+          "project": { "id": 14308069, "name": "Online Store - Phase 1", "code": "OS1" },
+          "client": { "id": 5735776, "name": "123 Industries" },
+          "task_assignments": [
+            {
+              "id": 155505016,
+              "billable": true,
+              "is_active": true,
+              "created_at": "2026-06-26T21:52:18Z",
+              "updated_at": "2026-06-26T21:52:18Z",
+              "hourly_rate": 100.0,
+              "budget": null,
+              "task": { "id": 8083365, "name": "Graphic Design" }
+            },
+            {
+              "id": 155505018,
+              "billable": true,
+              "is_active": true,
+              "created_at": "2026-06-26T21:52:18Z",
+              "updated_at": "2026-06-26T21:52:18Z",
+              "hourly_rate": 100.0,
+              "budget": null,
+              "task": { "id": 8083366, "name": "Programming" }
+            }
+          ]
+        }
+      ],
+      "per_page": 2000,
+      "total_pages": 1,
+      "total_entries": 1,
+      "next_page": null,
+      "previous_page": null,
+      "page": 1
+    }
+    """
+
     static let company = """
     {
       "base_uri": "https://acme.harvestapp.com",
@@ -390,11 +439,12 @@ extension RoutingTransport {
     static func standardAccount(
         entries: [String] = [Fixture.timeEntry],
         budgets: String = Fixture.projectBudgetPage,
-        budgetStatus: Int = 200
+        budgetStatus: Int = 200,
+        assignments: String = Fixture.projectAssignmentsPage
     ) -> RoutingTransport {
         RoutingTransport([
             Route(method: "GET", fragment: "reports/project_budget", body: budgets, status: budgetStatus),
-            Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
+            Route(method: "GET", fragment: "users/me/project_assignments", body: assignments),
             Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
             Route(method: "GET", fragment: "company", body: Fixture.company),
             Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),

@@ -6,8 +6,10 @@ struct EntryRow: View {
 
     let entry: TrackedEntry
     var format: HoursFormat
-
-    @State private var isEditingNotes = false
+    var isSelected: Bool = false
+    /// Held by the panel rather than the row, so that only one row can be editing at
+    /// a time and so the panel knows to leave the keyboard alone while one is.
+    @Binding var isEditingNotes: Bool
     @State private var draftNotes = ""
     @State private var isConfirmingDelete = false
     @State private var isHovering = false
@@ -22,7 +24,7 @@ struct EntryRow: View {
                     .lineLimit(1)
                 Text(entry.target.projectLabel)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryText)
                     .lineLimit(1)
                 notes
             }
@@ -33,10 +35,8 @@ struct EntryRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(
-            entry.isRunning ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear),
-            in: RoundedRectangle(cornerRadius: 6)
-        )
+        .foregroundStyle(isSelected ? selectedText : AnyShapeStyle(.primary))
+        .background(background, in: RoundedRectangle(cornerRadius: 6))
         // Without a shape, hover only registers over drawn text — a stopped row has
         // a clear background, so most of it was not hoverable and "Add notes"
         // appeared only when the pointer crossed the two lines of the label.
@@ -71,6 +71,23 @@ struct EntryRow: View {
         } message: {
             Text("\(entry.hours(asOf: tracker.now).formattedHours(format)) on \(entry.task.name) will be removed from Harvest. This cannot be undone.")
         }
+    }
+
+    private var selectedText: AnyShapeStyle {
+        AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+    }
+
+    private var secondaryText: AnyShapeStyle {
+        isSelected
+            ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
+            : AnyShapeStyle(.secondary)
+    }
+
+    /// Selection outranks the running tint: a running row still says so with its
+    /// weight and its stop button, where a selected row has only this to say it.
+    private var background: AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(Color(nsColor: .selectedContentBackgroundColor)) }
+        return entry.isRunning ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear)
     }
 
     /// Spoken as one sentence, including what the status icons mean.
@@ -112,7 +129,7 @@ struct EntryRow: View {
             Button(action: beginEditingNotes) {
                 Text(text)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryText)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }

@@ -116,7 +116,7 @@ struct AbsencePromptView: View {
             header
             Divider()
             if isChoosingTarget {
-                TargetPicker(placeholder: "Log the time away to…", maxVisible: 5) { target in
+                TargetPicker(title: "Log the time away to…", maxVisible: 5) { target in
                     onResolve(.trimAndLog(target))
                 }
             } else {

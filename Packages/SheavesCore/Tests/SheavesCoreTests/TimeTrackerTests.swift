@@ -337,16 +337,4 @@ struct TimeTrackerTests {
         #expect(reason.contains("firstName"))
         #expect(reason.contains("users/me"))
     }
-
-    @Test("filters targets by fuzzy query")
-    func suggestsTargets() async throws {
-        let transport = RoutingTransport.standardAccount()
-        let (tracker, snapshot, queue) = makeTracker(transport: transport)
-        defer { cleanUp(snapshot, queue) }
-        await tracker.sync()
-
-        #expect(tracker.suggestedTargets(matching: "").count == 1)
-        #expect(tracker.suggestedTargets(matching: "online").count == 1)
-        #expect(tracker.suggestedTargets(matching: "zzz").isEmpty)
-    }
 }

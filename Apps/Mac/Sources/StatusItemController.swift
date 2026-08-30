@@ -19,6 +19,15 @@ final class StatusItemController {
     private let content: NSHostingController<AnyView>
     private var dismissObservers: [any NSObjectProtocol] = []
     private var globalClickMonitor: Any?
+    /// True while this app is tracking a menu of its own — the picker's task
+    /// dropdown, for one.
+    ///
+    /// The watchers below cannot tell our menu from anyone else's: HIToolbox
+    /// broadcasts menu tracking system-wide, which is the whole reason it is
+    /// observed, and the broadcast our dropdown causes is indistinguishable from
+    /// Safari's. NSMenu posts locally when it begins and ends, and that is the
+    /// signal that says the menu is ours.
+    private var isTrackingOwnMenu = false
     /// Clicking the status item makes it key, which can close the panel a moment
     /// before the click action runs — without this the item would reopen what the
     /// same click just dismissed.
@@ -271,11 +280,33 @@ final class StatusItemController {
     /// happens. HIToolbox broadcasts menu tracking system-wide, which covers those;
     /// a global click monitor covers menu bar extras that are panels rather than
     /// menus, since those produce an ordinary mouse-down in another process.
+    ///
+    /// Both are indiscriminate, and this panel now contains a menu of its own, so
+    /// `isTrackingOwnMenu` is what keeps opening the task dropdown from reading as
+    /// attention moving away.
     private func installDismissWatchers() {
         guard dismissObservers.isEmpty else { return }
         let close: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.hidePanel() }
+            MainActor.assumeIsolated {
+                guard let self, !self.isTrackingOwnMenu else { return }
+                self.hidePanel()
+            }
         }
+
+        dismissObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.isTrackingOwnMenu = true }
+            }
+        )
+        dismissObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.endMenuTracking() }
+            }
+        )
 
         dismissObservers.append(
             NotificationCenter.default.addObserver(
@@ -296,7 +327,20 @@ final class StatusItemController {
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            Task { @MainActor in self?.hidePanel() }
+            Task { @MainActor in
+                guard let self, !self.isTrackingOwnMenu else { return }
+                self.hidePanel()
+            }
+        }
+    }
+
+    /// Stops treating a menu as ours, a run loop turn late: the system-wide broadcast
+    /// for the menu that just closed can still be in flight behind the local
+    /// notification that closed it, and it would land on a cleared flag and shut the
+    /// panel that the menu belongs to.
+    private func endMenuTracking() {
+        Task { @MainActor [weak self] in
+            self?.isTrackingOwnMenu = false
         }
     }
 
@@ -310,6 +354,8 @@ final class StatusItemController {
             NSEvent.removeMonitor(globalClickMonitor)
             self.globalClickMonitor = nil
         }
+        // Never leave this set: a stuck flag is a panel that will not close.
+        isTrackingOwnMenu = false
     }
 }
 
