@@ -44,8 +44,10 @@ struct DemoAccount: HarvestTransport {
         id: Int, project: Int, projectName: String, client: Int, clientName: String,
         task: Int, taskName: String, hours: Double, notes: String?, running: Bool
     ) -> String {
-        // Half an hour ago, so a running timer renders as a plausible duration rather
-        // than as however long it has been since this file was written.
+        // Half an hour ago, so a running timer renders as a plausible duration
+        // rather than as however long it has been since this file was written.
+        // Harvest's `hours` on a running entry is a snapshot *including* that live
+        // half hour; `hours_without_timer` below is the banked part alone.
         let startedAt = running
             ? "\"\(Date().addingTimeInterval(-30 * 60).formatted(.iso8601))\""
             : "null"
@@ -55,7 +57,7 @@ struct DemoAccount: HarvestTransport {
           "client": { "id": \(client), "name": "\(clientName)" },
           "project": { "id": \(project), "name": "\(projectName)" },
           "task": { "id": \(task), "name": "\(taskName)" },
-          "hours": \(hours), "hours_without_timer": \(hours),
+          "hours": \(running ? hours + 0.5 : hours), "hours_without_timer": \(hours),
           "notes": \(notes.map { "\"\($0)\"" } ?? "null"),
           "is_locked": false, "locked_reason": null, "is_billed": false,
           "timer_started_at": \(startedAt), "started_time": null, "ended_time": null,
