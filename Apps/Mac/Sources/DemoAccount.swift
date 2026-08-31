@@ -67,16 +67,16 @@ struct DemoAccount: HarvestTransport {
 
     private static var running: String {
         entry(
-            id: 900_000_001, project: 101, projectName: "Orcasound", client: 1, clientName: "Beam Reach",
-            task: 201, taskName: "Programming", hours: 1.0, notes: "Hydrophone ingest", running: true
+            id: 900_000_001, project: 101, projectName: "Online Store - Phase 1", client: 1, clientName: "123 Industries",
+            task: 201, taskName: "Programming", hours: 1.0, notes: "Checkout flow", running: true
         )
     }
 
     private static var stopped: String {
         entry(
-            id: 900_000_002, project: 103, projectName: "Beeline", client: 2,
-            clientName: "Oregon State University Extension",
-            task: 233, taskName: "Analysis", hours: 2.25, notes: nil, running: false
+            id: 900_000_002, project: 103, projectName: "Marketing Website", client: 2,
+            clientName: "ABC Corp",
+            task: 233, taskName: "Graphic Design", hours: 2.25, notes: nil, running: false
         )
     }
 
@@ -108,17 +108,17 @@ struct DemoAccount: HarvestTransport {
         page(
             [
                 assignment(
-                    id: 1, project: 101, name: "Orcasound", client: 1, clientName: "Beam Reach",
+                    id: 1, project: 101, name: "Online Store - Phase 1", client: 1, clientName: "123 Industries",
                     tasks: [(201, "Programming"), (202, "Design"), (203, "Research"), (204, "Meetings")]
                 ),
                 assignment(
-                    id: 2, project: 102, name: "SalishSea.io", client: 1, clientName: "Beam Reach",
+                    id: 2, project: 102, name: "Internal Tools", client: 1, clientName: "123 Industries",
                     tasks: [(211, "Programming"), (212, "Design")]
                 ),
                 assignment(
-                    id: 3, project: 103, name: "Beeline", client: 2,
-                    clientName: "Oregon State University Extension",
-                    tasks: [(231, "Programming"), (232, "Field Work"), (233, "Analysis")]
+                    id: 3, project: 103, name: "Marketing Website", client: 2,
+                    clientName: "ABC Corp",
+                    tasks: [(231, "Copywriting"), (232, "SEO"), (233, "Graphic Design")]
                 ),
             ].joined(separator: ",").enclosedInArray,
             key: "project_assignments"
@@ -131,16 +131,16 @@ struct DemoAccount: HarvestTransport {
         page(
             """
             [
-              { "client_id": 1, "client_name": "Beam Reach",
-                "project_id": 101, "project_name": "Orcasound", "project_code": "",
+              { "client_id": 1, "client_name": "123 Industries",
+                "project_id": 101, "project_name": "Online Store - Phase 1", "project_code": "",
                 "budget_is_monthly": false, "budget_by": "project_cost", "is_active": true,
                 "budget": 5000.0, "budget_spent": 3993.0, "budget_remaining": 1007.0 },
-              { "client_id": 2, "client_name": "Oregon State University Extension",
-                "project_id": 103, "project_name": "Beeline", "project_code": "",
+              { "client_id": 2, "client_name": "ABC Corp",
+                "project_id": 103, "project_name": "Marketing Website", "project_code": "",
                 "budget_is_monthly": true, "budget_by": "project_cost", "is_active": true,
                 "budget": 5000.0, "budget_spent": 5240.0, "budget_remaining": -240.0 },
-              { "client_id": 1, "client_name": "Beam Reach",
-                "project_id": 102, "project_name": "SalishSea.io", "project_code": "",
+              { "client_id": 1, "client_name": "123 Industries",
+                "project_id": 102, "project_name": "Internal Tools", "project_code": "",
                 "budget_is_monthly": false, "budget_by": "none", "is_active": true,
                 "budget": null, "budget_spent": null, "budget_remaining": null }
             ]
@@ -155,8 +155,8 @@ struct DemoAccount: HarvestTransport {
         page(
             """
             [
-              { "id": 1, "name": "Beam Reach", "is_active": true, "currency": "USD" },
-              { "id": 2, "name": "Oregon State University Extension",
+              { "id": 1, "name": "123 Industries", "is_active": true, "currency": "USD" },
+              { "id": 2, "name": "ABC Corp",
                 "is_active": true, "currency": "USD" }
             ]
             """,
@@ -165,14 +165,14 @@ struct DemoAccount: HarvestTransport {
     }
 
     private static let company = """
-    { "name": "Beam Reach", "full_domain": "beamreach.harvestapp.com", "is_active": true,
+    { "name": "Acme", "full_domain": "acme.harvestapp.com", "is_active": true,
       "week_start_day": "Monday", "wants_timestamp_timers": false,
       "time_format": "hours_minutes", "weekly_capacity": 126000 }
     """
 
     private static let currentUser = """
-    { "id": 1, "first_name": "Peter", "last_name": "Abrahamsen",
-      "email": "peter@example.com" }
+    { "id": 1, "first_name": "Kim", "last_name": "Allen",
+      "email": "kim@acme.example" }
     """
 }
 
