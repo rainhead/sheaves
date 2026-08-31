@@ -524,7 +524,7 @@ public final class TimeTracker {
             return
         }
 
-        stopRunningLocally()
+        await stopRunningForSwitch()
         let local = UUID()
         entries.insert(
             TrackedEntry(
@@ -558,7 +558,7 @@ public final class TimeTracker {
 
     public func resume(_ entry: TrackedEntry) async {
         guard !entry.isRunning, entry.isLocked == false else { return }
-        stopRunningLocally()
+        await stopRunningForSwitch()
         mutateLocally(entry.id) {
             $0.isRunning = true
             $0.timerStartedAt = Date()
@@ -579,9 +579,27 @@ public final class TimeTracker {
 
     public func stop(_ entry: TrackedEntry) async {
         guard entry.isRunning else { return }
+        let mutation = await recordStop(of: entry)
+        noteLastActivity()
+        restartClock()
+        if let mutation {
+            await enqueue(mutation)
+        } else {
+            // The stop was folded into a still-queued create.
+            await queueChanged()
+        }
+    }
+
+    /// Stops `entry` locally and returns the mutation that records it — nil when a
+    /// still-queued create absorbed the stop instead.
+    ///
+    /// The total measured here is authoritative; Harvest's own stop timing is not,
+    /// because the request may not reach it for hours. That is also why switching
+    /// timers must queue this rather than lean on Harvest stopping the old one
+    /// implicitly: the implicit stop banks time up to whenever the *next* request
+    /// lands, inflating the old entry by however long the network was away.
+    private func recordStop(of entry: TrackedEntry) async -> Mutation? {
         let stoppedAt = Date()
-        // The total measured here is authoritative; Harvest's own stop timing is not,
-        // because the request may not reach it for hours.
         let hours = entry.hours(asOf: stoppedAt)
         mutateLocally(entry.id) {
             $0.bankedHours = hours
@@ -589,15 +607,20 @@ public final class TimeTracker {
             $0.timerStartedAt = nil
             $0.isPending = true
         }
-        noteLastActivity()
-        restartClock()
-
         if case .local(let uuid) = entry.id,
            await queue.amendCreate(local: uuid, endedAt: stoppedAt) {
-            await queueChanged()
-            return
+            return nil
         }
-        await enqueue(.stop(entry.id, hours: hours))
+        return .stop(entry.id, hours: hours)
+    }
+
+    /// The switch half of start and resume: whatever is running stops, measured
+    /// now, and the recording mutation is queued ahead of whatever follows it.
+    private func stopRunningForSwitch() async {
+        guard let running = runningEntry else { return }
+        if let mutation = await recordStop(of: running) {
+            await queue.enqueue(mutation)
+        }
     }
 
     public func toggle(_ entry: TrackedEntry) async {
@@ -805,18 +828,6 @@ public final class TimeTracker {
 
     /// Harvest stops the running timer when another starts; mirror that locally so the
     /// UI never shows two clocks running at once.
-    private func stopRunningLocally() {
-        guard let index = entries.firstIndex(where: \.isRunning) else { return }
-        let stoppedAt = Date()
-        entries[index].bankedHours = entries[index].hours(asOf: stoppedAt)
-        entries[index].isRunning = false
-        entries[index].timerStartedAt = nil
-        // An implicit stop is an update like any other; without the stamp, a
-        // timer that ran for hours drops straight out of the recency window the
-        // moment something else starts.
-        entries[index].updatedAt = stoppedAt
-    }
-
     private func noteRecent(_ target: TimerTarget) {
         recentTargets.removeAll { $0.id == target.id }
         recentTargets.insert(target, at: 0)

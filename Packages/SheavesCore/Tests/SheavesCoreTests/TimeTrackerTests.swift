@@ -347,6 +347,44 @@ struct TimeTrackerTests {
         #expect(!entry.isRunning)
     }
 
+    /// Switching timers must send the old one's measured stop, in order, ahead of
+    /// the new create. Leaning on Harvest stopping it implicitly banks the old
+    /// timer up to whenever the create lands — inflating it by however long the
+    /// network was away.
+    @Test("switching timers queues the measured stop ahead of the create")
+    func switchQueuesStopBeforeCreate() async throws {
+        let running = Fixture.timeEntriesPage([Fixture.runningTimeEntry])
+        let transport = RoutingTransport([
+            RoutingTransport.Route(method: "GET", fragment: "reports/project_budget", body: Fixture.projectBudgetPage),
+            RoutingTransport.Route(method: "GET", fragment: "v2/clients", body: Fixture.clientsPage),
+            RoutingTransport.Route(method: "GET", fragment: "users/me/project_assignments", body: Fixture.projectAssignmentsPage),
+            RoutingTransport.Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
+            RoutingTransport.Route(method: "GET", fragment: "company", body: Fixture.company),
+            RoutingTransport.Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),
+            RoutingTransport.Route(method: "PATCH", fragment: "/restart", body: Fixture.runningTimeEntry),
+            RoutingTransport.Route(method: "POST", fragment: "time_entries", body: Fixture.runningTimeEntry, status: 201),
+            RoutingTransport.Route(method: "GET", fragment: "is_running=true", body: running),
+            RoutingTransport.Route(method: "GET", fragment: "time_entries", body: running),
+        ])
+        let (tracker, snapshot, queue) = makeTracker(transport: transport)
+        defer { cleanUp(snapshot, queue) }
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+        #expect(tracker.runningEntry != nil)
+
+        await tracker.start(target)
+
+        let stopIndex = try #require(await transport.firstIndex(method: "PATCH", containing: "/stop"))
+        let createIndex = try #require(await transport.firstIndex(method: "POST", containing: "time_entries"))
+        #expect(stopIndex < createIndex, "the measured stop must land before the new create")
+        // The correction carries the total measured here, not Harvest's arrival math.
+        let correction = try #require(
+            await transport.calls(method: "PATCH", containing: "time_entries")
+                .first { !$0.path.contains("/stop") && !$0.path.contains("/restart") }
+        )
+        #expect(try #require(correction.hours) >= 1.0)
+    }
+
     @Test("banks elapsed time when a timer is stopped")
     func stopBanksElapsedTime() async throws {
         let transport = RoutingTransport.accountWithRunningTimer()
