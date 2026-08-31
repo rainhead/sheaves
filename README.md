@@ -10,9 +10,10 @@ through Zoom and Meet. The clock you are on is always visible in the menu bar,
 ⌃⌥⌘T starts a timer from anywhere, and nothing blocks on the network: Sheaves shows
 local state immediately and reconciles with Harvest afterwards.
 
-<img src="docs/images/menu-bar.png" width="380"
-  alt="The Sheaves menu bar panel: a budget bar for the running project, a running
-  timer with a stop button, a stopped entry with a resume button, and a list of
+<img src="docs/images/menu-bar-live.png" width="396"
+  alt="The Sheaves menu bar item — a pause button beside “Orcasound 1:30” — with
+  its panel open beneath: a budget bar for the running project, a running timer
+  with a stop button, a stopped entry with a resume button, and a list of
   projects — each with a task dropdown and its remaining budget, one of them
   selected and one of them over budget">
 
