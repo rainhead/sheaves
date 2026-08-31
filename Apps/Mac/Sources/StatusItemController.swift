@@ -223,6 +223,19 @@ final class StatusItemController {
         panel.isVisible ? hidePanel() : showPanel()
     }
 
+    /// Demo instances only: the panel, opened the way a person would see it.
+    ///
+    /// Twice over, because a cold panel positions itself from a zero size —
+    /// SwiftUI reports none until it has laid out — so the first show is only
+    /// the layout pass. The middle sleep outlasts `showPanel`'s reopen guard.
+    func showPanelForDemo() async {
+        showPanel()
+        try? await Task.sleep(for: .milliseconds(400))
+        hidePanel()
+        try? await Task.sleep(for: .milliseconds(300))
+        showPanel()
+    }
+
     private func showPanel() {
         guard Date().timeIntervalSince(lastHiddenAt) > 0.2 else { return }
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
@@ -285,6 +298,10 @@ final class StatusItemController {
     /// `isTrackingOwnMenu` is what keeps opening the task dropdown from reading as
     /// attention moving away.
     private func installDismissWatchers() {
+        // A demo instance exists to be photographed, not used: while the person
+        // whose machine it is keeps working, every one of their clicks lands in
+        // another process and would close the panel mid-capture.
+        guard !AppDelegate.isDemo else { return }
         guard dismissObservers.isEmpty else { return }
         // A sheet on the panel — a delete confirmation, the resume-on-today offer —
         // makes the panel resign key to its own dialog, which must not read as

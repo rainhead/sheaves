@@ -22,9 +22,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    let tracker = TimeTracker()
+    let tracker = AppDelegate.makeTracker()
     let hotKeyPreference = HotKeyPreference()
     let loginItem = LoginItemPreference()
+
+    /// A demo instance runs beside the real one, on the documentation account —
+    /// so a real screenshot can show the status item and its panel without
+    /// touching anyone's timesheet. `SHEAVES_DEMO=1` in the environment selects
+    /// it; debug builds only.
+    static var isDemo: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["SHEAVES_DEMO"] == "1"
+        #else
+        false
+        #endif
+    }
+
+    private static func makeTracker() -> TimeTracker {
+        #if DEBUG
+        if isDemo {
+            let scratch = URL.temporaryDirectory.appending(path: "sheaves-demo-\(UUID().uuidString)")
+            return TimeTracker(
+                client: HarvestClient(
+                    credentials: .init(accountID: "0", token: "demo"),
+                    transport: DemoAccount()
+                ),
+                keychain: KeychainStore(service: "com.rainhead.Sheaves.demo-\(UUID().uuidString)"),
+                snapshots: SnapshotStore(fileURL: scratch.appending(path: "snapshot.json")),
+                queue: MutationQueue(fileURL: scratch.appending(path: "queue.json"))
+            )
+        }
+        #endif
+        return TimeTracker()
+    }
 
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "hotkey")
     private static let presenceLog = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
@@ -65,6 +95,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         tracker.powerState = { PowerSource.current() }
+
+        if Self.isDemo {
+            // The demo account needs no keychain, so sync directly — and open the
+            // panel from inside, because a capture must never click anything: a
+            // synthetic click is exactly what the dismissal watchers listen for.
+            Task {
+                await tracker.sync()
+                await statusItem?.showPanelForDemo()
+            }
+            // No hotkey and no presence monitoring: the demo exists to be
+            // photographed, not to compete with the real instance beside it.
+            return
+        }
 
         Task {
             await tracker.bootstrap()
