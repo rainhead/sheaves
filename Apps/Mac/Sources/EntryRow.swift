@@ -19,6 +19,11 @@ struct EntryRow: View {
     @State private var draftHours = ""
     @State private var isConfirmingDelete = false
     @State private var isHovering = false
+    /// Set by Escape on its way out, because a field that has already gone cannot be
+    /// asked why it went. Everything else that closes one — ⏎, a click on the field
+    /// beside it, another row opening its own — keeps what was typed.
+    @State private var isDiscardingNotes = false
+    @State private var isDiscardingHours = false
     @FocusState private var isNotesFocused: Bool
     @FocusState private var isHoursFocused: Bool
 
@@ -177,9 +182,13 @@ struct EntryRow: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.caption)
                 .focused($isNotesFocused)
-                .onSubmit(commitNotes)
-                .onExitCommand { isEditingNotes = false }
+                .onSubmit { isEditingNotes = false }
+                .onExitCommand {
+                    isDiscardingNotes = true
+                    isEditingNotes = false
+                }
                 .onAppear { isNotesFocused = true }
+                .onDisappear(perform: finishEditingNotes)
         } else if let text = entry.notes, !text.isEmpty {
             Button(action: beginEditingNotes) {
                 Text(text)
@@ -229,8 +238,12 @@ struct EntryRow: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 58)
                     .focused($isHoursFocused)
-                    .onSubmit(commitHours)
-                    .onExitCommand { isEditingHours = false }
+                    .onSubmit { isEditingHours = false }
+                    .onExitCommand {
+                        isDiscardingHours = true
+                        isEditingHours = false
+                    }
+                    .onDisappear(perform: finishEditingHours)
                     .onAppear {
                         // Normally prefilled by `beginEditingHours`; also here, so a
                         // render that opens the field directly (the documentation
@@ -283,8 +296,16 @@ struct EntryRow: View {
         isEditingHours = true
     }
 
-    private func commitHours() {
-        isEditingHours = false
+    /// The field is gone by the time this runs, so it has to stand for every way it
+    /// could have gone: ⏎, Escape, a click on the notes beside it, or another row
+    /// opening a field of its own. Only Escape discards — clicking away from a
+    /// half-typed duration used to throw it away, which is the one outcome nobody
+    /// asks for.
+    private func finishEditingHours() {
+        guard !isDiscardingHours else {
+            isDiscardingHours = false
+            return
+        }
         guard let hours = Double.hours(parsing: draftHours) else { return }
         // A stopped entry left as it was should not be marked pending over nothing;
         // a running one always takes the new value, because its total is moving.
@@ -292,8 +313,12 @@ struct EntryRow: View {
         Task { await tracker.updateHours(entry, to: hours) }
     }
 
-    private func commitNotes() {
-        isEditingNotes = false
+    /// Same terms as the duration above: kept unless Escape said otherwise.
+    private func finishEditingNotes() {
+        guard !isDiscardingNotes else {
+            isDiscardingNotes = false
+            return
+        }
         let trimmed = draftNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != (entry.notes ?? "") else { return }
         Task { await tracker.updateNotes(entry, to: trimmed) }
