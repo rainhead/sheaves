@@ -25,8 +25,9 @@ views lives in a platform-neutral package so it can be.
 It was built for one person's use, which is why it does what it does and no more.
 **If this is interesting to you, please get in touch** —
 [open an issue](https://github.com/rainhead/sheaves/issues) and say hello. Interest is
-also what decides the signing question below: a Developer ID costs $108 a year, and
-paying it before anyone else wants the app is the wrong order.
+also what decides the signing question below: a Developer ID needs the paid Apple
+Developer Program membership described under [Building it](#building-it), and paying
+for distribution before anyone else wants the app is the wrong order.
 
 ## Installing
 
