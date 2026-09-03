@@ -45,6 +45,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **`NSScreen.main` is the *key window's* screen,** not the active one. An accessory
   app has no key window when a hotkey fires, so it silently means "primary display".
   Use the screen under `NSEvent.mouseLocation`.
+- **A SwiftUI field that is *removed* gets no commit callback.** `onSubmit` fires
+  for ⏎ and nothing else, so a field closed because something else opened simply
+  goes, and what was typed goes with it. Commit from `onDisappear` and let Escape
+  flag the discard on its way out. Symptom: type a duration, click the notes
+  beside it, and the duration reverts.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
