@@ -13,6 +13,7 @@ xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
   -destination 'platform=macOS' test               # app logic
 /usr/bin/log show --last 5m --info \
   --predicate 'subsystem == "com.rainhead.Sheaves"'   # what the app did
+Scripts/package-release.sh                         # what a release ships
 ```
 
 Signing lives in `Config/Local.xcconfig` (git-ignored, see the example beside it).

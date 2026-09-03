@@ -1,0 +1,91 @@
+name: Release
+
+# Tag-driven: bump MARKETING_VERSION in project.yml, commit, then push a matching
+# `v` tag. The publish job refuses a tag that disagrees with the version the built
+# app reports, so a release cannot claim to be something the binary does not.
+on:
+  push:
+    tags: ["v*"]
+
+# Releases do not race, and an interrupted one leaves a half-made release behind.
+# The name is deliberately unlike anything build.yml computes: inside a called
+# workflow `github.workflow` is the *caller's* name, so build.yml's group becomes
+# "Release-<ref>" here — and group names match case-insensitively, which would put
+# the called workflow and the run that called it in one group, the called half
+# cancelling its own caller.
+concurrency:
+  group: sheaves-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: Publish
+    needs: test
+    runs-on: macos-26
+    permissions:
+      # The only step that needs more than a read: creating the release.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select Xcode 26.6
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app
+
+      - name: Install XcodeGen
+        run: brew install --quiet xcodegen
+
+      # The same script a developer runs locally, so what ships has been
+      # rehearsed rather than assembled for the first time here.
+      - name: Package
+        id: package
+        run: Scripts/package-release.sh
+
+      # Compared against the app's own CFBundleShortVersionString rather than
+      # against project.yml, because that is the number a user reads in About
+      # and the one a bug report will quote.
+      - name: Check the tag matches the app's version
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $TAG does not match the app's version $VERSION." \
+                 "Bump MARKETING_VERSION in project.yml, or retag."
+            exit 1
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          # The body is prepended to GitHub's generated notes, so the install
+          # steps lead and the commit log follows. Gatekeeper blocks this build
+          # outright — it is signed ad-hoc, which is not a distribution identity
+          # — so saying how to get past it is not optional.
+          gh release create "$TAG" "$ZIP" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "$(cat <<'NOTES'
+          Download the zip below, unpack it, and move `Sheaves.app` to `/Applications`.
+
+          macOS will refuse to open it: this build is signed ad-hoc rather than with a
+          Developer ID, which needs a paid Apple Developer Program membership. Clear the
+          quarantine flag to open it anyway:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/Sheaves.app
+          ```
+
+          The signature also changes with every build, so macOS treats each release as a
+          different app and asks again for Keychain access to the Harvest token.
+          NOTES
+          )"

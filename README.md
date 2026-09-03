@@ -24,11 +24,29 @@ views lives in a platform-neutral package so it can be.
 
 It was built for one person's use, which is why it does what it does and no more.
 **If this is interesting to you, please get in touch** —
-[open an issue](https://github.com/rainhead/sheaves/issues) and say hello. If there
-is enough interest I will put a build on the App Store for a small fee, so it can be
-installed without a checkout and a toolchain.
+[open an issue](https://github.com/rainhead/sheaves/issues) and say hello. Interest is
+also what decides the signing question below: a Developer ID costs $108 a year, and
+paying it before anyone else wants the app is the wrong order.
 
-## Running it
+## Installing
+
+Download the newest zip from [Releases](https://github.com/rainhead/sheaves/releases),
+unpack it, and move `Sheaves.app` to `/Applications`.
+
+macOS will refuse to open it. Releases are signed *ad-hoc* rather than with a
+Developer ID, and Gatekeeper does not accept an ad-hoc signature from the internet —
+so it has to be told, once, that this one is wanted:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Sheaves.app
+```
+
+An ad-hoc signature also changes with every build, so macOS treats each release as a
+different app and asks again for Keychain access to your Harvest token. Both costs go
+away with a Developer ID certificate and notarisation, which is a paid membership and
+therefore waiting on the paragraph above.
+
+## Building it
 
 Requires Xcode 26 or later.
 
@@ -47,15 +65,6 @@ holding your token. To stop that, copy
 is enough — the $99 Developer Program is for distribution, not for running your own
 app on your own Mac.
 
-Then create a personal access token at
-[id.getharvest.com/developers](https://id.getharvest.com/developers) and paste it,
-with the account ID shown beside it, into Sheaves' settings. The token is stored in
-the Keychain and sent only to `api.harvestapp.com`.
-
-Settings has a switch to open Sheaves at login, which registers the bundle where it
-sits right now — move the app and the switch has to go off and on again to point at
-the new location.
-
 ```sh
 swift test --package-path Packages/SheavesCore              # core logic
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
@@ -66,6 +75,24 @@ The core suite is the bulk of it. The app suite exists because the parts that on
 compile against AppKit had no tests at all, and that is where the worst bugs turned
 up — a shortcut recorder that trapped on every key press, and a missing main menu
 that made ⌘V silently do nothing.
+
+A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml) and
+pushing a matching `v` tag.
+[`Scripts/package-release.sh`](Scripts/package-release.sh) builds and zips the app,
+and [the release workflow](.github/workflows/release.yml) runs that same script after
+the tests pass — refusing any tag that disagrees with the version the built app
+reports.
+
+## Connecting to Harvest
+
+Create a personal access token at
+[id.getharvest.com/developers](https://id.getharvest.com/developers) and paste it,
+with the account ID shown beside it, into Sheaves' settings. The token is stored in
+the Keychain and sent only to `api.harvestapp.com`.
+
+Settings has a switch to open Sheaves at login, which registers the bundle where it
+sits right now — move the app and the switch has to go off and on again to point at
+the new location.
 
 ## How it works
 
@@ -162,6 +189,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | [`Packages/SheavesCore`](Packages/SheavesCore) | API client, models, store, persistence. No AppKit, no SwiftUI. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
+| [`Scripts`](Scripts) | Jobs that need more than a line: the release package, the documentation images. |
 | [`docs`](docs) | Notes too long for here, and the images this file uses. |
 
 ## Keyboard

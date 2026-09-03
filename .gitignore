@@ -4,6 +4,10 @@ Sheaves.xcodeproj/
 .DS_Store
 .build/
 DerivedData/
+# Release build and the zip it is packaged into; see Scripts/package-release.sh
+build/
+dist/
+
 *.xcuserstate
 xcuserdata/
 *.xcscmblueprint
