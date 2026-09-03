@@ -17,6 +17,9 @@ struct EntryRow: View {
     @Binding var isConfirmingResume: Bool
     @State private var draftNotes = ""
     @State private var draftHours = ""
+    /// What the duration field was showing when it opened. A field still showing it
+    /// has asked for nothing — see `HoursEdit.commit`, which is where that matters.
+    @State private var hoursAsOpened = ""
     @State private var isConfirmingDelete = false
     @State private var isHovering = false
     /// Set by Escape on its way out, because a field that has already gone cannot be
@@ -250,6 +253,7 @@ struct EntryRow: View {
                         // images) shows what a user would see.
                         if draftHours.isEmpty {
                             draftHours = entry.hours(asOf: tracker.now).formattedHours(format)
+                            hoursAsOpened = draftHours
                         }
                         isHoursFocused = true
                     }
@@ -293,6 +297,7 @@ struct EntryRow: View {
     private func beginEditingHours() {
         guard !entry.isLocked else { return }
         draftHours = entry.hours(asOf: tracker.now).formattedHours(format)
+        hoursAsOpened = draftHours
         isEditingHours = true
     }
 
@@ -306,10 +311,12 @@ struct EntryRow: View {
             isDiscardingHours = false
             return
         }
-        guard let hours = Double.hours(parsing: draftHours) else { return }
-        // A stopped entry left as it was should not be marked pending over nothing;
-        // a running one always takes the new value, because its total is moving.
-        guard entry.isRunning || hours != entry.bankedHours else { return }
+        guard let hours = HoursEdit.commit(
+            draft: draftHours,
+            asOpened: hoursAsOpened,
+            banked: entry.bankedHours,
+            isRunning: entry.isRunning
+        ) else { return }
         Task { await tracker.updateHours(entry, to: hours) }
     }
 
