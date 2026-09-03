@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Called by the release workflow, so a release runs the same suite on the same
+  # toolchain rather than a second copy of it that can drift.
+  workflow_call:
 
 # A second push supersedes the first; nothing here is worth finishing twice.
 concurrency:
