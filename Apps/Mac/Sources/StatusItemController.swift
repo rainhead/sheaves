@@ -79,10 +79,7 @@ final class StatusItemController {
         guard let button = statusItem.button else { return }
         let activity = tracker.activity
 
-        button.image = NSImage(
-            systemSymbolName: symbolName(for: activity),
-            accessibilityDescription: nil
-        )
+        button.image = Self.icon(for: activity)
         button.attributedTitle = title(for: activity)
         button.toolTip = toolTip(for: activity)
         // Spoken, not read as digits: "0:19" becomes "zero nineteen" otherwise. The
@@ -108,7 +105,34 @@ final class StatusItemController {
         } ?? duration
     }
 
-    private func symbolName(for activity: TimeTracker.Activity) -> String {
+    /// The glyph, tinted with the accent colour while a timer runs.
+    ///
+    /// Colour is how macOS itself says a menu bar extra is doing something —
+    /// Screen Mirroring turns blue while it mirrors — and the accent colour is the
+    /// one the user chose for exactly that. The tint is on the glyph alone: it is
+    /// what carries the state, and a whole menu bar entry in colour is louder than
+    /// a running timer warrants. It is never the only signal, since the symbol
+    /// already differs between the three states.
+    ///
+    /// A status bar button paints a *template* image in the menu bar's own text
+    /// colour and ignores `contentTintColor` doing it, so the tinted glyph has to
+    /// arrive already coloured and marked as not a template.
+    static func icon(for activity: TimeTracker.Activity) -> NSImage? {
+        let image = NSImage(systemSymbolName: symbolName(for: activity), accessibilityDescription: nil)
+        guard case .running = activity, let image else { return image }
+        // Drawn on demand rather than once, so the accent the user is using now is
+        // the one that gets read.
+        let tinted = NSImage(size: image.size, flipped: false) { bounds in
+            image.draw(in: bounds)
+            NSColor.controlAccentColor.set()
+            bounds.fill(using: .sourceIn)
+            return true
+        }
+        tinted.isTemplate = false
+        return tinted
+    }
+
+    private static func symbolName(for activity: TimeTracker.Activity) -> String {
         switch activity {
         case .running: "pause.fill"
         case .recent: "play.fill"

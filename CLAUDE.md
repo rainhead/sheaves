@@ -43,6 +43,10 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **The data-protection Keychain needs a team-signed entitlement on macOS.** Asking
   for it in an ad-hoc build fails with `errSecMissingEntitlement` (-34018). macOS
   uses the file Keychain; iOS keeps the data-protection one.
+- **A status bar button ignores `contentTintColor`.** It draws a template image in
+  the menu bar's own text colour, so the obvious way to tint the glyph compiles,
+  runs, and changes nothing on screen. Colour it into the image and clear
+  `isTemplate`. Symptom: a state that was supposed to be coloured looks identical.
 - **`NSScreen.main` is the *key window's* screen,** not the active one. An accessory
   app has no key window when a hotkey fires, so it silently means "primary display".
   Use the screen under `NSEvent.mouseLocation`.

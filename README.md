@@ -136,7 +136,9 @@ while a timer runs and a play button for 90 minutes after one stops, so the comm
 action costs one click and opens nothing; clicking the name opens the popover
 instead. That is why [`StatusItemController`](Apps/Mac/Sources/StatusItemController.swift)
 is hand-rolled AppKit — SwiftUI's `MenuBarExtra` has exactly one behaviour, which is
-to open its content on any click.
+to open its content on any click. A running timer's glyph is drawn in the accent
+colour, the way macOS says a menu bar extra is doing something, and colour is never
+the only thing saying it: the three states already have three different symbols.
 
 **Being on a call is not being away.** Idle detection that watches only the
 keyboard and mouse interrupts every meeting to ask whether you are still there, and
