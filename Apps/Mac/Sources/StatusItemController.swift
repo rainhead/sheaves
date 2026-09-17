@@ -190,9 +190,17 @@ final class StatusItemController {
         Task { await tracker.toggle(entry) }
     }
 
+    /// Asks the pointer where it is, not the event.
+    ///
+    /// macOS 27 delivers a status item's clicks with `locationInWindow` pinned to the
+    /// item's centre wherever they landed — the underlying `CGEvent` says the same —
+    /// so the event put every click in the text and none on the icon.
     private func isIconClick(on button: NSStatusBarButton) -> Bool {
-        guard let event = NSApp.currentEvent, event.type == .leftMouseUp else { return false }
-        return button.convert(event.locationInWindow, from: nil).x <= iconRegionWidth
+        guard NSApp.currentEvent?.type == .leftMouseUp, let window = button.window else { return false }
+        // Only x is compared: a pointer thrown against the top of the screen is above
+        // the button's bounds, and that is the easiest way there is to hit the icon.
+        let pointer = button.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        return pointer.x <= iconRegionWidth
     }
 
     /// The conventional menu bar extra right-click menu — and the only route to
