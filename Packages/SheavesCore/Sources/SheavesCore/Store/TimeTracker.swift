@@ -157,6 +157,9 @@ public final class TimeTracker {
     /// The probe paces itself by this rather than `lastSyncedAt` so a failing
     /// connection is retried on the probe's cadence, not on every tick.
     private var lastSyncStartedAt: Date?
+    /// Set while `connect` is between installing credentials and claiming the queue
+    /// for them; no sync may drain in that window.
+    private var isChangingCredentials = false
     private var accountDataFetchedAt: Date?
     private var budgetAvailability: BudgetAvailability = .unknown
     /// Client currencies by client id, and whether Harvest refused to say. Only an
@@ -224,21 +227,63 @@ public final class TimeTracker {
         startTicking()
     }
 
+    /// Thrown by `connect` when the queue still holds changes made under a different
+    /// account or user. Sending them is not an option — see `MutationQueue.Owner` —
+    /// so the choice is the user's: go back to the credentials that made them, or
+    /// connect again with `discardingUnsentChanges`.
+    public struct UnsentChangesBelongElsewhere: LocalizedError, Equatable {
+        public let count: Int
+
+        public var errorDescription: String? {
+            "\(count.formatted()) unsent change\(count == 1 ? " was" : "s were") made under a different Harvest account."
+        }
+    }
+
     /// Verifies credentials against Harvest before storing them, so a typo is caught
     /// at the point the user can still see what they pasted.
-    public func connect(_ credentials: HarvestCredentials) async throws {
+    ///
+    /// Reconnecting is mostly the *same* person after a token expired, and the queue
+    /// exists so their offline work survives exactly that — so it is kept whenever
+    /// the account and user match whoever queued it. Otherwise nothing is dropped
+    /// without `discardingUnsentChanges`: a silent discard is the data loss this
+    /// guards against, merely moved earlier.
+    ///
+    /// A connect that fails changes nothing: whatever credentials and connection
+    /// were in place before are in place after.
+    public func connect(
+        _ credentials: HarvestCredentials,
+        discardingUnsentChanges: Bool = false
+    ) async throws {
+        let previousConnection = connection
         connection = .connecting
+        // The client is about to speak for someone new while the queue still speaks
+        // for whoever came before. Let a drain already in flight finish under the
+        // credentials it started with, and hold off any other until the queue has
+        // been claimed — a probe or a click in this window would otherwise deliver
+        // the old account's work with the new token.
+        isChangingCredentials = true
+        defer { isChangingCredentials = false }
+        await syncTask?.value
+        let previous = await client.installedCredentials
         await client.setCredentials(credentials)
         do {
             let user = try await client.currentUser()
+            let owner = MutationQueue.Owner(accountID: credentials.accountID, userID: user.id)
+            let stranded = await queue.strandedCount(for: owner)
+            guard stranded == 0 || discardingUnsentChanges else {
+                throw UnsentChangesBelongElsewhere(count: stranded)
+            }
             try keychain.write(credentials)
+            await queue.claim(for: owner)
+            pendingCount = await queue.count
             forgetAccountData()
             self.user = user
+            isChangingCredentials = false
             await sync()
             startTicking()
         } catch {
-            connection = .needsCredentials
-            await client.setCredentials(nil)
+            connection = previousConnection
+            await client.setCredentials(previous)
             throw error
         }
     }
@@ -305,12 +350,31 @@ public final class TimeTracker {
     }
 
     private func performSync() async {
+        guard !isChangingCredentials else { return }
         guard await client.isConfigured else {
             connection = .needsCredentials
             return
         }
         lastSyncStartedAt = Date()
         advanceDayIfNeeded()
+
+        // `connect` is what normally settles whose queue this is, but it writes the
+        // Keychain before it claims the queue, and a launch after dying in between
+        // arrives here with new credentials and the old owner's work. Checked at
+        // the drain so that no route to it can deliver someone else's changes.
+        do {
+            guard try await !queueBelongsElsewhere() else {
+                Self.log.error("queued changes belong to another account or user; not sending them")
+                pendingCount = await queue.count
+                // Settings is where this gets resolved: connecting there offers the
+                // choice between going back to their owner and discarding them.
+                connection = .needsCredentials
+                return
+            }
+        } catch {
+            noteSyncFailure(error)
+            return
+        }
 
         let report = await queue.drain(using: client)
         adopt(report.resolved)
@@ -332,16 +396,15 @@ public final class TimeTracker {
         }
 
         do {
-            let user: HarvestUser
-            if let known = self.user {
-                user = known
-            } else {
-                user = try await client.currentUser()
-            }
+            let user = try await currentUser()
             async let dayEntries = client.timeEntries(userID: user.id, from: day, to: day)
             async let running = client.runningTimeEntry(userID: user.id)
 
-            self.user = user
+            if let accountID = await client.installedCredentials?.accountID {
+                // A queue from before owners were recorded, or one filled before the
+                // first sync ever succeeded, belongs to whoever is connected now.
+                await queue.claimIfUnowned(for: MutationQueue.Owner(accountID: accountID, userID: user.id))
+            }
             self.entries = try await merge(dayEntries: dayEntries, running: running)
             noteLastActivity()
             try await refreshAccountDataIfStale(userID: user.id)
@@ -353,18 +416,37 @@ public final class TimeTracker {
             Self.log.info(
                 "sync ok: \(self.entries.count, privacy: .public) entries, \(self.targets.count, privacy: .public) targets on \(self.day.description, privacy: .public)"
             )
-        } catch is CancellationError {
-            // Shutting down or superseded; the queue is persisted, so nothing is lost.
-            return
-        } catch let error as HarvestError {
-            Self.log.error("sync failed: \(error.localizedDescription, privacy: .public)")
-            connection = error.isTransient
-                ? .offline(reason: error.localizedDescription)
-                : (error == .unauthorized ? .needsCredentials : .offline(reason: error.localizedDescription))
         } catch {
-            Self.log.error("sync failed: \(error.localizedDescription, privacy: .public)")
-            connection = .offline(reason: error.localizedDescription)
+            noteSyncFailure(error)
         }
+    }
+
+    private func noteSyncFailure(_ error: any Error) {
+        // Shutting down or superseded; the queue is persisted, so nothing is lost.
+        if error is CancellationError { return }
+        Self.log.error("sync failed: \(error.localizedDescription, privacy: .public)")
+        connection = (error as? HarvestError) == .unauthorized
+            ? .needsCredentials
+            : .offline(reason: error.localizedDescription)
+    }
+
+    /// The signed-in user, asked of Harvest only when nothing on hand says.
+    private func currentUser() async throws -> HarvestUser {
+        if let user { return user }
+        let fetched = try await client.currentUser()
+        user = fetched
+        return fetched
+    }
+
+    /// Whether the queue was filled under an account or user other than the one the
+    /// installed credentials speak for. The account settles most cases without a
+    /// request; only a matching account needs the user.
+    private func queueBelongsElsewhere() async throws -> Bool {
+        guard let owner = await queue.owner, await !queue.isEmpty,
+              let accountID = await client.installedCredentials?.accountID
+        else { return false }
+        if owner.accountID != accountID { return true }
+        return try await owner.userID != currentUser().id
     }
 
     /// Project assignments and company settings change rarely and cost two requests,

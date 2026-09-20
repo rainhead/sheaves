@@ -32,6 +32,9 @@ public actor HarvestClient {
 
     public var isConfigured: Bool { credentials?.isComplete == true }
 
+    /// What is installed now, so a caller trying out new credentials can put these back.
+    var installedCredentials: HarvestCredentials? { credentials }
+
     // MARK: - Account
 
     public func currentUser() async throws -> HarvestUser {

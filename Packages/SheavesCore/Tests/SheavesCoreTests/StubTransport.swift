@@ -417,6 +417,8 @@ actor RoutingTransport: HarvestTransport {
         var notes: String?
         var projectID: Int?
         var spentDate: String?
+        /// The `Harvest-Account-Id` header: whose credentials carried the request.
+        var accountID: String?
     }
 
     private let routes: [Route]
@@ -445,7 +447,8 @@ actor RoutingTransport: HarvestTransport {
                 hours: body["hours"] as? Double,
                 notes: body["notes"] as? String,
                 projectID: body["project_id"] as? Int,
-                spentDate: body["spent_date"] as? String
+                spentDate: body["spent_date"] as? String,
+                accountID: request.value(forHTTPHeaderField: "Harvest-Account-Id")
             )
         )
         if isOffline { throw URLError(.notConnectedToInternet) }
@@ -485,13 +488,14 @@ extension RoutingTransport {
         budgetStatus: Int = 200,
         assignments: String = Fixture.projectAssignmentsPage,
         clients: String = Fixture.clientsPage,
-        clientStatus: Int = 200
+        clientStatus: Int = 200,
+        user: String = Fixture.currentUser
     ) -> RoutingTransport {
         RoutingTransport([
             Route(method: "GET", fragment: "reports/project_budget", body: budgets, status: budgetStatus),
             Route(method: "GET", fragment: "v2/clients", body: clients, status: clientStatus),
             Route(method: "GET", fragment: "users/me/project_assignments", body: assignments),
-            Route(method: "GET", fragment: "users/me", body: Fixture.currentUser),
+            Route(method: "GET", fragment: "users/me", body: user),
             Route(method: "GET", fragment: "company", body: Fixture.company),
             Route(method: "PATCH", fragment: "/stop", body: Fixture.timeEntry),
             Route(method: "PATCH", fragment: "/restart", body: Fixture.runningTimeEntry),

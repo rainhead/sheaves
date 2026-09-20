@@ -119,7 +119,9 @@ The queue drains in order and stops at the first failure a retry could fix, so a
 dropped connection costs nothing; a change Harvest refuses outright is dropped rather
 than left to wedge everything behind it. An entry started offline has no Harvest id
 yet, which is why [`TrackedEntry`](Packages/SheavesCore/Sources/SheavesCore/Model/TrackedEntry.swift)
-identity is either a server id or a local one, swapped when the create lands.
+identity is either a server id or a local one, swapped when the create lands. The
+queue remembers which account and user filled it: a renewed token for the same person
+sends what was waiting, and anyone else is asked before it is discarded, never sent.
 
 **Syncing is event-driven, plus a probe for everyone else's edits.** Every action
 syncs on the spot, and opening the panel does too — so a background probe exists

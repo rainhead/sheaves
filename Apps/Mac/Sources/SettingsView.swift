@@ -12,6 +12,9 @@ struct SettingsView: View {
     @State private var isConnecting = false
     @State private var errorMessage: String?
     @State private var isConfirmingDisconnect = false
+    /// How many queued changes the credentials just tried would orphan, while the
+    /// user is being asked what to do about them.
+    @State private var unsentElsewhere: Int?
 
     var body: some View {
         Form {
@@ -51,6 +54,20 @@ struct SettingsView: View {
                 Button(isConnecting ? "Connecting…" : "Connect") { connect() }
                     .buttonStyle(.borderedProminent)
                     .disabled(isConnecting || accountID.isEmpty || token.isEmpty)
+            }
+            .confirmationDialog(
+                "Discard changes made under another account?",
+                isPresented: Binding(
+                    get: { unsentElsewhere != nil },
+                    set: { if !$0 { unsentElsewhere = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: unsentElsewhere
+            ) { _ in
+                Button("Discard and Connect", role: .destructive) { connect(discardingUnsentChanges: true) }
+                Button("Cancel", role: .cancel) {}
+            } message: { count in
+                Text("\(count.formatted()) change\(count == 1 ? " has" : "s have") not reached Harvest yet, and \(count == 1 ? "was" : "were") made under a different account or user than this token belongs to. To send \(count == 1 ? "it" : "them"), cancel and connect with a token for that account instead.")
             }
         } header: {
             Text("Harvest")
@@ -152,13 +169,18 @@ struct SettingsView: View {
         }
     }
 
-    private func connect() {
+    private func connect(discardingUnsentChanges: Bool = false) {
         isConnecting = true
         errorMessage = nil
         Task {
             do {
-                try await tracker.connect(HarvestCredentials(accountID: accountID, token: token))
+                try await tracker.connect(
+                    HarvestCredentials(accountID: accountID, token: token),
+                    discardingUnsentChanges: discardingUnsentChanges
+                )
                 token = ""
+            } catch let error as TimeTracker.UnsentChangesBelongElsewhere {
+                unsentElsewhere = error.count
             } catch {
                 errorMessage = error.localizedDescription
             }

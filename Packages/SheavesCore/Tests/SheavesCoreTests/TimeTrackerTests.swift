@@ -693,6 +693,194 @@ struct ReconnectTests {
     }
 }
 
+/// An expired token drops the connection without `disconnect` running, so whatever
+/// was queued offline is still there when the next credentials arrive. Whose they
+/// are decides everything: the same person must not lose their work, and anyone
+/// else must not send it.
+@Suite("Reconnecting with changes queued")
+@MainActor
+struct QueueOwnershipTests {
+    private let snapshotURL = URL.temporaryDirectory.appending(path: "sheaves-\(UUID().uuidString).json")
+    private let queueURL = URL.temporaryDirectory.appending(path: "sheaves-q-\(UUID().uuidString).json")
+
+    private func cleanUp() {
+        for url in [snapshotURL, queueURL] { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private func makeTracker(transport: RoutingTransport) -> TimeTracker {
+        TimeTracker(
+            client: HarvestClient(credentials: Fixture.credentials, transport: transport, backoffScale: 0),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshotURL),
+            queue: MutationQueue(fileURL: queueURL)
+        )
+    }
+
+    /// Syncs as the fixture account, then starts a timer with the network gone, so
+    /// one create is left queued under that account and user.
+    private func queueOneStartOffline() async throws {
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        await tracker.sync()
+        let target = try #require(tracker.targets.first)
+        await transport.goOffline()
+        await tracker.start(target)
+        #expect(tracker.pendingCount == 1)
+    }
+
+    @Test("the same account and user keeps its queue, and the queue is sent")
+    func sameOwnerKeepsQueue() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        // A new token for the same account: only the account and user identify it.
+        try await tracker.connect(HarvestCredentials(accountID: Fixture.credentials.accountID, token: "renewed"))
+
+        #expect(tracker.pendingCount == 0)
+        #expect(await transport.calls(method: "POST", containing: "time_entries").count == 1)
+    }
+
+    @Test("a different account is refused, and nothing is sent or dropped")
+    func otherAccountIsRefused() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        await #expect(throws: TimeTracker.UnsentChangesBelongElsewhere(count: 1)) {
+            try await tracker.connect(HarvestCredentials(accountID: "67890", token: "other"))
+        }
+
+        #expect(tracker.connection == .needsCredentials)
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        // Still on disk for the account that made it to come back to.
+        #expect(await MutationQueue(fileURL: queueURL).count == 1)
+    }
+
+    /// One account holds many people, and an administrator's token can write to a
+    /// colleague's entries — the case where a stale mutation succeeds.
+    @Test("a different user on the same account is refused too")
+    func otherUserIsRefused() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let colleague = Fixture.currentUser.replacingOccurrences(of: "1782959", with: "4242")
+        let transport = RoutingTransport.standardAccount(user: colleague)
+        let tracker = makeTracker(transport: transport)
+        await #expect(throws: TimeTracker.UnsentChangesBelongElsewhere(count: 1)) {
+            try await tracker.connect(Fixture.credentials)
+        }
+
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(await MutationQueue(fileURL: queueURL).count == 1)
+    }
+
+    @Test("discarding on request connects, and sends none of the old account's work")
+    func discardingConnects() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        try await tracker.connect(
+            HarvestCredentials(accountID: "67890", token: "other"),
+            discardingUnsentChanges: true
+        )
+
+        #expect(tracker.connection == .online)
+        #expect(tracker.pendingCount == 0)
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(await MutationQueue(fileURL: queueURL).owner?.accountID == "67890")
+    }
+
+    /// Clearing the client on the way out turned a declined switch into a sign-out:
+    /// the session that was working a moment ago could no longer sync at all.
+    @Test("a refused connect leaves the previous credentials in place")
+    func refusedConnectChangesNothing() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        await #expect(throws: TimeTracker.UnsentChangesBelongElsewhere.self) {
+            try await tracker.connect(HarvestCredentials(accountID: "67890", token: "other"))
+        }
+        await tracker.sync()
+
+        // The queued start went out after all — under the account that made it.
+        let posts = await transport.calls(method: "POST", containing: "time_entries")
+        #expect(posts.map(\.accountID) == [Fixture.credentials.accountID])
+        #expect(tracker.connection == .online)
+    }
+
+    /// `connect` is not the only way to a drain: a launch that finds new credentials
+    /// in the Keychain beside a queue nobody claimed for them syncs straight away.
+    @Test("a sync never sends a queue that belongs to another account")
+    func syncRefusesAnotherOwnersQueue() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = TimeTracker(
+            client: HarvestClient(
+                credentials: HarvestCredentials(accountID: "67890", token: "other"),
+                transport: transport, backoffScale: 0
+            ),
+            keychain: KeychainStore(service: "com.rainhead.Sheaves.tests-\(UUID().uuidString)"),
+            snapshots: SnapshotStore(fileURL: snapshotURL),
+            queue: MutationQueue(fileURL: queueURL)
+        )
+        await tracker.sync()
+
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(tracker.connection == .needsCredentials)
+        #expect(tracker.pendingCount == 1)
+        #expect(await MutationQueue(fileURL: queueURL).count == 1)
+    }
+
+    @Test("nor one that belongs to another user of the same account")
+    func syncRefusesAnotherUsersQueue() async throws {
+        defer { cleanUp() }
+        try await queueOneStartOffline()
+        // No cached user, so the sync has to ask Harvest who it is speaking for.
+        try? FileManager.default.removeItem(at: snapshotURL)
+
+        let colleague = Fixture.currentUser.replacingOccurrences(of: "1782959", with: "4242")
+        let transport = RoutingTransport.standardAccount(user: colleague)
+        let tracker = makeTracker(transport: transport)
+        await tracker.sync()
+
+        #expect(await transport.calls(method: "POST", containing: "time_entries").isEmpty)
+        #expect(tracker.connection == .needsCredentials)
+    }
+
+    @Test("a queue from before owners were recorded goes to whoever connects")
+    func unownedQueueIsKept() async throws {
+        defer { cleanUp() }
+        let target = TimerTarget(
+            project: Reference(id: 14308069, name: "Online Store - Phase 1"),
+            task: Reference(id: 8083366, name: "Programming"),
+            client: Reference(id: 5735776, name: "123 Industries")
+        )
+        await MutationQueue(fileURL: queueURL).enqueue(
+            .create(
+                local: UUID(), target: target, spentDate: .today(), notes: nil,
+                startedAt: Date().addingTimeInterval(-3600), endedAt: Date()
+            )
+        )
+
+        let transport = RoutingTransport.standardAccount()
+        let tracker = makeTracker(transport: transport)
+        try await tracker.connect(Fixture.credentials)
+
+        #expect(tracker.pendingCount == 0)
+        #expect(await transport.calls(method: "POST", containing: "time_entries").count == 1)
+        #expect(await MutationQueue(fileURL: queueURL).owner?.userID == 1782959)
+    }
+}
+
 /// The background probe exists to catch changes made outside this app; these pin
 /// how its cadence follows power and recent usage rather than the exact numbers,
 /// which are tuning.
