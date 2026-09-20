@@ -417,6 +417,8 @@ actor RoutingTransport: HarvestTransport {
         var notes: String?
         var projectID: Int?
         var spentDate: String?
+        /// The `Harvest-Account-Id` header: whose credentials carried the request.
+        var accountID: String?
     }
 
     private let routes: [Route]
@@ -445,7 +447,8 @@ actor RoutingTransport: HarvestTransport {
                 hours: body["hours"] as? Double,
                 notes: body["notes"] as? String,
                 projectID: body["project_id"] as? Int,
-                spentDate: body["spent_date"] as? String
+                spentDate: body["spent_date"] as? String,
+                accountID: request.value(forHTTPHeaderField: "Harvest-Account-Id")
             )
         )
         if isOffline { throw URLError(.notConnectedToInternet) }

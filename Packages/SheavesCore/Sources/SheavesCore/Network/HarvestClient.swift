@@ -32,7 +32,8 @@ public actor HarvestClient {
 
     public var isConfigured: Bool { credentials?.isComplete == true }
 
-    public var accountID: String? { credentials?.accountID }
+    /// What is installed now, so a caller trying out new credentials can put these back.
+    var installedCredentials: HarvestCredentials? { credentials }
 
     // MARK: - Account
 
