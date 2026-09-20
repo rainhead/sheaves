@@ -32,6 +32,8 @@ public actor HarvestClient {
 
     public var isConfigured: Bool { credentials?.isComplete == true }
 
+    public var accountID: String? { credentials?.accountID }
+
     // MARK: - Account
 
     public func currentUser() async throws -> HarvestUser {

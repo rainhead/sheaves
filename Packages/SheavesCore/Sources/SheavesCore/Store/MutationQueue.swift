@@ -85,14 +85,39 @@ public actor MutationQueue {
     /// and that stop would target a local id nothing recognises. It would be
     /// discarded as "not found" and the timer would run on Harvest indefinitely.
     private var resolved: [(local: UUID, serverID: Int64)] = []
+    /// Whose work this is, or nil for a queue nobody has claimed yet — a fresh one,
+    /// or one written before owners were recorded.
+    ///
+    /// Queued mutations name entries, projects and tasks by ids that mean something
+    /// only to the account that minted them, and only the user who made them may be
+    /// assumed to want them sent. Credentials can change without `removeAll` ever
+    /// running — an expired token, then a different one pasted into Settings — so
+    /// the queue has to remember this for itself.
+    public private(set) var owner: Owner?
     private var isDraining = false
     private let fileURL: URL
     /// Enough history to cover any plausible in-flight mutation without growing forever.
     private static let resolvedLimit = 200
 
+    /// The Harvest account a queue's mutations were made under, and by whom.
+    ///
+    /// The user is part of it because one account holds many people, and an
+    /// administrator's token *can* stop or delete a colleague's entry: across users
+    /// a stale mutation does not fail, it succeeds against the wrong person.
+    public struct Owner: Codable, Sendable, Hashable {
+        public var accountID: String
+        public var userID: Int
+
+        public init(accountID: String, userID: Int) {
+            self.accountID = accountID
+            self.userID = userID
+        }
+    }
+
     private struct Stored: Codable {
         var pending: [Mutation]
         var resolved: [Resolution]
+        var owner: Owner?
 
         struct Resolution: Codable {
             var local: UUID
@@ -106,6 +131,7 @@ public actor MutationQueue {
         if let stored = try? JSONDecoder().decode(Stored.self, from: data) {
             pending = stored.pending
             resolved = stored.resolved.map { ($0.local, $0.serverID) }
+            owner = stored.owner
         } else if let legacy = try? JSONDecoder().decode([Mutation].self, from: data) {
             // A queue written before resolutions were recorded.
             pending = legacy
@@ -130,7 +156,34 @@ public actor MutationQueue {
 
     public func removeAll() {
         pending.removeAll()
+        resolved.removeAll()
+        owner = nil
         persist()
+    }
+
+    /// How many queued mutations `owner` must not send: all of them when the queue
+    /// is someone else's, none when it is theirs or nobody's.
+    public func strandedCount(for owner: Owner) -> Int {
+        self.owner == nil || self.owner == owner ? 0 : pending.count
+    }
+
+    /// Makes the queue `owner`'s. Their own work, and work nobody has claimed, is
+    /// kept; anyone else's is discarded, so ask `strandedCount(for:)` first and
+    /// let the user decide.
+    public func claim(for owner: Owner) {
+        if self.owner != nil, self.owner != owner {
+            pending.removeAll()
+            resolved.removeAll()
+        }
+        guard self.owner != owner else { return }
+        self.owner = owner
+        persist()
+    }
+
+    /// Names the owner of a queue that has none, and leaves any other alone.
+    public func claimIfUnowned(for owner: Owner) {
+        guard self.owner == nil else { return }
+        claim(for: owner)
     }
 
     /// Sends queued mutations to Harvest in order, stopping at the first retryable failure.
@@ -323,7 +376,8 @@ public actor MutationQueue {
     private func persist() {
         let stored = Stored(
             pending: pending,
-            resolved: resolved.map { Stored.Resolution(local: $0.local, serverID: $0.serverID) }
+            resolved: resolved.map { Stored.Resolution(local: $0.local, serverID: $0.serverID) },
+            owner: owner
         )
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: fileURL, options: .atomic)
