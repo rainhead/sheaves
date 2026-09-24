@@ -205,6 +205,8 @@ Carbon reports that by failing silently, which is worth surfacing.
 | Click ⏸ / ▶ in the menu bar | Pause or resume, without opening anything |
 | ↑ ↓ | Move through the day's entries and the projects, as one list |
 | ⏎ | Stop or resume the selected entry, or start the selected project |
+| ⌫ | Delete the selected entry, after asking |
+| Right-click an entry | Edit its notes or time, or delete it |
 | ⌘← ⌘→ | Previous / next day |
 
 ## Licence
