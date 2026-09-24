@@ -42,7 +42,8 @@ enum DocumentationImages {
                     format: HoursFormat(company: tracker.company),
                     isEditingNotes: .constant(false),
                     isEditingHours: .constant(true),
-                    isConfirmingResume: .constant(false)
+                    isConfirmingResume: .constant(false),
+                    isConfirmingDelete: .constant(false)
                 )
                 .environment(tracker)
                 .padding(8),

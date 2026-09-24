@@ -25,6 +25,9 @@ struct DayView: View {
     /// The entry whose play press is waiting on the today-or-then question, so the
     /// keyboard's ⏎ raises the same offer the mouse gets.
     @State private var confirmingResume: TrackedEntry.ID?
+    /// The entry ⌫ or the context menu has asked to delete, held here for the same
+    /// reason.
+    @State private var confirmingDelete: TrackedEntry.ID?
     private var isEditingField: Bool { editingNotes != nil || editingHours != nil }
     @FocusState private var isPanelFocused: Bool
 
@@ -90,6 +93,9 @@ struct DayView: View {
         .onKeyPress(.downArrow) { move(by: 1) }
         .onKeyPress(.upArrow) { move(by: -1) }
         .onKeyPress(.return) { activate() }
+        // Not `onKeyPress(.delete)`: that is U+0008, and the Mac's ⌫ sends U+007F,
+        // so it never matches. This is the command both delete keys raise.
+        .onDeleteCommand(perform: requestDelete)
         .onAppear { isPanelFocused = true }
     }
 
@@ -132,6 +138,16 @@ struct DayView: View {
             return .ignored
         }
         return .handled
+    }
+
+    /// ⌫ on an entry asks to delete it — the one thing otherwise only a right-click
+    /// reached, which nothing on screen admits to. A project row has nothing to
+    /// delete, so the key does nothing there.
+    private func requestDelete() {
+        guard !isEditingField, case .entry(let id) = effectiveSelection,
+              let entry = tracker.entries.first(where: { $0.id == id }), !entry.isLocked
+        else { return }
+        confirmingDelete = entry.id
     }
 
     private var header: some View {
@@ -216,6 +232,10 @@ struct DayView: View {
                                 isConfirmingResume: Binding(
                                     get: { confirmingResume == entry.id },
                                     set: { confirmingResume = $0 ? entry.id : nil }
+                                ),
+                                isConfirmingDelete: Binding(
+                                    get: { confirmingDelete == entry.id },
+                                    set: { confirmingDelete = $0 ? entry.id : nil }
                                 )
                             )
                             .id(entry.id)

@@ -59,6 +59,9 @@ nothing. They are listed with their symptom, because that is how you will meet t
   goes, and what was typed goes with it. Commit from `onDisappear` and let Escape
   flag the discard on its way out. Symptom: type a duration, click the notes
   beside it, and the duration reverts.
+- **`onKeyPress(.delete)` never fires for ⌫.** SwiftUI's `.delete` is U+0008; the
+  Mac's backspace key sends U+007F. Use `onDeleteCommand`, which both delete keys
+  raise. Symptom: it builds, and pressing ⌫ does nothing.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 

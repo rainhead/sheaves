@@ -15,12 +15,14 @@ struct EntryRow: View {
     /// Play on a past day's entry asks first — resuming it would charge the old
     /// day. The panel holds this too, so the keyboard's ⏎ can raise the same offer.
     @Binding var isConfirmingResume: Bool
+    /// Held by the panel for the same reason, so ⌫ raises the question the context
+    /// menu does.
+    @Binding var isConfirmingDelete: Bool
     @State private var draftNotes = ""
     @State private var draftHours = ""
     /// What the duration field was showing when it opened. A field still showing it
     /// has asked for nothing — see `HoursEdit.commit`, which is where that matters.
     @State private var hoursAsOpened = ""
-    @State private var isConfirmingDelete = false
     @State private var isHovering = false
     /// Set by Escape on its way out, because a field that has already gone cannot be
     /// asked why it went. Everything else that closes one — ⏎, a click on the field
@@ -62,7 +64,7 @@ struct EntryRow: View {
                 .disabled(entry.isLocked)
             Button("Edit Time…") { beginEditingHours() }
                 .disabled(entry.isLocked)
-            Button("Delete…", role: .destructive) { isConfirmingDelete = true }
+            Button("Delete…", role: .destructive, action: requestDelete)
                 .disabled(entry.isLocked)
         }
         // Without this the row reads as disconnected fragments: task, project,
@@ -77,6 +79,7 @@ struct EntryRow: View {
             beginEditingNotes()
         }
         .accessibilityAction(named: "Edit time") { beginEditingHours() }
+        .accessibilityAction(named: "Delete", requestDelete)
         .confirmationDialog(
             "Delete this time entry?",
             isPresented: $isConfirmingDelete,
@@ -134,6 +137,12 @@ struct EntryRow: View {
         } else {
             Task { await tracker.toggle(entry) }
         }
+    }
+
+    /// Asks rather than deletes, on every path. Harvest has no undo for this.
+    private func requestDelete() {
+        guard !entry.isLocked else { return }
+        isConfirmingDelete = true
     }
 
     private var selectedText: AnyShapeStyle {
