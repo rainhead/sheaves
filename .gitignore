@@ -15,6 +15,12 @@ xcuserdata/
 .swiftpm/
 Packages/*/.build/
 
+# Rust build output, and the core built for the Swift package from it; see
+# Scripts/build-xcframework.sh
+target/
+Packages/SheavesCore/Frameworks/
+Packages/SheavesCore/Sources/SheavesCore/Generated/
+
 # Per-machine signing; see Config/Local.example.xcconfig
 Config/Local.xcconfig
 

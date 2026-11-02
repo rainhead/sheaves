@@ -1,11 +1,15 @@
 XCODEBUILD := xcodebuild -project Sheaves.xcodeproj -scheme Sheaves -destination 'platform=macOS'
 
-.PHONY: generate build run test logs package
+.PHONY: core generate build run test logs package
+
+# The Rust core, built into the Swift package; see Scripts/build-xcframework.sh.
+core:
+	Scripts/build-xcframework.sh
 
 generate:
 	xcodegen generate
 
-build: generate
+build: core generate
 	$(XCODEBUILD) build
 
 # `open` on a running app only activates the old instance, so quit it first or
@@ -14,7 +18,8 @@ run: build
 	@pkill -x Sheaves && sleep 1 || true
 	open "$$($(XCODEBUILD) -showBuildSettings 2>/dev/null | awk '/BUILT_PRODUCTS_DIR/ { print $$3; exit }')/Sheaves.app"
 
-test: generate
+test: core generate
+	cargo test --locked
 	swift test --package-path Packages/SheavesCore
 	$(XCODEBUILD) test
 

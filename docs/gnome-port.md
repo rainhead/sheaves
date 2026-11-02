@@ -159,6 +159,23 @@ and run `cargo test` there too. Done when CI is green with the Rust step and the
 app shows the string. Decide here, and record in this file, which UniFFI version
 and bindings generator the repo pins.
 
+**Decided in phase 0.** The repo pins UniFFI 0.32.2, exactly, in the workspace
+`Cargo.toml`, and generates the Swift with UniFFI's own Swift generator, built from
+that same pinned version as `crates/uniffi-bindgen` and run through cargo. A
+separate generator such as `cargo-swift` was not chosen because it carries its own
+UniFFI version, and the generated Swift checks the library's interface checksums
+when first called and traps on a mismatch. The core uses UniFFI's proc macros, with
+no UDL file; the generator reads the interface from the compiled library.
+[`Scripts/build-xcframework.sh`](../Scripts/build-xcframework.sh) builds a static
+library for both Mac architectures, joins them with `lipo` because release builds
+of the app are universal, and wraps the result and its C header in an XCFramework
+at `Packages/SheavesCore/Frameworks`, which SwiftPM requires to sit inside the
+package. The generated Swift goes into the `SheavesCore` target itself and compiles
+in Swift 6 language mode without changes. Both are git-ignored and rebuilt by the
+script; Xcode does not run it, so a change under `crates/` needs the script, or
+`make build`, before the app sees it. The compiler is pinned in
+`rust-toolchain.toml`.
+
 ### Phase 1: port the core with its tests (Mac, several days; Opus)
 
 Port `Packages/SheavesCore` module by module, in dependency order: `CalendarDate`,
