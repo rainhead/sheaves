@@ -17,6 +17,10 @@ framework=$package/Frameworks/$module.xcframework
 bindings=$package/Sources/SheavesCore/Generated
 staging=target/xcframework
 
+# Mac only, although Package.swift also names iOS: there is no iOS app yet. When
+# there is, add the aarch64-apple-ios and aarch64-apple-ios-sim targets here and
+# in rust-toolchain.toml, and pass each library to -create-xcframework below.
+#
 # Release even for Debug builds of the app: the core is small, cargo caches it,
 # and one profile means one artifact to reason about.
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
