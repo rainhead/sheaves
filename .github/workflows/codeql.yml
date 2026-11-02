@@ -46,20 +46,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-
-      # The same toolchain and steps as build.yml, which explains each of them.
-      - name: Build
-        if: matrix.build-mode == 'manual'
+      # Everything the Swift build needs, done before CodeQL starts watching. Once
+      # it does, it traces each process under Rosetta, where Homebrew refuses to
+      # install and cargo runs several times slower. The steps are build.yml's,
+      # which explains each of them.
+      - name: Prepare the Swift build
+        if: matrix.language == 'swift'
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.6.app
           rustup toolchain install --no-self-update
           Scripts/build-xcframework.sh
           brew install --quiet xcodegen
           xcodegen generate
+
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Builds the app and, with it, the SheavesCore package.
+      - name: Build
+        if: matrix.language == 'swift'
+        run: |
           xcodebuild build \
             -project Sheaves.xcodeproj \
             -scheme Sheaves \
