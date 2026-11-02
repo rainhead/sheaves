@@ -19,8 +19,8 @@ session can pick one up without the conversation that produced this file.
   background service and breaks with each GNOME release.
 - **The two machines share presence over the network.** Each instance both serves
   and asks: before a machine prompts about an absence, it asks its peers whether
-  they saw the user during that gap. Peers are reached on the local network or
-  over the tailnet, by configured host names.
+  they saw the user during that gap. Peers are reached only over the tailnet, by
+  configured host names.
 - **A timer change on one machine is announced to the others**, which sync at
   once rather than waiting for the probe. A stop also re-reads the entry before
   sending hours, so a stop on one machine cannot overwrite a trim made on the
@@ -110,11 +110,24 @@ interval.
 - `POST /touched` with an entry id says this machine just changed a timer. The
   receiver probes Harvest at once.
 
-Every message carries the Harvest user id, and a peer reporting a different user
-is ignored. There is no other authentication: on the tailnet it is unnecessary, and
-on a shared network the worst a forged message can do is suppress one prompt.
-Peers are the host names in settings, such as `hostess` and `peters-macbook-air`,
-which MagicDNS and the local network both resolve.
+**Peers talk only over the tailnet.** The tailnet is what authenticates and
+encrypts the traffic: every device on it is Peter's, and WireGuard carries each
+request. So the listener binds only to this machine's Tailscale addresses, which
+lie in `100.64.0.0/10` and `fd7a:115c:a1e0::/48`, and refuses a request from any
+other source. A machine asks a peer only when the peer's name resolves into those
+ranges, and otherwise asks nobody and logs why. Peers are the MagicDNS names in
+settings, such as `hostess` and `peters-macbook-air`. When Tailscale is not
+running, the machine asks alone, as it does today.
+
+Every message also carries the Harvest user id, and a peer reporting a different
+user is ignored. That check stops two people's machines on one tailnet from
+mixing their evidence, but it is not authentication: the id is not secret.
+
+Decided 2026-11-02, after review of phase 0: on a shared local network, plain HTTP
+would let anyone there read the presence intervals and the user id, and forged
+answers repeated at each check could suppress every absence prompt, not just one.
+The local network can be added later only with authentication and encryption of
+the app's own.
 
 **Merging is done by the detector it already has.** Before a machine reports an
 absence, the monitor asks each peer for presence since its own last evidence,
@@ -202,9 +215,11 @@ Implement the presence log, the two requests, the merge before reporting, the
 the stop re-read, all as specified above. Core tests drive two trackers against a
 stub peer transport through three scenarios: the nine, ten, twelve case prompts on
 neither; a shared lunch prompts on both and the second prompt withdraws when the
-first is answered; a stop after a remote trim sends the recomputed hours. The Mac
-gains a peers field in Settings. Done when the scenarios pass and the Mac serves
-and answers the requests on the tailnet.
+first is answered; a stop after a remote trim sends the recomputed hours. A fourth
+test sends a request from an address outside the tailnet ranges and checks that it
+is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
+the `com.apple.security.network.server` entitlement to listen. Done when the
+scenarios pass and the Mac serves and answers the requests on the tailnet.
 
 ### Phase 4: the GNOME app (Hostess, a few days)
 
