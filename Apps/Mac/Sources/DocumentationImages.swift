@@ -50,7 +50,32 @@ enum DocumentationImages {
                 width: 380,
                 to: directory.appending(path: "edit-hours.png")
             ),
+            // Settings, connected, with a peer named. The demo tracker never
+            // listens, so the listening row reads as it does without Tailscale.
+            try await write(
+                SettingsView()
+                    .environment(tracker)
+                    .environment(HotKeyPreference(defaults: scratchDefaults()))
+                    .environment(LoginItemPreference())
+                    .environment(peers(["hostess"])),
+                width: 460,
+                to: directory.appending(path: "settings.png")
+            ),
         ]
+    }
+
+    /// Preferences kept apart from the app's own, so rendering changes nothing.
+    private static func scratchDefaults() -> UserDefaults {
+        let name = "com.rainhead.Sheaves.documentation-images"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    private static func peers(_ names: [String]) -> PeerPreference {
+        let peers = PeerPreference(defaults: scratchDefaults())
+        peers.names = names
+        return peers
     }
 
     /// The tracker's state comes only from syncing, so the images sync it against
