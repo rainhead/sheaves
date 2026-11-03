@@ -394,6 +394,14 @@ impl TimeTracker {
         let inner = &self.inner;
         let previous_connection = inner.state.lock().unwrap().connection.clone();
         inner.update(|state| state.connection = Connection::Connecting);
+        // Puts everything back unless the connect succeeds, including when the
+        // caller drops this future part way through.
+        let mut change = CredentialChange {
+            inner,
+            previous_connection,
+            previous_credentials: None,
+            succeeded: false,
+        };
         // The client is about to speak for someone new while the queue still speaks
         // for whoever came before. Let a sync already in flight finish under the
         // credentials it started with, and hold off any other until the queue has
@@ -401,7 +409,7 @@ impl TimeTracker {
         // the old account's work with the new token.
         inner.is_changing_credentials.store(true, Ordering::SeqCst);
         drop(inner.sync_gate.lock().await);
-        let previous = inner.client.installed_credentials();
+        change.previous_credentials = Some(inner.client.installed_credentials());
         inner.client.set_credentials(Some(credentials.clone()));
 
         let result = async {
@@ -426,6 +434,8 @@ impl TimeTracker {
 
         match result {
             Ok(user) => {
+                change.succeeded = true;
+                drop(change);
                 let pending = inner.queue.count();
                 inner.update(|state| {
                     state.pending_count = pending;
@@ -437,14 +447,8 @@ impl TimeTracker {
                 self.start_ticking();
                 Ok(())
             }
-            Err(error) => {
-                // The old credentials go back before syncs are let through again,
-                // or one could drain under the token just refused.
-                inner.client.set_credentials(previous);
-                inner.update(|state| state.connection = previous_connection);
-                inner.is_changing_credentials.store(false, Ordering::SeqCst);
-                Err(error)
-            }
+            // `change` puts the old credentials and connection back as it drops.
+            Err(error) => Err(error),
         }
     }
 
@@ -473,12 +477,11 @@ impl TimeTracker {
     ///
     /// Syncs are serialised rather than cancelled, in the order they were asked for.
     pub async fn sync(&self) {
-        self.inner.syncs_in_flight.fetch_add(1, Ordering::SeqCst);
-        {
-            let _turn = self.inner.sync_gate.lock().await;
-            self.perform_sync().await;
-        }
-        self.inner.syncs_in_flight.fetch_sub(1, Ordering::SeqCst);
+        // Counted down as the guard drops, so a caller that abandons the sync cannot
+        // leave the probe believing one is still running.
+        let _in_flight = InFlight::enter(&self.inner.syncs_in_flight);
+        let _turn = self.inner.sync_gate.lock().await;
+        self.perform_sync().await;
     }
 
     async fn perform_sync(&self) {
@@ -1275,6 +1278,49 @@ impl TimeTracker {
         if self.inner.ticker.lock().unwrap().is_some() {
             self.start_ticking();
         }
+    }
+}
+
+/// Counts one sync in flight for as long as it lives.
+struct InFlight<'a>(&'a AtomicUsize);
+
+impl<'a> InFlight<'a> {
+    fn enter(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Undoes a `connect` that does not succeed, however it ends.
+struct CredentialChange<'a> {
+    inner: &'a Inner,
+    previous_connection: Connection,
+    /// `None` until the new credentials are installed.
+    previous_credentials: Option<Option<Credentials>>,
+    succeeded: bool,
+}
+
+impl Drop for CredentialChange<'_> {
+    fn drop(&mut self) {
+        if !self.succeeded {
+            // The old credentials go back before syncs are let through again, or one
+            // could drain under the token just refused.
+            if let Some(previous) = self.previous_credentials.take() {
+                self.inner.client.set_credentials(previous);
+            }
+            let previous_connection = self.previous_connection.clone();
+            self.inner
+                .update(|state| state.connection = previous_connection);
+        }
+        self.inner
+            .is_changing_credentials
+            .store(false, Ordering::SeqCst);
     }
 }
 

@@ -738,6 +738,69 @@ mod rejected_token {
     }
 }
 
+/// A shell may abandon a call part way, through a timeout or a cancelled task, and
+/// nothing it began may be left half done.
+mod abandoned_calls {
+    use super::*;
+    use crate::test_support::Held;
+
+    #[tokio::test]
+    async fn an_abandoned_connect_puts_everything_back() {
+        let scratch = scratch();
+        let transport = Held::new(RoutingTransport::standard_account(), "users/me");
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        assert_eq!(tracker.state().connection, Connection::Online);
+
+        transport.hold();
+        let connecting = {
+            let tracker = tracker.clone();
+            tokio::spawn(async move {
+                tracker
+                    .connect(Credentials::new("67890", "other"), false)
+                    .await
+            })
+        };
+        while transport.held() == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        connecting.abort();
+        let _ = connecting.await;
+        transport.release();
+
+        assert_eq!(tracker.state().connection, Connection::Online);
+        assert_eq!(
+            tracker.inner.client.installed_credentials(),
+            Some(fixture::credentials())
+        );
+        // And syncs are let through again.
+        tracker.sync().await;
+        assert_eq!(tracker.state().connection, Connection::Online);
+        assert_eq!(tracker.inner.syncs_in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_sync_does_not_stop_the_probe() {
+        let scratch = scratch();
+        let transport = Held::new(RoutingTransport::standard_account(), "time_entries");
+        let tracker = tracker(transport.clone(), &scratch);
+
+        transport.hold();
+        let syncing = {
+            let tracker = tracker.clone();
+            tokio::spawn(async move { tracker.sync().await })
+        };
+        while transport.held() == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        syncing.abort();
+        let _ = syncing.await;
+        transport.release();
+
+        assert_eq!(tracker.inner.syncs_in_flight.load(Ordering::SeqCst), 0);
+    }
+}
+
 mod refused_changes {
     use super::*;
 
