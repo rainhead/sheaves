@@ -19,6 +19,17 @@ xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
 Scripts/package-release.sh                         # what a release ships
 ```
 
+On Hostess (Ubuntu, GNOME), in `~/dev/sheaves`:
+
+```sh
+cargo test -p sheaves-gnome                        # the GNOME app; not a default member
+cargo run -p sheaves-gnome                         # into the session, if run from it
+SHEAVES_RENDER=docs/images cargo run -p sheaves-gnome   # the window, from the demo account
+```
+
+Over SSH, launch into the logged-in session with `XDG_RUNTIME_DIR=/run/user/$(id -u)
+WAYLAND_DISPLAY=wayland-0 DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus`.
+
 Signing lives in `Config/Local.xcconfig` (git-ignored, see the example beside it).
 
 The port to GNOME runs in phases; `docs/gnome-port.md` is the plan and records what

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/sheaves-core", "crates/uniffi-bindgen"]
+members = ["crates/sheaves-core", "crates/sheaves-gnome", "crates/uniffi-bindgen"]
+# The GNOME app needs GTK 4 and libadwaita to build, which a Mac does not have, so
+# plain `cargo test` leaves it out; on Linux, `cargo test -p sheaves-gnome`.
+default-members = ["crates/sheaves-core", "crates/uniffi-bindgen"]
 
 [workspace.package]
 edition = "2024"
