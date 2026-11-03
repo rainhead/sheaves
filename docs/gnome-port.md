@@ -156,8 +156,8 @@ hour banked plus two and a half elapsed since twelve.
 
 ## Phases
 
-Each phase is one pull request, reviewed with the CodeRabbit CLI before pushing,
-and each updates `CLAUDE.md` and the README where it changes a command or a
+Each phase is one pull request, reviewed with the CodeRabbit CLI before pushing
+(phase 9 opens one for each bug it finds), and each updates `CLAUDE.md` and the README where it changes a command or a
 concept. The suggested model is a guess at where judgment is needed most: the
 queue, the tracker and the peer rules carry the subtle semantics; the GTK phases
 are mostly plumbing.
@@ -264,6 +264,40 @@ starts a timer.
 The README's layout table and "How it works", `ROADMAP.md`, this file, and
 `docs/presence.md`, which gains the GNOME signals and the peer merge. Done when a
 newcomer can build both apps from the README alone.
+
+### Phase 9: a property-testing pass over the core (either machine; Opus)
+
+Search the Rust core for correctness bugs with `proptest`, following the
+[proptest-praxis skill](https://github.com/inanna-malick/agent-skills/blob/main/skills/proptest-praxis/SKILL.md).
+The ported tests check the cases someone thought of. This pass generates long,
+random sequences of operations and compares the core with a simple model of what
+it should do, which finds the cases nobody thought of. The core is a good subject:
+its implementation is involved, but most of what it promises can be stated simply.
+
+Candidate targets, each with the simple statement that serves as the model:
+
+- **The mutation queue.** Any sequence of actions, delivered with failures,
+  retries, restarts from the queue file and a token for another account at any
+  point, leaves Harvest as if each action had arrived at the moment the user took
+  it. The model is a list of timestamped actions applied in order.
+- **The time tracker.** After any mix of local actions and edits made elsewhere,
+  a sync shows the same entries as rebuilding from Harvest alone, except for
+  changes still in the queue. An entry started offline keeps one identity when its
+  Harvest id arrives.
+- **The absence detector and the peer merge.** The absence reported is the same
+  whatever order the machines' evidence arrives in, and is the gap a plain sorted
+  list of every presence interval shows. A stop after a trim on the other machine
+  sends the hours the server's own entry implies.
+- **Formats that must survive a round trip.** `CalendarDate` through its wire
+  format, the snapshot and the queue through their JSON files, and `HoursEdit`
+  between typed text and hours.
+
+The skill's deliverables differ from the other phases'. Its property tests live on
+a discovery branch that is not merged, and each bug it confirms becomes its own PR
+from `main`, holding a deterministic regression test and the smallest fix. Done
+when every target above has a property test that a deliberately introduced defect
+makes fail, and each failure the tests found is fixed or written up as an open
+question.
 
 ## Working practice
 
