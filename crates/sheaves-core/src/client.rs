@@ -220,12 +220,18 @@ impl Transport for HttpTransport {
         if let Some(body) = request.body {
             builder = builder.body(body);
         }
-        let response = builder
-            .send()
-            .await
-            .map_err(|error| HarvestError::Network {
-                reason: error.to_string(),
-            })?;
+        let response = builder.send().await.map_err(|error| {
+            if error.is_builder() {
+                // The request could not even be put together, which here means a
+                // header would not encode: a token pasted with an invisible
+                // character. No retry can send it; the credentials need fixing.
+                HarvestError::Unauthorized
+            } else {
+                HarvestError::Network {
+                    reason: error.to_string(),
+                }
+            }
+        })?;
         let status = response.status().as_u16();
         let headers = response
             .headers()
@@ -1162,6 +1168,18 @@ mod tests {
             assert!(url.contains("/v2/reports/project_budget"));
             assert!(url.contains("page=1"));
         }
+    }
+
+    /// A token that cannot be sent as a header is a credentials problem, not a
+    /// network one: retried as a network failure, it left the app offline for good.
+    #[tokio::test]
+    async fn an_unsendable_token_is_refused_not_retried() {
+        let client = HarvestClient::new(
+            Some(Credentials::new("1", "sek\u{0}rit")),
+            Arc::new(HttpTransport::new()),
+            0.0,
+        );
+        assert_eq!(client.current_user().await, Err(HarvestError::Unauthorized));
     }
 
     mod retry_after {
