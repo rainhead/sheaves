@@ -99,9 +99,10 @@ cargo test -p sheaves-gnome
 ```
 
 The running timer shows in the top bar through Ubuntu's AppIndicator extension,
-which is on by default there; elsewhere, install that extension. Settings has a
-switch to start at login, which runs the binary where it is now. The token is kept
-in the keyring.
+which is on by default there; elsewhere, install that extension. Each launch
+installs a desktop entry and icon into `~/.local/share`, pointing at the binary
+where it is, so GNOME knows the window and the app grid lists it. Settings has a
+switch to start at login. The token is kept in the keyring.
 
 A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml) and
 pushing a matching `v` tag.
@@ -166,7 +167,9 @@ the Mac shell answers the power question through
 [`PowerSource`](Apps/Mac/Sources/PowerSource.swift).
 
 **The menu bar is a control, not a readout.** The status item shows a pause button
-while a timer runs and a play button for 90 minutes after one stops, so the common
+while a timer runs and a play button for 90 minutes after one stops, and
+otherwise Sheaves' own glyph, a sheaf of wheat between the plates of an hourglass
+([`icons/`](icons)), so the common
 action costs one click and opens nothing; clicking the name opens the popover
 instead. That is why [`StatusItemController`](Apps/Mac/Sources/StatusItemController.swift)
 is hand-rolled AppKit — SwiftUI's `MenuBarExtra` has exactly one behaviour, which is

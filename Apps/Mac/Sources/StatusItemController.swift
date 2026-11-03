@@ -118,6 +118,12 @@ final class StatusItemController {
     /// colour and ignores `contentTintColor` doing it, so the tinted glyph has to
     /// arrive already coloured and marked as not a template.
     static func icon(for activity: TimeTracker.Activity) -> NSImage? {
+        // Idle shows Sheaves' own glyph, a sheaf of wheat between the plates of an
+        // hourglass, the same one the GNOME app's top bar item draws
+        // (icons/sheaves-symbolic.svg). Play and pause stay the system's.
+        if case .idle = activity {
+            return NSImage(named: "Sheaves")
+        }
         let image = NSImage(systemSymbolName: symbolName(for: activity), accessibilityDescription: nil)
         guard case .running = activity, let image else { return image }
         // Drawn on demand rather than once, so the accent the user is using now is
@@ -136,7 +142,8 @@ final class StatusItemController {
         switch activity {
         case .running: "pause.fill"
         case .recent: "play.fill"
-        case .idle: "timer"
+        // Not reached: `icon(for:)` draws idle from the asset catalog.
+        case .idle: "play.fill"
         }
     }
 

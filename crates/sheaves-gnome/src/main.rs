@@ -11,6 +11,7 @@ mod documentation;
 mod format;
 mod indicator;
 mod keyring;
+mod launcher;
 mod settings;
 mod window;
 
