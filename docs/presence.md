@@ -90,6 +90,17 @@ the gap before it reach the threshold. Joining a call after a quiet stretch of
 reading would then open the prompt during the call, which is the one thing this must
 never do.
 
+## Other machines
+
+One machine's idle time says nothing about another's. With peers named in Settings,
+each instance keeps a log of when it saw the user over the last day: every moment of
+evidence above, with gaps shorter than the threshold joined. Before reporting an
+absence it asks each peer for its log since the absence began, removes every stretch
+a peer saw the user in, and reports what is left that is still as long as the
+threshold. A peer that does not answer within two seconds is left out, and the
+machine decides as it would alone. The rules are in
+[`peers.rs`](../crates/sheaves-core/src/peers.rs).
+
 ## Whose timer it can speak for
 
 An absence only speaks for a timer that was already running while somebody was here.

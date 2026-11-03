@@ -406,6 +406,60 @@ is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
 the `com.apple.security.network.server` entitlement to listen. Done when the
 scenarios pass and the Mac serves and answers the requests on the tailnet.
 
+**Decided in phase 5.** The peers live in
+[`crates/sheaves-core/src/peers.rs`](../crates/sheaves-core/src/peers.rs), so the
+GNOME app gets them whole:
+
+- **One object per machine, `Peers`,** holds the presence log, the names to ask,
+  and whose machine it is. `Presence` wraps the presence monitor around it: each
+  poll's evidence goes into the log, and each absence the monitor finds is checked
+  with the peers before it is reported. The tracker `join`s the same `Peers`, so it
+  announces what it delivered and syncs when told. On the Mac,
+  `Tracker::presence` hands out a fold joined to the tracker's peers.
+- **The merge subtracts what peers saw rather than feeding a detector.** Feeding
+  interval boundaries into `AbsenceDetector`, as this file first said, would
+  measure the inside of a peer's interval as a gap. `unwitnessed` removes every
+  covered stretch from the absence and keeps what is left over the threshold, so
+  half an hour seen at Hostess in the middle of a morning leaves two absences, each
+  asked about in turn.
+- **The log is in memory.** A relaunch counts as presence anyway, so there is
+  nothing to lose. It reaches back a day.
+- **Port 47147, HTTP/1.1 through hyper.** reqwest already brings hyper, so the
+  server adds little. The listener looks for this machine's tailnet addresses once a
+  minute, so Tailscale started after the app is found. It listens only while at
+  least one peer is named. `POST /touched` carries a list of entry ids, since one
+  drain can change several.
+- **A stop carries its run:** when the timer started, the hours banked before, and
+  when the user stopped it. Delivery reads the entry back first. Not running: the
+  stop is dropped. Running since the same start with the same banked hours: the hours
+  measured here go. Running since some other start: Harvest's banked hours plus the
+  time from that start to the stop. Restarted more than two minutes after the stop:
+  dropped, since the later action wins. Two cases needed care. A stop made while a
+  change to the same entry is still queued here carries no run, because this
+  machine's own restart landing late would look like another client's. And the
+  hours decided on are written into the queued stop with the attempt, so a stop
+  whose `/stop` landed but whose correction failed still sends them on retry.
+- **A prompt withdraws itself** when, on any change of state, the running timer no
+  longer ran through the absence (`TrackerState::absence_applies`). The Mac's
+  prompt watches the tracker for that.
+
+Checked on the machines, 2026-11-03: the core built and served on Hostess, and
+answered from the Mac over the tailnet with presence for the right user, 403 for
+another, and the change notice; nothing answered on Hostess's LAN address. From the
+Mac, the core's client found Hostess by name and read its log. The Mac's own
+listener bound to both tailnet addresses but answered nothing, because the macOS
+application firewall silently holds incoming connections to programs it does not
+know (a built-in `nc` on the same address answered). The app is ad-hoc signed, so
+it will need allowing under System Settings › Network › Firewall › Options, and may
+need it again after each build. Whether the sandboxed app then answers is unchecked.
+
+Open, for Peter: answering **Keep** on one machine changes nothing in Harvest, so
+the other machine's prompt for the same lunch stays open and asks again. Withdrawing
+it would need the answer itself shared between peers. And if both prompts are
+answered with a trim within the few seconds before the notice arrives, the second
+machine's stop is dropped as stale but its restart still goes, which patches the
+running timer's hours to its own trim.
+
 ### Phase 6: the GNOME app (Hostess, a few days)
 
 `crates/sheaves-gnome`: a single instance `adw::Application`; an app indicator
