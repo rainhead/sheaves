@@ -67,7 +67,9 @@ pub fn parse_hours(text: &str, decimal_separator: char) -> Option<f64> {
     if ascii.is_empty() || ascii == "." {
         return None;
     }
-    ascii.parse().ok()
+    // Enough digits parse as infinity, which JSON cannot hold: queued, it is written
+    // as null, and the queue file no longer reads back.
+    ascii.parse().ok().filter(|hours: &f64| hours.is_finite())
 }
 
 fn parse_whole(text: &str) -> Option<u64> {
@@ -223,6 +225,15 @@ mod tests {
             for junk in ["", "   ", "abc", "-1", "1:75", "1:-5"] {
                 assert_eq!(parse_hours(junk, '.'), None, "{junk:?}");
             }
+        }
+
+        /// Found by phase 4's property tests. Pasted onto a running timer, this
+        /// was queued as infinite hours, written to the queue file as null, and at
+        /// the next launch the file was set aside with every unsent change in it.
+        #[test]
+        fn refuses_a_number_too_large_to_hold() {
+            assert_eq!(parse_hours(&"9".repeat(400), '.'), None);
+            assert_eq!(parse_hours(&format!("1.{}", "0".repeat(400)), '.'), Some(1.0));
         }
 
         /// The edit field prefills with the formatted duration, so whatever the app
