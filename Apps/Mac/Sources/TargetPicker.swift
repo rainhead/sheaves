@@ -13,7 +13,7 @@ struct ProjectList: View {
     var projects: [ProjectTargets]
     /// Index of the highlighted row, or nil when the selection is elsewhere.
     var highlighted: Int?
-    @Binding var chosenTasks: [Int: Int]
+    @Binding var chosenTasks: [Int64: Int64]
     var maxVisible: Int = 6
     var onStart: (TimerTarget) -> Void
 
@@ -66,7 +66,7 @@ struct ProjectList: View {
 extension ProjectTargets {
     /// The task a row shows: whatever was picked by hand, as long as it is still on
     /// offer, and otherwise the best-ranked one.
-    func task(chosenFrom chosen: [Int: Int]) -> Reference? {
+    func task(chosenFrom chosen: [Int64: Int64]) -> Reference? {
         guard let id = chosen[self.id], let match = tasks.first(where: { $0.id == id }) else {
             return tasks.first
         }
@@ -87,7 +87,7 @@ struct TargetPicker: View {
     var onStart: (TimerTarget) -> Void
 
     @State private var selection = 0
-    @State private var chosenTasks: [Int: Int] = [:]
+    @State private var chosenTasks: [Int64: Int64] = [:]
     @FocusState private var isFocused: Bool
 
     private var projects: [ProjectTargets] { tracker.orderedProjects }

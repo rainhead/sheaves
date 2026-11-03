@@ -1,7 +1,8 @@
 # Working on Sheaves
 
-A macOS menu bar client for the Harvest time-tracking API. `Packages/SheavesCore`
-holds everything but the views so an iOS app can be added later; `Apps/Mac` is the
+A macOS menu bar client for the Harvest time-tracking API. `crates/sheaves-core`,
+in Rust, holds everything but the views, so the GNOME app the port plans can share
+it; `Packages/SheavesCore` is that core as Swift sees it, and `Apps/Mac` is the
 AppKit and SwiftUI shell.
 
 ## Commands
@@ -9,8 +10,8 @@ AppKit and SwiftUI shell.
 ```sh
 Scripts/build-xcframework.sh                       # after changing anything in crates/
 xcodegen generate                                  # after adding or removing ANY file
-cargo test                                         # Rust core
-swift test --package-path Packages/SheavesCore     # core logic
+cargo test                                         # core logic
+swift test --package-path Packages/SheavesCore     # bindings, Keychain, formatting
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
   -destination 'platform=macOS' test               # app logic
 /usr/bin/log show --last 5m --info \
@@ -20,9 +21,8 @@ Scripts/package-release.sh                         # what a release ships
 
 Signing lives in `Config/Local.xcconfig` (git-ignored, see the example beside it).
 
-The core is being ported to Rust in phases; `docs/gnome-port.md` is the plan and
-records what each phase decided. Until the port finishes, `crates/sheaves-core` and
-`Packages/SheavesCore` both exist and both test suites run.
+The port to GNOME runs in phases; `docs/gnome-port.md` is the plan and records what
+each phase decided.
 
 ## Platform traps that have already cost a day
 
@@ -86,8 +86,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
 ## Conventions
 
 - Anything a person reads goes through a locale-aware format style, never
-  `String(format:)`. The sole exception is `CalendarDate.description`, which is the
-  wire format Harvest parses and must stay ASCII.
+  `String(format:)`. The sole exception is a `CalendarDate`'s ISO text, which is the
+  wire format Harvest parses and must stay ASCII. Formatting lives in the shells;
+  the core hands them numbers, `CalendarDate`s and `BudgetFigure`s.
+- Rules live in the core. A Swift extension in `Packages/SheavesCore` may rename a
+  core method or format its result, never decide anything.
 - Days are `CalendarDate`, never `Date`. Harvest's `spent_date` has no time zone.
 - Mutations that affect elapsed time must carry the time the user acted. See the
   README's sync section for why.

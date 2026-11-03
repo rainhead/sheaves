@@ -12,3 +12,10 @@ publish = false
 # Swift checks a checksum of every exported function against the library at load
 # time and refuses to run on a mismatch. One line pins both.
 uniffi = "=0.32.2"
+
+# The core ships inside the Mac app twice over, once per architecture, so its size
+# is the app's download size.
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"

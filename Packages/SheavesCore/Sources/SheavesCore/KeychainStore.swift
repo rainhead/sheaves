@@ -6,7 +6,10 @@ import Security
 /// The token is a bearer credential for the whole Harvest account, so it never
 /// touches UserDefaults or the app's container — only the data-protection Keychain,
 /// which keeps the macOS and iOS behaviour the same.
-public struct KeychainStore: Sendable {
+///
+/// The Rust core asks for the credentials through `CredentialStore`; this is the
+/// Mac's answer.
+public final class KeychainStore: CredentialStore, Sendable {
     public enum Failure: Error, Sendable, Equatable {
         case status(OSStatus)
         case malformedData
@@ -37,7 +40,38 @@ public struct KeychainStore: Sendable {
         return query
     }
 
-    public func read() throws -> HarvestCredentials? {
+    /// The stored form, kept as the Swift core wrote it so a token saved before the
+    /// switch to the Rust core still reads.
+    private struct Stored: Codable {
+        var accountID: String
+        var token: String
+    }
+
+    public func read() throws -> Credentials? {
+        do {
+            return try readStored()
+        } catch {
+            throw CredentialError.Failed(message: error.localizedDescription)
+        }
+    }
+
+    public func write(credentials: Credentials) throws {
+        do {
+            try writeStored(credentials)
+        } catch {
+            throw CredentialError.Failed(message: error.localizedDescription)
+        }
+    }
+
+    public func delete() throws {
+        do {
+            try deleteStored()
+        } catch {
+            throw CredentialError.Failed(message: error.localizedDescription)
+        }
+    }
+
+    func readStored() throws -> Credentials? {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -47,9 +81,9 @@ public struct KeychainStore: Sendable {
         switch status {
         case errSecSuccess:
             guard let data = item as? Data,
-                  let credentials = try? JSONDecoder().decode(HarvestCredentials.self, from: data)
+                  let stored = try? JSONDecoder().decode(Stored.self, from: data)
             else { throw Failure.malformedData }
-            return credentials
+            return Credentials(accountID: stored.accountID, token: stored.token)
         case errSecItemNotFound:
             return nil
         default:
@@ -57,8 +91,8 @@ public struct KeychainStore: Sendable {
         }
     }
 
-    public func write(_ credentials: HarvestCredentials) throws {
-        let data = try JSONEncoder().encode(credentials)
+    func writeStored(_ credentials: Credentials) throws {
+        let data = try JSONEncoder().encode(Stored(accountID: credentials.accountId, token: credentials.token))
         let attributes: [String: Any] = [kSecValueData as String: data]
 
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
@@ -71,7 +105,7 @@ public struct KeychainStore: Sendable {
         guard addStatus == errSecSuccess else { throw Failure.status(addStatus) }
     }
 
-    public func delete() throws {
+    func deleteStored() throws {
         let status = SecItemDelete(baseQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw Failure.status(status)

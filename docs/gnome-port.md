@@ -242,6 +242,36 @@ target green. The release script builds the framework before packaging. Done whe
 the app suite passes, a full working day shows no regression, and
 `Scripts/package-release.sh` produces an app that runs on a clean account.
 
+**Decided in phase 2.** The core's own types cross to Swift as they are, with
+UniFFI derives; `crates/sheaves-core/src/ffi.rs` adds only what a foreign caller
+needs:
+
+- **A `Tracker` object on a runtime of its own.** Each call is spawned onto that
+  runtime and awaited, so a call Swift abandons still finishes in Rust.
+- **A `TrackerSnapshot`, with a revision number.** It carries the derived values
+  views read, such as the activity and the ordered projects, so no shell computes
+  them. The observer's reports reach the main thread asynchronously and can land
+  after an action has already read the state back; Swift keeps whichever revision
+  is newest.
+- **Methods on records, under their own names** (`hours_at`, `trim_for`,
+  `local_day`), and a Swift file, `CoreExtensions.swift`, that gives them back the
+  names the views used. It renames; it decides nothing.
+- **Foreign traits for what the shell knows:** `CredentialStore` (the Keychain),
+  `PowerProbe`, `TrackerObserver` and `LogSink`, which sends the core's log lines to
+  the unified log under the app's subsystem.
+- **The presence fold and the demo account moved to Rust.** The Mac app hands
+  `PresenceFold` a reading every poll; the documentation images and the demo
+  instance sync against `demo.rs`.
+- **Errors are translated at the edge.** `ConnectFailure` keeps the count of
+  stranded changes that Settings shows; everything else crosses as a message.
+- **TLS is the system's on a Mac** (native-tls, which is Security.framework) and
+  rustls elsewhere, and the release profile is tuned for size. The zipped app went
+  from 1.4 MB to 7.1 MB; rustls with its crypto library would have made it 10 MB.
+- **The Rust files have new names**, `cache.json` and `queue.json`, beside the Swift
+  core's `snapshot.json` and `pending-mutations.json`, which the Rust never reads or
+  overwrites. The Keychain item keeps its format, so the token saved by the Swift
+  core still reads.
+
 ### Phase 3: one record of the connection, and ids for queued changes (core; Opus)
 
 Phase 1's eight review rounds kept finding bugs, most of them in the Swift core

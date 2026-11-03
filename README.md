@@ -51,7 +51,7 @@ therefore waiting on the paragraph above.
 
 Requires Xcode 26 or later and [rustup](https://rustup.rs), which installs the Rust
 compiler that [`rust-toolchain.toml`](rust-toolchain.toml) names on first use. The
-core is moving from Swift to Rust so a GNOME app can share it; the plan is
+core is Rust so a GNOME app can share it; the plan for that app is
 [`docs/gnome-port.md`](docs/gnome-port.md).
 
 ```sh
@@ -74,8 +74,8 @@ is enough — the $99 Developer Program is for distribution, not for running you
 app on your own Mac.
 
 ```sh
-cargo test                                                  # Rust core
-swift test --package-path Packages/SheavesCore              # core logic
+cargo test                                                  # core logic
+swift test --package-path Packages/SheavesCore              # bindings, Keychain, formatting
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
   -destination 'platform=macOS' test                        # app logic
 ```
@@ -109,24 +109,24 @@ Three ideas carry most of the design.
 
 **A day is not a moment.** Harvest's `spent_date` is a date with no time zone, and
 round-tripping it through `Date` puts entries on the wrong day for anyone east or
-west of wherever the conversion happened. [`CalendarDate`](Packages/SheavesCore/Sources/SheavesCore/Model/CalendarDate.swift)
+west of wherever the conversion happened. [`CalendarDate`](crates/sheaves-core/src/calendar_date.rs)
 keeps days as days and only becomes a `Date` against an explicit calendar.
 
 **Time is recorded, not re-measured.** Harvest's `/stop` banks time up to the moment
 the request *arrives*, and a create starts its timer on arrival too — so replaying
 bare commands after a spell offline destroys or invents hours in equal measure. Every
-[`Mutation`](Packages/SheavesCore/Sources/SheavesCore/Store/MutationQueue.swift) that
+[`Mutation`](crates/sheaves-core/src/queue.rs) that
 affects elapsed time carries the time the user acted and sends explicit hours, so an
 entry is honest however late the request lands.
 
 **Local state is the truth until a sync succeeds.** Every action — start, stop,
-resume, edit — changes [`TimeTracker`](Packages/SheavesCore/Sources/SheavesCore/Store/TimeTracker.swift)
+resume, edit — changes [`TimeTracker`](crates/sheaves-core/src/tracker.rs)
 first and reaches Harvest second, through a persisted
-[`MutationQueue`](Packages/SheavesCore/Sources/SheavesCore/Store/MutationQueue.swift).
+[`MutationQueue`](crates/sheaves-core/src/queue.rs).
 The queue drains in order and stops at the first failure a retry could fix, so a
 dropped connection costs nothing; a change Harvest refuses outright is dropped rather
 than left to wedge everything behind it. An entry started offline has no Harvest id
-yet, which is why [`TrackedEntry`](Packages/SheavesCore/Sources/SheavesCore/Model/TrackedEntry.swift)
+yet, which is why [`TrackedEntry`](crates/sheaves-core/src/tracked_entry.rs)
 identity is either a server id or a local one, swapped when the create lands. The
 queue remembers which account and user filled it: a renewed token for the same person
 sends what was waiting, and anyone else is asked before it is discarded, never sent.
@@ -137,7 +137,7 @@ only to catch changes made outside this app, like the web timesheet or a phone. 
 cadence follows what the request costs: outside edits land within a minute while
 you are working on mains power, an idle machine checks occasionally, a battery
 slows both, and Low Power Mode stops the probe entirely. The cadence is
-[`TimeTracker.probeInterval`](Packages/SheavesCore/Sources/SheavesCore/Store/TimeTracker.swift);
+[`probe_interval`](crates/sheaves-core/src/tracker.rs);
 the Mac shell answers the power question through
 [`PowerSource`](Apps/Mac/Sources/PowerSource.swift).
 
@@ -185,7 +185,7 @@ the one thing here on Harvest's Reports API, whose allowance is 100 requests per
 own instead of riding every start and stop.
 
 **The UI never waits to draw.** A JSON
-[snapshot](Packages/SheavesCore/Sources/SheavesCore/Persistence/SnapshotStore.swift)
+[snapshot](crates/sheaves-core/src/snapshot.rs)
 of the last known state is restored at launch, so the popover is populated before the
 first request returns.
 
@@ -199,8 +199,8 @@ Carbon reports that by failing silently, which is worth surfacing.
 
 | Path | What lives there |
 | --- | --- |
-| [`crates/sheaves-core`](crates/sheaves-core) | The Rust core, which will replace the Swift one. Called from Swift through [UniFFI](https://mozilla.github.io/uniffi-rs/). |
-| [`Packages/SheavesCore`](Packages/SheavesCore) | API client, models, store, persistence. No AppKit, no SwiftUI. |
+| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence. Rust, so a GNOME app can share it. |
+| [`Packages/SheavesCore`](Packages/SheavesCore) | The core as Swift sees it: the [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings, an `@Observable` wrapper, the Keychain, and formatting. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
 | [`Scripts`](Scripts) | Jobs that need more than a line: the Rust core for the Mac, the release package, the documentation images. |

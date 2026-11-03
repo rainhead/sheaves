@@ -11,7 +11,7 @@ use crate::calendar_date::{CalendarDate, Weekday};
 
 /// The `{ "id": …, "name": … }` stub Harvest embeds wherever it references another
 /// record.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
 pub struct Reference {
     pub id: i64,
     pub name: String,
@@ -34,7 +34,7 @@ pub struct ProjectReference {
     pub code: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
 pub struct HarvestUser {
     pub id: i64,
     pub first_name: String,
@@ -53,7 +53,7 @@ impl HarvestUser {
 /// Account-wide settings. `wants_timestamp_timers` decides whether this account
 /// records durations or start and end times, which changes how a timer is created
 /// and stopped.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
 pub struct HarvestCompany {
     pub name: String,
     pub full_domain: String,

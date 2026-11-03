@@ -107,34 +107,31 @@ struct SystemPresenceSensor: PresenceSensor {
     }
 }
 
-/// Feeds the system's presence signals to an `AbsenceDetector` and reports what
-/// comes out.
+/// Reads the system's presence signals and hands them to the core, which decides
+/// what they mean (`PresenceMonitor::poll` in `crates/sheaves-core/src/absence.rs`).
 @MainActor
 final class PresenceMonitor {
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
 
     /// Half a minute is far finer than the fifteen it takes to count as away, and
     /// costs two property reads.
-    static let pollInterval: TimeInterval = 30
+    static let pollInterval: TimeInterval = presencePollInterval()
 
     var onAbsence: ((Absence) -> Void)?
 
-    private var detector: AbsenceDetector
+    private let fold: PresenceFold
     private let sensor: any PresenceSensor
     private var timer: Timer?
-    /// When the machine was last looked at, so a call found in progress can be
-    /// credited to the whole interval it may have been running for.
-    private var lastPoll: Date?
     private var workspaceObservers: [any NSObjectProtocol] = []
     private var distributedObservers: [any NSObjectProtocol] = []
 
     init(
         sensor: any PresenceSensor = SystemPresenceSensor(),
-        threshold: TimeInterval = AbsenceDetector.defaultThreshold,
+        threshold: TimeInterval = defaultAbsenceThreshold(),
         now: Date = Date()
     ) {
         self.sensor = sensor
-        self.detector = AbsenceDetector(threshold: threshold, presentAt: now)
+        self.fold = PresenceFold(threshold: threshold, now: now)
     }
 
     func start() {
@@ -179,34 +176,23 @@ final class PresenceMonitor {
         distributedObservers = []
     }
 
-    /// Folds one reading of the machine into the detector.
+    /// Hands one reading of the machine to the core.
+    ///
+    /// The core is where the rules are: a locked screen outranks everything, the
+    /// microphone counts as presence and is dated to the previous poll, and the idle
+    /// clock is read as how long *since* the last input.
     func poll(now: Date = Date()) {
-        // A locked screen outranks everything. A call left running on a locked Mac
-        // still holds the microphone, and that is somebody's machine sitting in an
-        // empty room, not somebody working.
-        guard !sensor.isScreenLocked else { return }
-        defer { lastPoll = now }
-
-        // The microphone is read first, and its evidence is dated to the previous
-        // poll rather than to now.
-        //
-        // Both matter. A call that began at any point since the last look could have
-        // begun at the start of that interval, and dating it to `now` would let the
-        // gap before it reach the threshold — so joining a call after a quiet
-        // stretch of reading would open the prompt *during the call*, which is the
-        // one thing this must never do. Reading it before the idle clock means the
-        // presence is banked before any gap is measured.
-        if sensor.isMicrophoneInUse {
-            report(detector.notePresence(at: lastPoll ?? now))
+        let reading = PresenceReading(
+            secondsSinceInput: sensor.secondsSinceInput,
+            microphoneInUse: sensor.isMicrophoneInUse,
+            screenLocked: sensor.isScreenLocked
+        )
+        for absence in fold.poll(reading: reading, now: now) {
+            report(absence)
         }
-
-        // The idle clock says how long *since* the last event, which is a better
-        // answer than the moment this poll happened to run.
-        report(detector.notePresence(at: now.addingTimeInterval(-sensor.secondsSinceInput)))
     }
 
-    private func report(_ absence: Absence?) {
-        guard let absence else { return }
+    private func report(_ absence: Absence) {
         Self.log.info(
             "absence of \(absence.duration / 60, format: .fixed(precision: 1), privacy: .public) minutes ending \(absence.ended, privacy: .public)"
         )

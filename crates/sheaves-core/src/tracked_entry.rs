@@ -10,7 +10,7 @@ use crate::models::{ProjectAssignment, Reference, TimeEntry, hours_between};
 
 /// An entry's identity: Harvest's id, or one minted here for an entry started while
 /// offline, which is swapped for the real one once the create lands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryId {
     Server(i64),
@@ -31,7 +31,7 @@ impl EntryId {
 /// An entry started while offline has no Harvest id yet, so identity is either a
 /// server id or a locally minted one. Everything downstream, from the menu bar to
 /// the mutation queue, can then treat the two alike.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct TrackedEntry {
     pub id: EntryId,
     pub project: Reference,
@@ -94,7 +94,7 @@ impl TrackedEntry {
 
 /// A project and task pair a timer can be started against: what the picker
 /// searches and what "resume" resumes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Record)]
 pub struct TimerTarget {
     pub project: Reference,
     pub task: Reference,
@@ -122,7 +122,7 @@ impl TimerTarget {
 /// The picker lists projects rather than project and task pairs. A project with six
 /// tasks was six rows carrying the same second line, which buried how few projects
 /// there really are; the task is a choice made within the row instead.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]
 pub struct ProjectTargets {
     pub project: Reference,
     pub client: Option<Reference>,

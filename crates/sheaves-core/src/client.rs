@@ -26,7 +26,7 @@ pub const USER_AGENT: &str = "Sheaves (https://github.com/rainhead/sheaves)";
 /// One token can reach several Harvest and Forecast accounts, so the account id
 /// travels with it: Harvest requires both on every request. Create one at
 /// <https://id.getharvest.com/developers>.
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Credentials {
     pub account_id: String,
     pub token: String,
@@ -181,7 +181,7 @@ pub trait Transport: Send + Sync {
     async fn send(&self, request: Request) -> Result<Response, HarvestError>;
 }
 
-/// The real network, through reqwest with rustls, so a Linux build needs no OpenSSL.
+/// The real network, through reqwest: the system TLS on a Mac, rustls elsewhere.
 pub struct HttpTransport {
     client: reqwest::Client,
 }
@@ -197,7 +197,7 @@ impl HttpTransport {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30))
                 .build()
-                .expect("rustls is compiled in"),
+                .expect("a TLS backend is compiled in"),
         }
     }
 }
@@ -1180,6 +1180,23 @@ mod tests {
             0.0,
         );
         assert_eq!(client.current_user().await, Err(HarvestError::Unauthorized));
+    }
+
+    /// The real transport against the real Harvest, which no other test touches.
+    /// Opt in with `cargo test -- --ignored`: it needs the network.
+    mod live {
+        use super::*;
+
+        #[tokio::test]
+        #[ignore = "reaches api.harvestapp.com"]
+        async fn harvest_refuses_a_made_up_token() {
+            let client = HarvestClient::new(
+                Some(Credentials::new("1", "not-a-token")),
+                Arc::new(HttpTransport::new()),
+                0.0,
+            );
+            assert_eq!(client.current_user().await, Err(HarvestError::Unauthorized));
+        }
     }
 
     mod retry_after {

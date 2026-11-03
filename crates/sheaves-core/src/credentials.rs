@@ -5,15 +5,29 @@ use std::sync::Mutex;
 
 use crate::client::Credentials;
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct CredentialError(pub String);
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum CredentialError {
+    /// The store failed; `message` says why, in words a person can act on.
+    #[error("{message}")]
+    Failed { message: String },
+}
 
+/// A callback into the shell that failed in a way its signature did not allow,
+/// such as a Swift trap the bindings caught.
+impl From<uniffi::UnexpectedUniFFICallbackError> for CredentialError {
+    fn from(error: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        CredentialError::Failed {
+            message: error.reason,
+        }
+    }
+}
+
+#[uniffi::export(with_foreign)]
 pub trait CredentialStore: Send + Sync {
     /// The stored credentials, or `None` before anything is stored.
     fn read(&self) -> Result<Option<Credentials>, CredentialError>;
     /// Replaces whatever is stored.
-    fn write(&self, credentials: &Credentials) -> Result<(), CredentialError>;
+    fn write(&self, credentials: Credentials) -> Result<(), CredentialError>;
     /// Removes the stored credentials. Deleting nothing is not an error.
     fn delete(&self) -> Result<(), CredentialError>;
 }
@@ -37,8 +51,8 @@ impl CredentialStore for MemoryCredentialStore {
         Ok(self.stored.lock().unwrap().clone())
     }
 
-    fn write(&self, credentials: &Credentials) -> Result<(), CredentialError> {
-        *self.stored.lock().unwrap() = Some(credentials.clone());
+    fn write(&self, credentials: Credentials) -> Result<(), CredentialError> {
+        *self.stored.lock().unwrap() = Some(credentials);
         Ok(())
     }
 
@@ -58,7 +72,7 @@ mod tests {
     fn trims_pasted_whitespace() {
         let store = MemoryCredentialStore::default();
         store
-            .write(&Credentials::new("  12345\n", " sekrit "))
+            .write(Credentials::new("  12345\n", " sekrit "))
             .unwrap();
         let read = store.read().unwrap().unwrap();
         assert_eq!(read.token, "sekrit");

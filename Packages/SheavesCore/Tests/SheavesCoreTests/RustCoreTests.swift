@@ -10,4 +10,21 @@ struct RustCoreTests {
     func version() {
         #expect(coreVersion().hasPrefix("sheaves-core "))
     }
+
+    /// The whole path a view depends on: an action goes to the core, and its effect
+    /// is on the wrapper when the action returns.
+    @Test("syncs the demo account through the wrapper")
+    @MainActor
+    func demoTracker() async {
+        let tracker = TimeTracker.demo()
+        #expect(tracker.connection == .needsCredentials)
+
+        await tracker.sync()
+
+        #expect(tracker.connection == .online)
+        #expect(tracker.entries.count == 2)
+        #expect(tracker.runningEntry?.notes == "Checkout flow")
+        #expect(tracker.orderedProjects.count == 3)
+        #expect(tracker.budgets.values.contains { $0.isOverBudget })
+    }
 }

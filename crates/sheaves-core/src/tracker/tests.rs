@@ -1105,6 +1105,30 @@ mod queue_ownership {
         assert_eq!(transport.calls_to(Method::Post, "time_entries").len(), 1);
     }
 
+    /// Pasted credentials often carry a newline; the core trims them, whichever
+    /// shell they came from.
+    #[tokio::test]
+    async fn connect_trims_what_was_pasted() {
+        let scratch = scratch();
+        let store = Arc::new(MemoryCredentialStore::default());
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let tracker = TimeTracker::new(
+            HarvestClient::new(None, RoutingTransport::standard_account(), 0.0),
+            store.clone(),
+            SnapshotStore::new(&scratch.snapshot),
+            MutationQueue::open(&scratch.queue, clock.clone()),
+            clock,
+        );
+        let pasted = Credentials {
+            account_id: " 12345\n".to_string(),
+            token: "sekrit \n".to_string(),
+        };
+
+        tracker.connect(pasted, false).await.unwrap();
+
+        assert_eq!(store.read().unwrap(), Some(fixture::credentials()));
+    }
+
     #[tokio::test]
     async fn other_account_is_refused() {
         let scratch = scratch();

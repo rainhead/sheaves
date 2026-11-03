@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import SheavesCore
 
@@ -25,7 +26,7 @@ struct KeychainStoreTests {
         defer { try? store.delete() }
         let credentials = HarvestCredentials(accountID: "12345", token: "sekrit")
 
-        try store.write(credentials)
+        try store.write(credentials: credentials)
 
         #expect(try store.read() == credentials)
     }
@@ -37,8 +38,8 @@ struct KeychainStoreTests {
         let store = makeStore()
         defer { try? store.delete() }
 
-        try store.write(HarvestCredentials(accountID: "1", token: "old"))
-        try store.write(HarvestCredentials(accountID: "2", token: "new"))
+        try store.write(credentials: HarvestCredentials(accountID: "1", token: "old"))
+        try store.write(credentials: HarvestCredentials(accountID: "2", token: "new"))
 
         let stored = try store.read()
         #expect(stored?.token == "new")
@@ -48,7 +49,7 @@ struct KeychainStoreTests {
     @Test("deletes, and deleting twice is not an error")
     func deletes() throws {
         let store = makeStore()
-        try store.write(HarvestCredentials(accountID: "1", token: "t"))
+        try store.write(credentials: HarvestCredentials(accountID: "1", token: "t"))
 
         try store.delete()
         try store.delete()
@@ -56,16 +57,23 @@ struct KeychainStoreTests {
         #expect(try store.read() == nil)
     }
 
-    @Test("trims whitespace pasted around a token")
-    func trimsPastedWhitespace() throws {
-        let store = makeStore()
+    /// The switch to the Rust core must not sign anybody out: the item the Swift
+    /// core saved, keyed `accountID` and `token`, still reads.
+    @Test("reads a token saved before the Rust core")
+    func readsTheSwiftCoresItem() throws {
+        let service = "com.rainhead.Sheaves.tests.\(UUID().uuidString)"
+        let store = KeychainStore(service: service)
         defer { try? store.delete() }
-        let credentials = HarvestCredentials(accountID: "  12345\n", token: " sekrit ")
+        let saved = Data(#"{"accountID":"12345","token":"sekrit"}"#.utf8)
+        let status = SecItemAdd([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "harvest-credentials",
+            kSecValueData as String: saved,
+        ] as CFDictionary, nil)
+        try #require(status == errSecSuccess)
 
-        try store.write(credentials)
-
-        #expect(try store.read()?.token == "sekrit")
-        #expect(try store.read()?.accountID == "12345")
+        #expect(try store.read() == HarvestCredentials(accountID: "12345", token: "sekrit"))
     }
 
     @Test("explains a keychain failure in words")

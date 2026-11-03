@@ -17,6 +17,13 @@ framework=$package/Frameworks/$module.xcframework
 bindings=$package/Sources/SheavesCore/Generated
 staging=target/xcframework
 
+# The oldest macOS the app runs on, read from project.yml so the two cannot differ.
+# Rust and the C code some crates compile (the TLS library's crypto among them)
+# otherwise target this machine's own version, and the linker warns that the app
+# may call what an older system lacks.
+MACOSX_DEPLOYMENT_TARGET=$(awk '/deploymentTarget:/ { found = 1 } found && /macOS:/ { gsub(/"/, "", $2); print $2; exit }' project.yml)
+export MACOSX_DEPLOYMENT_TARGET
+
 # Mac only, although Package.swift also names iOS: there is no iOS app yet. When
 # there is, add the aarch64-apple-ios and aarch64-apple-ios-sim targets here and
 # in rust-toolchain.toml, and pass each library to -create-xcframework below.
@@ -40,10 +47,13 @@ lipo -create \
 # The generator reads the interface from metadata compiled into the library, so
 # the Swift always describes the library it ships with. It is built from the same
 # pinned uniffi version (crates/uniffi-bindgen), which the generated Swift checks
-# at load time.
+# at load time. The module map it writes also names the system frameworks the
+# library calls, Security for TLS and SystemConfiguration for proxy settings: a
+# static library cannot carry that itself, and linking would fail on their symbols.
 cargo run --locked --quiet -p uniffi-bindgen -- \
   --swift-sources --headers --modulemap \
   --module-name "$module" --modulemap-filename module.modulemap \
+  --link-frameworks Security --link-frameworks SystemConfiguration \
   "target/aarch64-apple-darwin/release/lib$crate.a" "$staging/headers"
 mv "$staging/headers/$crate.swift" "$staging/swift/"
 
