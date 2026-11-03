@@ -200,6 +200,40 @@ each ticked. Keep the Swift package building until phase 2, so both suites run.
 Done when `cargo test` has a counterpart for every Swift test and the testing
 traps in `CLAUDE.md` hold: assert the request body, never the request count.
 
+**Decided in phase 1.** The port keeps the Swift design and changes only what Rust
+or testing asked for:
+
+- **Time comes from a `Clock`.** The queue and the tracker read the time and the
+  time zone from a `Clock` trait, with `SystemClock` for the apps and `ManualClock`
+  for tests that need time to stand still. Instants are `jiff::Timestamp`; days are
+  `CalendarDate`, worked out in the clock's zone.
+- **Parsing a duration is in the core; formatting one is not.** `parse_hours` takes
+  the locale's decimal separator and reads the common decimal scripts, Arabic-Indic
+  among them, so a shell's own formatted text reads back. Budgets hand the shell a
+  `BudgetFigure`, hours or money with its currency, rather than a string. The Swift
+  tests that check formatted strings stay in the Swift suite until phase 2 moves
+  them to the Mac app.
+- **The shells keep the credentials.** The core asks a `CredentialStore`; the
+  Keychain tests stay with the Keychain code in Swift.
+- **Concurrency follows the Swift actors.** The tracker's state sits behind one lock
+  that is never held across a request. Syncs run one at a time, in the order they
+  were asked for. The queue can be changed while a drain waits on the network, as
+  the Swift actor allowed, and a second drain started meanwhile returns at once.
+- **A shell observes the state as a whole.** `TimeTracker::observe` delivers a
+  `TrackerState` value after every change; the helpers the views used, such as
+  `activity()` and `ordered_projects()`, are methods on that value.
+- **The presence fold is in the core.** `PresenceMonitor::poll` takes a
+  `PresenceReading` (seconds since input, microphone, screen lock) and returns the
+  absences it ended. The Mac's eight presence tests are ported with it.
+- **Files are the core's own.** The snapshot and the queue are snake_case JSON
+  written through a temporary file and a rename, in the folder
+  `persistence::data_directory()` names.
+
+One finding for phase 9: the queue rewrites a later mutation's local id when its
+create lands, and also remembers which Harvest id each local id earned. Either alone
+delivers the stop, so no test fails when the rewrite is removed, in Swift or in
+Rust.
+
 ### Phase 2: the Mac app on the Rust core (Mac, a few days; Opus)
 
 Generate the bindings, write the `@Observable` wrapper, implement the credential,

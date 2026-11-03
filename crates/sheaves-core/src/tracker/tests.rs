@@ -611,6 +611,30 @@ mod time_tracker {
     }
 }
 
+/// The shells draw from these snapshots alone, so every change has to reach them.
+mod observing {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn delivers_each_change_as_a_whole_state() {
+        let scratch = scratch();
+        let tracker = tracker(RoutingTransport::standard_account(), &scratch);
+        let seen: Arc<Mutex<Vec<TrackerState>>> = Arc::default();
+        let sink = seen.clone();
+        tracker.observe(move |state| sink.lock().unwrap().push(state));
+
+        tracker.sync().await;
+
+        let seen = seen.lock().unwrap();
+        // The current state arrives at once, before anything changes.
+        assert_eq!(seen[0].connection, Connection::NeedsCredentials);
+        // And the last one delivered is the state the tracker ended in.
+        assert_eq!(seen.last(), Some(&tracker.state()));
+        assert_eq!(seen.last().unwrap().connection, Connection::Online);
+    }
+}
+
 mod budget_currencies {
     use super::*;
 
