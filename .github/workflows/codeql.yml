@@ -7,7 +7,9 @@ name: CodeQL
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:
@@ -20,9 +22,10 @@ permissions:
   contents: read
 
 jobs:
+  # Read from source, so quick enough to run on every pull request.
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
@@ -30,18 +33,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: actions
-            runner: ubuntu-latest
-            build-mode: none
-          # Read from source; CodeQL does not need the crate compiled.
-          - language: rust
-            runner: ubuntu-latest
-            build-mode: none
-          # Swift is analysed by watching the compiler, so the build happens here.
-          - language: swift
-            runner: macos-26
-            build-mode: manual
+        # CodeQL does not need the crate compiled.
+        language: [actions, rust]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+
+  # Swift is analysed by watching the compiler build the whole app, Rust core
+  # included, which takes over twenty minutes. Little Swift changes now that the
+  # rules live in the core, so it runs after a merge and weekly, not on each pull
+  # request; a finding then arrives minutes after the merge instead of before it.
+  analyze-swift:
+    name: Analyze (swift)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +68,6 @@ jobs:
       # install and cargo runs several times slower. The steps are build.yml's,
       # which explains each of them.
       - name: Prepare the Swift build
-        if: matrix.language == 'swift'
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.6.app
           rustup toolchain install --no-self-update
@@ -61,12 +77,11 @@ jobs:
 
       - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          languages: swift
+          build-mode: manual
 
       # Builds the app and, with it, the SheavesCore package.
       - name: Build
-        if: matrix.language == 'swift'
         run: |
           xcodebuild build \
             -project Sheaves.xcodeproj \
@@ -77,4 +92,4 @@ jobs:
 
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          category: /language:${{ matrix.language }}
+          category: /language:swift

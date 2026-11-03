@@ -1,9 +1,12 @@
 name: Build
 
 on:
+  # Prose changes build nothing worth testing.
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
   # Called by the release workflow, so a release runs the same suite on the same
   # toolchain rather than a second copy of it that can drift.
