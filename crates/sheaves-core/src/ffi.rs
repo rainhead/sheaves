@@ -80,6 +80,14 @@ impl Connection {
 }
 
 #[uniffi::export]
+impl Activity {
+    /// The entry the menu bar is about, running or recently stopped.
+    pub fn current_entry(&self) -> Option<TrackedEntry> {
+        self.entry().cloned()
+    }
+}
+
+#[uniffi::export]
 impl TimerTarget {
     /// `project:task`, unique per pair.
     pub fn key(&self) -> String {

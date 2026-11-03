@@ -104,12 +104,7 @@ public extension Connection {
 }
 
 public extension Activity {
-    var entry: TrackedEntry? {
-        switch self {
-        case .idle: nil
-        case .running(let entry), .recent(let entry): entry
-        }
-    }
+    var entry: TrackedEntry? { currentEntry() }
 }
 
 public extension HoursFormat {

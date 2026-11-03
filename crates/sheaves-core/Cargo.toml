@@ -29,10 +29,11 @@ uuid = { version = "1.29.0", features = ["v4", "serde"] }
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync", "test-util"] }
 
-# TLS from the system where it has one: Security.framework on a Mac, which costs the
+# The machine's proxy settings are honoured, as URLSession honoured them. TLS comes
+# from the system where it has one: Security.framework on a Mac, which costs the
 # app nothing to carry. Elsewhere rustls, so a Linux build needs no OpenSSL.
 [target.'cfg(target_vendor = "apple")'.dependencies]
-reqwest = { version = "0.13.5", default-features = false, features = ["native-tls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "system-proxy"] }
 
 [target.'cfg(not(target_vendor = "apple"))'.dependencies]
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "system-proxy"] }

@@ -47,10 +47,13 @@ lipo -create \
 # The generator reads the interface from metadata compiled into the library, so
 # the Swift always describes the library it ships with. It is built from the same
 # pinned uniffi version (crates/uniffi-bindgen), which the generated Swift checks
-# at load time.
+# at load time. The module map it writes also names the system frameworks the
+# library calls, Security for TLS and SystemConfiguration for proxy settings: a
+# static library cannot carry that itself, and linking would fail on their symbols.
 cargo run --locked --quiet -p uniffi-bindgen -- \
   --swift-sources --headers --modulemap \
   --module-name "$module" --modulemap-filename module.modulemap \
+  --link-frameworks Security --link-frameworks SystemConfiguration \
   "target/aarch64-apple-darwin/release/lib$crate.a" "$staging/headers"
 mv "$staging/headers/$crate.swift" "$staging/swift/"
 
