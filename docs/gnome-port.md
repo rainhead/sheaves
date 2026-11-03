@@ -301,6 +301,9 @@ question.
 
 ## Working practice
 
+- Phases merge to `main` one at a time, each when it is done, and each branches
+  from `main`. One agent works on the port at a time, so no phase waits on another's
+  review and a PR stack would add nothing.
 - GTK work happens on Hostess, over SSH or in a session there. The Rust core is
   portable and its tests run on either machine. A GUI check on Hostess needs
   someone at the desk; a session should say what it could not see.
