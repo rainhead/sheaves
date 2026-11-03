@@ -446,12 +446,12 @@ GNOME app gets them whole:
 Checked on the machines, 2026-11-03: the core built and served on Hostess, and
 answered from the Mac over the tailnet with presence for the right user, 403 for
 another, and the change notice; nothing answered on Hostess's LAN address. From the
-Mac, the core's client found Hostess by name and read its log. The Mac's own
-listener bound to both tailnet addresses but answered nothing, because the macOS
-application firewall silently holds incoming connections to programs it does not
-know (a built-in `nc` on the same address answered). The app is ad-hoc signed, so
-it will need allowing under System Settings › Network › Firewall › Options, and may
-need it again after each build. Whether the sandboxed app then answers is unchecked.
+Mac, the core's client found Hostess by name and read its log. A throwaway
+command-line program running the same listener on the Mac answered nothing,
+because the macOS application firewall silently drops connections to it (a
+built-in `nc` on the same address answered). The sandboxed app is different:
+checked in phase 7, it answered Hostess with the firewall on, without prompting
+and without being added to the firewall's list.
 
 Open, for Peter: answering **Keep** on one machine changes nothing in Harvest, so
 the other machine's prompt for the same lunch stays open and asks again. Withdrawing
@@ -526,7 +526,7 @@ minute. "Within a minute" holds while either machine has a timer running, becaus
 the probe then runs every minute. From an idle machine it does not: the Mac picked
 up Hostess's new timer at its next idle probe, two minutes later, and that probe
 can be ten minutes away. The change notices of phase 5 close that gap once the
-GNOME app joins its peers in phase 7 and the Mac's firewall lets Sheaves answer.
+GNOME app joins its peers in phase 7.
 
 ### Phase 7: presence on GNOME (Hostess, a few days; Opus)
 
@@ -538,6 +538,31 @@ Done when the nine, ten, twelve scenario, done for real across both machines,
 prompts on neither, and a real lunch prompts on both with one answer clearing the
 other.
 
+**Decided in phase 7.**
+
+- **The sensor is three D-Bus signals,** in
+  [`presence.rs`](../crates/sheaves-gnome/src/presence.rs): Mutter's idle time,
+  the screensaver's lock state, and logind's `PrepareForSleep`. It polls every
+  half minute and again when the screen unlocks or the machine wakes, on a thread
+  of its own, and hands each reading to the core's presence fold, which asks the
+  peers before reporting. There is no microphone signal.
+- **The prompt asks what the Mac's asks, in the same words,** with the same
+  choices in the same order, including stopping first on a day that is over. It is
+  an `adw::AlertDialog` whose choices are rows with a line saying what each does,
+  over the window when it is open and in a window of its own when it is not.
+  Absences queue as on the Mac, and the next waits until an answer is applied. A
+  question withdraws itself when the running timer no longer ran through the
+  absence.
+- **Peers are set in Settings,** stored in `~/.config/sheaves/settings.json`,
+  since GSettings would need a schema installed.
+- **`SHEAVES_ABSENCE_THRESHOLD`,** in seconds, shortens the threshold in a debug
+  build, so the prompt can be tried at the desk: one minute away, then back.
+
+Checked at the desk, 2026-11-03: with a one-minute threshold, a timer left alone
+on Hostess brought up the prompt on return, worded as on the Mac. Hostess and the
+Mac each answered the other's presence request over the tailnet, the Mac with its
+firewall on.
+
 ### Phase 8: day editing (core, then GNOME, then Mac)
 
 What the roadmap cut from the first version: change an entry's project and task,
@@ -545,6 +570,10 @@ edit a stopped entry's duration in place, and add an entry to any day without
 running a timer. Each is a mutation with the same offline rules as the rest. The
 week view waits. Done when the three edits work on GNOME and the core tests cover
 their queue behaviour; the Mac views follow in their own PR.
+
+GNOME also lacks the edits the Mac already has, which phase 6 left out: notes,
+a new total typed onto an entry (running or not), and delete. They come first in
+this phase, since the core already does them.
 
 ### Phase 9: quick entry and the shortcut (Hostess, a day)
 

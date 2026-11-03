@@ -101,6 +101,13 @@ threshold. A peer that does not answer within two seconds is left out, and the
 machine decides as it would alone. The rules are in
 [`peers.rs`](../crates/sheaves-core/src/peers.rs).
 
+## On GNOME
+
+Presence is Mutter's idle time and the screensaver's lock state, with
+no microphone, read every half minute and again on unlock and on waking
+([`presence.rs`](../crates/sheaves-gnome/src/presence.rs)). The rules above apply
+unchanged, since the core makes them.
+
 ## Whose timer it can speak for
 
 An absence only speaks for a timer that was already running while somebody was here.

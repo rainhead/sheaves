@@ -21,7 +21,8 @@ local state immediately and reconciles with Harvest afterwards.
 
 Early. The macOS app tracks time, and a GNOME app is being built beside it on the
 same Rust core ([the plan](docs/gnome-port.md)): it starts and stops timers and
-shows the running one in the top bar, but does not yet notice when you are away.
+shows the running one in the top bar, and asks about time away as the Mac does,
+but cannot yet edit an entry.
 iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.
@@ -120,9 +121,8 @@ the Keychain and sent only to `api.harvestapp.com`.
 
 To share presence with another machine running Sheaves, name it under Peers in
 Settings by its name on your tailnet. The Mac then answers on its tailnet addresses,
-port 47147. Allow Sheaves under System Settings › Network › Firewall › Options if
-the firewall is on: it holds incoming connections to an app it does not know without
-saying so, and an ad-hoc signed build may need allowing again after an update.
+port 47147. With the macOS firewall on, the app still answers without being added
+to its list.
 
 Settings has a switch to open Sheaves at login, which registers the bundle where it
 sits right now — move the app and the switch has to go off and on again to point at
