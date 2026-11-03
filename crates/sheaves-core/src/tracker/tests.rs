@@ -6,7 +6,7 @@ use crate::budget::{BudgetBasis, BudgetFigure};
 use crate::calendar_date::Weekday;
 use crate::client::{Method, Transport};
 use crate::clock::SystemClock;
-use crate::credentials::MemoryCredentialStore;
+use crate::credentials::{CredentialStore, Login, MemoryCredentialStore};
 use crate::models::{Reference, offset_by};
 use crate::test_support::fixture::{self, today};
 use crate::test_support::{AccountOptions, Route, RoutingTransport};
@@ -513,15 +513,20 @@ mod time_tracker {
             .unwrap();
         tracker.resume(&stopped).await;
 
+        // The create was attempted while offline, so Harvest may hold it already;
+        // it is left as it was, and the stop and the resume go as changes of
+        // their own. The stop carries the hours measured before the pause, so the
+        // pause is never billed, however the create's own span comes out.
         let pending = reopened_queue(&scratch).pending();
-        assert!(matches!(
-            pending[0],
-            Mutation::Create {
-                ended_at: Some(_),
-                ..
-            }
-        ));
-        assert!(matches!(pending[1], Mutation::Restart { .. }));
+        assert!(matches!(pending[0], Mutation::Create { .. }));
+        let Mutation::Stop { hours, .. } = pending[1] else {
+            panic!("expected the stop second, got {:?}", pending[1]);
+        };
+        assert!(
+            hours < 0.01,
+            "the stop carries the measured run, {hours} hours"
+        );
+        assert!(matches!(pending[2], Mutation::Restart { .. }));
     }
 
     /// Browsing to another day offline cannot load it, so the running timer must
@@ -775,6 +780,8 @@ mod rejected_token {
 
         let revoked = RoutingTransport::new(vec![
             Route::new(Method::Post, "time_entries", "").status(401),
+            // The create was attempted offline, so the drain first looks for it.
+            Route::new(Method::Get, "time_entries", &fixture::entries_page(&[])),
             // Who the token speaks for is still readable, so the drain runs and meets
             // the rejection on the change itself.
             Route::new(Method::Get, "users/me", fixture::CURRENT_USER),
@@ -898,6 +905,131 @@ mod refused_changes {
             }
         );
         assert_eq!(tracker.state().pending_count, 0);
+    }
+}
+
+/// One durable record of who is connected: the stored login. A crash between any
+/// two writes leaves the queue's owner or the cache disagreeing with it, and the
+/// login wins.
+mod one_record_of_the_connection {
+    use super::*;
+
+    fn tracker_with_login(
+        transport: Arc<RoutingTransport>,
+        scratch: &Scratch,
+        login: Login,
+    ) -> (TimeTracker, Arc<MemoryCredentialStore>) {
+        let store = Arc::new(MemoryCredentialStore::new(Some(login)));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let tracker = TimeTracker::new(
+            HarvestClient::new(None, transport, 0.0),
+            store.clone(),
+            SnapshotStore::new(&scratch.snapshot),
+            MutationQueue::open(&scratch.queue, clock.clone()),
+            clock,
+        );
+        (tracker, store)
+    }
+
+    fn colleague_login() -> Login {
+        Login {
+            credentials: Credentials::new("12345", "colleague"),
+            user_id: Some(4242),
+        }
+    }
+
+    /// Fills the queue and the cache as the fixture user, 1782959, offline.
+    async fn leave_work_queued(scratch: &Scratch) {
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        transport.go_offline();
+        tracker.start(&target, None).await;
+    }
+
+    /// The app died after saving a colleague's login and before claiming the queue.
+    /// The login says whose the token is, so the queue is refused without asking
+    /// Harvest, and without trusting the cached previous user.
+    #[tokio::test]
+    async fn the_login_decides_whose_queue_it_is() {
+        let scratch = scratch();
+        leave_work_queued(&scratch).await;
+
+        let transport = RoutingTransport::standard_account();
+        let (tracker, _) = tracker_with_login(transport.clone(), &scratch, colleague_login());
+        tracker.bootstrap().await;
+
+        assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
+        assert!(transport.calls_to(Method::Post, "time_entries").is_empty());
+        assert_eq!(transport.call_count("users/me"), 0);
+        assert_eq!(reopened_queue(&scratch).count(), 1);
+    }
+
+    /// A cache left by someone else is not shown, even before any sync.
+    #[tokio::test]
+    async fn a_cache_of_someone_else_is_not_restored() {
+        let scratch = scratch();
+        leave_work_queued(&scratch).await;
+        assert!(SnapshotStore::new(&scratch.snapshot).load().is_some());
+
+        let (tracker, _) = tracker_with_login(
+            RoutingTransport::new(Vec::new()),
+            &scratch,
+            colleague_login(),
+        );
+        tracker.bootstrap().await;
+
+        let state = tracker.state();
+        assert!(state.user.is_none());
+        assert!(state.entries.is_empty());
+        assert!(state.targets.is_empty());
+    }
+
+    /// A login saved before user ids were recorded vouches for nobody: its cache is
+    /// shown only once Harvest has said whose the token is, so not on a launch that
+    /// cannot reach Harvest.
+    #[tokio::test]
+    async fn an_old_login_shows_no_cache_it_cannot_vouch_for() {
+        let scratch = scratch();
+        leave_work_queued(&scratch).await;
+
+        // Offline, so Harvest cannot say whose the token is.
+        let colleague = RoutingTransport::new(Vec::new());
+        let old = Login {
+            credentials: Credentials::new("12345", "colleague"),
+            user_id: None,
+        };
+        let (tracker, _) = tracker_with_login(colleague, &scratch, old);
+        tracker.bootstrap().await;
+
+        assert!(tracker.state().entries.is_empty());
+        assert!(tracker.state().targets.is_empty());
+    }
+
+    /// A login saved before user ids were recorded is completed the first time
+    /// Harvest is asked, and not asked again.
+    #[tokio::test]
+    async fn an_old_login_learns_its_user_once() {
+        let scratch = scratch();
+        leave_work_queued(&scratch).await;
+
+        let transport = RoutingTransport::standard_account();
+        let old = Login {
+            credentials: fixture::credentials(),
+            user_id: None,
+        };
+        let (tracker, store) = tracker_with_login(transport.clone(), &scratch, old);
+        tracker.bootstrap().await;
+
+        assert_eq!(store.read().unwrap().unwrap().user_id, Some(1782959));
+        assert_eq!(transport.calls_to(Method::Post, "time_entries").len(), 1);
+        let asked = transport.call_count("users/me") - transport.call_count("project_assignments");
+        tracker.sync().await;
+        assert_eq!(
+            transport.call_count("users/me") - transport.call_count("project_assignments"),
+            asked
+        );
     }
 }
 
@@ -1126,7 +1258,10 @@ mod queue_ownership {
 
         tracker.connect(pasted, false).await.unwrap();
 
-        assert_eq!(store.read().unwrap(), Some(fixture::credentials()));
+        let login = store.read().unwrap().unwrap();
+        assert_eq!(login.credentials, fixture::credentials());
+        // The login records whose credentials they are, in the same write.
+        assert_eq!(login.user_id, Some(1782959));
     }
 
     #[tokio::test]
@@ -1263,6 +1398,37 @@ mod queue_ownership {
 
         assert!(transport.calls_to(Method::Post, "time_entries").is_empty());
         assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
+    }
+
+    /// A queue is claimed before its first change is sent, so a retried create can
+    /// always look among its owner's entries rather than post again.
+    #[tokio::test]
+    async fn an_unowned_queue_is_claimed_before_it_drains() {
+        let scratch = scratch();
+        let target = TimerTarget {
+            project: Reference::new(14308069, "Online Store - Phase 1"),
+            task: Reference::new(8083366, "Programming"),
+            client: None,
+        };
+        reopened_queue(&scratch).enqueue(Mutation::Create {
+            local: Uuid::new_v4(),
+            target,
+            spent_date: today(),
+            notes: None,
+            started_at: offset_by(Timestamp::now(), -3600.0),
+            ended_at: Some(Timestamp::now()),
+        });
+        let failing = RoutingTransport::new(vec![
+            Route::new(Method::Get, "users/me", fixture::CURRENT_USER),
+            Route::new(Method::Post, "time_entries", "").status(500),
+        ]);
+
+        tracker(failing, &scratch).sync().await;
+
+        assert_eq!(
+            reopened_queue(&scratch).owner().map(|owner| owner.user_id),
+            Some(1782959)
+        );
     }
 
     #[tokio::test]

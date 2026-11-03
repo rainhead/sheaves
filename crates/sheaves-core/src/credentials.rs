@@ -22,12 +22,26 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for CredentialError {
     }
 }
 
+/// Who the app is connected as: the credentials, and the Harvest user they were
+/// verified to belong to.
+///
+/// The one durable record of the connection. The queue's owner and the cached user
+/// are checked against it, never the other way round, so a crash between writes
+/// cannot leave the app trusting whichever it happens to read first.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct Login {
+    pub credentials: Credentials,
+    /// `None` for a login saved before user ids were recorded; the tracker asks
+    /// Harvest once and saves it.
+    pub user_id: Option<i64>,
+}
+
 #[uniffi::export(with_foreign)]
 pub trait CredentialStore: Send + Sync {
-    /// The stored credentials, or `None` before anything is stored.
-    fn read(&self) -> Result<Option<Credentials>, CredentialError>;
+    /// The stored login, or `None` before anything is stored.
+    fn read(&self) -> Result<Option<Login>, CredentialError>;
     /// Replaces whatever is stored.
-    fn write(&self, credentials: Credentials) -> Result<(), CredentialError>;
+    fn write(&self, login: Login) -> Result<(), CredentialError>;
     /// Removes the stored credentials. Deleting nothing is not an error.
     fn delete(&self) -> Result<(), CredentialError>;
 }
@@ -35,47 +49,29 @@ pub trait CredentialStore: Send + Sync {
 /// Credentials held only in memory, for tests and demos.
 #[derive(Default)]
 pub struct MemoryCredentialStore {
-    stored: Mutex<Option<Credentials>>,
+    stored: Mutex<Option<Login>>,
 }
 
 impl MemoryCredentialStore {
-    pub fn new(credentials: Option<Credentials>) -> Self {
+    pub fn new(login: Option<Login>) -> Self {
         Self {
-            stored: Mutex::new(credentials),
+            stored: Mutex::new(login),
         }
     }
 }
 
 impl CredentialStore for MemoryCredentialStore {
-    fn read(&self) -> Result<Option<Credentials>, CredentialError> {
+    fn read(&self) -> Result<Option<Login>, CredentialError> {
         Ok(self.stored.lock().unwrap().clone())
     }
 
-    fn write(&self, credentials: Credentials) -> Result<(), CredentialError> {
-        *self.stored.lock().unwrap() = Some(credentials);
+    fn write(&self, login: Login) -> Result<(), CredentialError> {
+        *self.stored.lock().unwrap() = Some(login);
         Ok(())
     }
 
     fn delete(&self) -> Result<(), CredentialError> {
         *self.stored.lock().unwrap() = None;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The other Keychain tests exercise the Keychain itself, which stays in the
-    /// Mac shell; this one is about the credentials, so it moves to the core.
-    #[test]
-    fn trims_pasted_whitespace() {
-        let store = MemoryCredentialStore::default();
-        store
-            .write(Credentials::new("  12345\n", " sekrit "))
-            .unwrap();
-        let read = store.read().unwrap().unwrap();
-        assert_eq!(read.token, "sekrit");
-        assert_eq!(read.account_id, "12345");
     }
 }

@@ -14,7 +14,7 @@ use crate::budget::ProjectBudget;
 use crate::calendar_date::CalendarDate;
 use crate::client::{Credentials, HarvestClient, HarvestError};
 use crate::clock::Clock;
-use crate::credentials::{CredentialError, CredentialStore};
+use crate::credentials::{CredentialError, CredentialStore, Login};
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
 use crate::queue::{Mutation, MutationQueue, Owner};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
@@ -279,6 +279,10 @@ struct Inner {
     power: Mutex<PowerProbe>,
     ticker: Mutex<Option<tokio::task::JoinHandle<()>>>,
     revision: AtomicU64,
+    /// The Harvest user the stored login says the installed credentials belong to,
+    /// or `None` when that is not known yet. The queue's owner and the cached user
+    /// are checked against this, never the other way round.
+    known_user: Mutex<Option<i64>>,
 }
 
 /// The application's model.
@@ -339,6 +343,7 @@ impl TimeTracker {
                 power: Mutex::new(Arc::new(|| PowerState::PluggedIn)),
                 ticker: Mutex::new(None),
                 revision: AtomicU64::new(0),
+                known_user: Mutex::new(None),
             }),
         }
     }
@@ -365,14 +370,33 @@ impl TimeTracker {
 
     /// Restores cached state, then syncs. Safe to call more than once.
     pub async fn bootstrap(&self) {
-        self.inner.apply_cached_snapshot();
-        let credentials = self.inner.credentials.read().ok().flatten();
-        match credentials.filter(Credentials::is_complete) {
-            None => self
-                .inner
-                .update(|state| state.connection = Connection::NeedsCredentials),
-            Some(credentials) => {
-                self.inner.client.set_credentials(Some(credentials));
+        // The login first, so the cache is restored only if it is the login's.
+        let login = self
+            .inner
+            .credentials
+            .read()
+            .ok()
+            .flatten()
+            .filter(|login| login.credentials.is_complete());
+        *self.inner.known_user.lock().unwrap() = login.as_ref().and_then(|login| login.user_id);
+        match login {
+            None => {
+                self.inner.apply_cached_snapshot(false);
+                self.inner
+                    .update(|state| state.connection = Connection::NeedsCredentials);
+            }
+            Some(login) => {
+                self.inner.client.set_credentials(Some(login.credentials));
+                // A login saved before user ids were recorded vouches for nobody,
+                // so Harvest is asked before any cache is believed. Offline, that
+                // launch starts without the cache; the login is completed on the
+                // first sync that reaches Harvest.
+                if login.user_id.is_none()
+                    && let Ok(user) = self.inner.client.current_user().await
+                {
+                    self.learn_user(user.id);
+                }
+                self.inner.apply_cached_snapshot(true);
                 self.sync().await;
                 self.start_ticking();
             }
@@ -433,7 +457,12 @@ impl TimeTracker {
             // credentials are saved, a crash between the two cannot leave the next
             // launch restoring the old user beside the new token.
             inner.snapshots.clear();
-            inner.credentials.write(credentials.clone())?;
+            // The login records the user it was verified to belong to, in the same
+            // write as the token, so nothing can later read one without the other.
+            inner.credentials.write(Login {
+                credentials: credentials.clone(),
+                user_id: Some(user.id),
+            })?;
             inner.queue.claim(owner);
             Ok(user)
         }
@@ -443,6 +472,7 @@ impl TimeTracker {
             Ok(user) => {
                 change.succeeded = true;
                 drop(change);
+                *inner.known_user.lock().unwrap() = Some(user.id);
                 let pending = inner.queue.count() as u32;
                 inner.update(|state| {
                     state.pending_count = pending;
@@ -466,6 +496,7 @@ impl TimeTracker {
         // the cache the next launch restores. Syncs queued behind this find no
         // credentials.
         let _turn = self.inner.sync_gate.lock().await;
+        *self.inner.known_user.lock().unwrap() = None;
         if let Err(error) = self.inner.credentials.delete() {
             log::error!("could not delete the stored credentials: {error}");
         }
@@ -541,6 +572,25 @@ impl TimeTracker {
             }
         }
 
+        // A queue nobody has claimed yet is claimed before anything is sent, so the
+        // drain knows whose entries to look among when it retries a create whose
+        // fate is unknown. Without an owner it could only post again.
+        if inner.queue.owner().is_none()
+            && !inner.queue.is_empty()
+            && let Some(credentials) = inner.client.installed_credentials()
+        {
+            match self.current_user().await {
+                Ok(user) => inner.queue.claim_if_free(Owner {
+                    account_id: credentials.account_id,
+                    user_id: user.id,
+                }),
+                Err(error) => {
+                    inner.note_sync_failure(&error);
+                    return;
+                }
+            }
+        }
+
         let report = inner.queue.drain(&inner.client).await;
         let pending = inner.queue.count() as u32;
         inner.update(|state| {
@@ -613,13 +663,40 @@ impl TimeTracker {
 
     /// The signed-in user, asked of Harvest only when nothing on hand says.
     async fn current_user(&self) -> Result<HarvestUser, HarvestError> {
-        if let Some(user) = self.inner.state.lock().unwrap().user.clone() {
+        let known = *self.inner.known_user.lock().unwrap();
+        let cached = self.inner.state.lock().unwrap().user.clone();
+        if let Some(user) = cached
+            && known.is_none_or(|known| known == user.id)
+        {
             return Ok(user);
         }
         let fetched = self.inner.client.current_user().await?;
+        self.learn_user(fetched.id);
         self.inner
             .update(|state| state.user = Some(fetched.clone()));
         Ok(fetched)
+    }
+
+    /// Records who the installed credentials were found to belong to, and saves it
+    /// with a stored login that lacks it, as one saved before user ids were recorded
+    /// does.
+    fn learn_user(&self, user_id: i64) {
+        let inner = &self.inner;
+        *inner.known_user.lock().unwrap() = Some(user_id);
+        let Ok(Some(login)) = inner.credentials.read() else {
+            return;
+        };
+        if login.user_id.is_none()
+            && Some(&login.credentials) == inner.client.installed_credentials().as_ref()
+        {
+            let upgraded = Login {
+                user_id: Some(user_id),
+                ..login
+            };
+            if let Err(error) = inner.credentials.write(upgraded) {
+                log::error!("could not record the user with the stored login: {error}");
+            }
+        }
     }
 
     /// Whether the queue was filled under an account or user other than the one the
@@ -638,16 +715,19 @@ impl TimeTracker {
         if owner.account_id != credentials.account_id {
             return Ok(true);
         }
-        // Asked of Harvest, not of the cached user: the cache can come from a snapshot
-        // written under other credentials, such as a colleague's on the same
-        // account. This runs only while changes are queued, so it costs one request
-        // at most per sync.
-        let user = inner.client.current_user().await?;
-        let mismatched = owner.user_id != user.id;
-        if !mismatched {
-            inner.update(|state| state.user = Some(user));
-        }
-        Ok(mismatched)
+        // The stored login says whose the credentials are. Only a login saved before
+        // that was recorded needs Harvest asked, once; never the cached user, which
+        // can come from a snapshot written under other credentials.
+        let known = *inner.known_user.lock().unwrap();
+        let user_id = match known {
+            Some(user_id) => user_id,
+            None => {
+                let user = inner.client.current_user().await?;
+                self.learn_user(user.id);
+                user.id
+            }
+        };
+        Ok(owner.user_id != user_id)
     }
 
     /// Project assignments and company settings change rarely and cost two
@@ -1500,10 +1580,24 @@ impl Inner {
         last_started.is_none_or(|started| seconds_between(started, self.clock.now()) >= interval)
     }
 
-    fn apply_cached_snapshot(&self) {
+    /// Restores the cache, if it belongs to the login's user. `has_login` says a
+    /// login is stored: one whose user is not known yet vouches for no cache.
+    fn apply_cached_snapshot(&self, has_login: bool) {
         let Some(snapshot) = self.snapshots.load() else {
             return;
         };
+        // A cache written for anyone but the login's user describes someone else's
+        // timesheet, however it came to be left behind. With credentials whose user
+        // is not known, no cache can be vouched for.
+        let vouched = match *self.known_user.lock().unwrap() {
+            Some(known) => snapshot.user.as_ref().map(|user| user.id) == Some(known),
+            None => !has_login,
+        };
+        if !vouched {
+            log::info!("the cache is not the stored login's; starting without it");
+            self.snapshots.clear();
+            return;
+        }
         self.update(|state| {
             let by_id: HashMap<String, &TimerTarget> = snapshot
                 .targets
