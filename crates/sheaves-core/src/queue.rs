@@ -38,9 +38,17 @@ pub enum Mutation {
         ended_at: Option<Timestamp>,
     },
     /// `hours` is the total measured locally when the user stopped the timer.
+    ///
+    /// `run`, when present, is what the local copy believed about the timer, so
+    /// delivery can check it against Harvest first: another machine may have
+    /// trimmed or stopped the timer since. Without it, `hours` is sent as it is,
+    /// which is right for a stop that follows this queue's own create, and is how
+    /// stops queued before peers existed are read.
     Stop {
         id: EntryId,
         hours: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<StoppedRun>,
     },
     /// `banked_hours` is the total before resuming; `resumed_at` is when the user
     /// did.
@@ -65,6 +73,54 @@ pub enum Mutation {
     Delete {
         id: EntryId,
     },
+}
+
+/// A timer's run as the local copy saw it when the user stopped it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoppedRun {
+    /// When the local copy believed the timer started.
+    pub started_at: Timestamp,
+    /// Hours the local copy believed were banked before that start.
+    pub banked_hours: f64,
+    /// When the user stopped it.
+    pub stopped_at: Timestamp,
+}
+
+impl StoppedRun {
+    /// Allowance for Harvest's clock and this machine's to disagree, as
+    /// [`Absence::START_TOLERANCE`](crate::absence::Absence::START_TOLERANCE)
+    /// allows between a click and the timer it started.
+    pub const CLOCK_SLACK: f64 = 120.0;
+
+    /// The hours to send for this stop, judged against `entry` as Harvest holds it
+    /// now, or `None` when the stop no longer applies and is to be dropped.
+    ///
+    /// - Not running: another client stopped it, and its hours stand.
+    /// - Running since when the local copy thought: nothing has changed, and the
+    ///   hours measured locally go.
+    /// - Running since some other moment: something restarted it since, such as a
+    ///   trim on another machine, or this queue's own restart landing late. Either
+    ///   way Harvest's banked hours cover everything before that start, so the hours
+    ///   are Harvest's banked hours plus the time from that start to the stop.
+    /// - Running since well after the user stopped: the timer was started again
+    ///   after the moment this stop speaks for, and the later action wins.
+    pub fn hours_against(&self, entry: &TimeEntry, measured: f64) -> Option<f64> {
+        if !entry.is_running {
+            return None;
+        }
+        let Some(started) = entry.timer_started_at else {
+            return Some(measured);
+        };
+        let banked = entry.hours_without_timer.unwrap_or(0.0);
+        // Harvest keeps hours to two decimals; anything closer is the same figure.
+        if started == self.started_at && (banked - self.banked_hours).abs() < 0.01 {
+            return Some(measured);
+        }
+        if started > crate::models::offset_by(self.stopped_at, Self::CLOCK_SLACK) {
+            return None;
+        }
+        Some((banked + crate::models::seconds_between(started, self.stopped_at) / 3600.0).max(0.0))
+    }
 }
 
 impl Mutation {
@@ -110,6 +166,8 @@ pub struct DrainReport {
     pub discarded: Vec<(Mutation, HarvestError)>,
     /// Set when the queue stopped early because the failure looked temporary.
     pub stopped_with: Option<HarvestError>,
+    /// Harvest ids of the entries this drain changed, so other machines can be told.
+    pub touched: Vec<i64>,
 }
 
 impl DrainReport {
@@ -417,14 +475,28 @@ impl MutationQueue {
                                 }
                             });
                             report.resolved.insert(local, entry.id);
+                            report.touched.push(entry.id);
                             Ok(())
                         }
                         Err(error) => Err(error),
                     }
                 }
+                Mutation::Stop {
+                    id,
+                    hours,
+                    run: Some(run),
+                } => match self.deliver_stop(&head, *id, *hours, run, client).await {
+                    Ok(()) => {
+                        self.remove_head(head.id);
+                        report.touched.extend(self.server_id(*id));
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                },
                 _ => match self.apply(&mutation, client).await {
                     Ok(()) => {
                         self.remove_head(head.id);
+                        report.touched.extend(self.server_id(mutation.subject()));
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -520,6 +592,63 @@ impl MutationQueue {
         self.create(&head.mutation, client).await
     }
 
+    /// Delivers a stop that knows what the local copy believed, after reading the
+    /// entry back from Harvest. See [`StoppedRun::hours_against`] for the rule.
+    ///
+    /// The hours decided on are written into the queued stop before `/stop` is
+    /// sent, with the attempt. If `/stop` lands and its reply or the hours
+    /// correction is lost, the retry finds the timer stopped, and the attempt says
+    /// whose stop that was: this queue's, so the hours it decided on still go.
+    async fn deliver_stop(
+        &self,
+        head: &Queued,
+        id: EntryId,
+        measured: f64,
+        run: &StoppedRun,
+        client: &HarvestClient,
+    ) -> Result<(), HarvestError> {
+        let server_id = self.server_id(id).ok_or(HarvestError::NotFound)?;
+        let hours = match client.time_entry(server_id).await {
+            Ok(entry) if !entry.is_running && head.attempted_at.is_some() => measured,
+            Ok(entry) => match run.hours_against(&entry, measured) {
+                Some(hours) => hours,
+                None => {
+                    log::info!(
+                        "not sending the stop of entry {server_id}: another client stopped or restarted it since"
+                    );
+                    return Ok(());
+                }
+            },
+            // An entry that will not decode cannot be judged, and the stop as
+            // measured is what this queue sent before it could re-read anything.
+            Err(HarvestError::Decoding { endpoint, detail }) => {
+                log::error!("{endpoint} did not decode, so the stop goes as measured: {detail}");
+                measured
+            }
+            Err(error) => return Err(error),
+        };
+        let now = self.clock.now();
+        self.change(|state| {
+            if let Some(first) = state.pending.first_mut()
+                && first.id == head.id
+            {
+                first.attempted_at = Some(now);
+                if let Mutation::Stop { hours: queued, .. } = &mut first.mutation {
+                    *queued = hours;
+                }
+            }
+        });
+        self.apply(
+            &Mutation::Stop {
+                id,
+                hours,
+                run: None,
+            },
+            client,
+        )
+        .await
+    }
+
     /// Harvest has no idempotency key, so an earlier attempt is recognised by what it
     /// sent: the same project, task, day and notes, on an entry created since the
     /// attempt and not already taken by another create. Harvest's clock and this
@@ -586,6 +715,7 @@ impl MutationQueue {
             (Some(ended_at), true) => Some(Mutation::Stop {
                 id,
                 hours: Self::storable_hours(hours_between(*started_at, *ended_at)),
+                run: None,
             }),
             (None, false) => Some(Mutation::Restart {
                 id,
@@ -630,6 +760,7 @@ impl MutationQueue {
             let follow_up = ended_at.map(|_| Mutation::Stop {
                 id: EntryId::Server(entry.id),
                 hours: 0.0,
+                run: None,
             });
             return Ok((entry, follow_up));
         }
@@ -872,6 +1003,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
                 hours: 1.0,
+                run: None,
             });
             let report = queue.drain(&client(transport.clone())).await;
 
@@ -905,6 +1037,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Local(local),
                 hours: 0.5,
+                run: None,
             });
             let report = queue.drain(&client(transport.clone())).await;
 
@@ -927,10 +1060,12 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(1),
                 hours: 1.0,
+                run: None,
             });
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(2),
                 hours: 1.0,
+                run: None,
             });
             let report = queue.drain(&client(transport)).await;
 
@@ -963,6 +1098,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(2),
                 hours: 1.0,
+                run: None,
             });
             let report = queue.drain(&client(transport)).await;
 
@@ -983,10 +1119,12 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(1),
                 hours: 1.0,
+                run: None,
             });
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(2),
                 hours: 1.0,
+                run: None,
             });
             let report = queue.drain(&client(transport.clone())).await;
 
@@ -1013,6 +1151,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(2),
                 hours: 1.0,
+                run: None,
             });
             let report = queue.drain(&client(transport)).await;
 
@@ -1106,7 +1245,8 @@ mod tests {
                 queue.pending(),
                 [Mutation::Stop {
                     id: EntryId::Server(636709355),
-                    hours: 1.0
+                    hours: 1.0,
+                    run: None,
                 }]
             );
         }
@@ -1118,6 +1258,7 @@ mod tests {
             first.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
                 hours: 1.0,
+                run: None,
             });
             assert_eq!(first.count(), 1);
 
@@ -1255,6 +1396,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
                 hours: 0.5,
+                run: None,
             });
             queue.drain(&client(transport.clone())).await;
 
@@ -1357,6 +1499,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
                 hours: 2.8e-05,
+                run: None,
             });
             queue.drain(&client(transport.clone())).await;
 
@@ -1440,6 +1583,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Local(local),
                 hours: 0.25,
+                run: None,
             });
             let second = queue.drain(&client).await;
 
@@ -1463,6 +1607,7 @@ mod tests {
             reopened.enqueue(Mutation::Stop {
                 id: EntryId::Local(local),
                 hours: 0.25,
+                run: None,
             });
             let report = reopened.drain(&client).await;
 
@@ -1707,6 +1852,7 @@ mod tests {
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
                 hours: 0.5,
+                run: None,
             });
 
             let report = queue.drain(&client(transport.clone())).await;
@@ -1746,6 +1892,181 @@ mod tests {
                 .hours
                 .unwrap();
             assert!((hours - 1.5).abs() < 0.01);
+        }
+    }
+
+    /// A stop that re-reads the entry before sending its hours, so another
+    /// machine's trim or stop is not overwritten.
+    mod stop_reread {
+        use super::*;
+
+        fn at(text: &str) -> Timestamp {
+            text.parse().unwrap()
+        }
+
+        /// The entry as Harvest holds it, running since `started` with `banked`
+        /// hours before that, or stopped when `started` is `None`.
+        fn harvest_entry(started: Option<&str>, banked: f64) -> String {
+            let mut entry: serde_json::Value =
+                serde_json::from_str(&fixture::running_time_entry()).unwrap();
+            entry["is_running"] = started.is_some().into();
+            entry["timer_started_at"] = started.map_or(serde_json::Value::Null, Into::into);
+            entry["hours_without_timer"] = banked.into();
+            entry["hours"] = banked.into();
+            entry.to_string()
+        }
+
+        /// The timer started at nine and was stopped here at half past two.
+        fn stop() -> Mutation {
+            Mutation::Stop {
+                id: EntryId::Server(636708906),
+                hours: 5.5,
+                run: Some(StoppedRun {
+                    started_at: at("2026-08-29T09:00:00Z"),
+                    banked_hours: 0.0,
+                    stopped_at: at("2026-08-29T14:30:00Z"),
+                }),
+            }
+        }
+
+        fn hours_sent(transport: &StubTransport) -> Vec<f64> {
+            (0..transport.request_count())
+                .map(|index| transport.request(index))
+                .filter(|request| request.method == Method::Patch)
+                .filter_map(|request| request.json().get("hours").and_then(|h| h.as_f64()))
+                .collect()
+        }
+
+        fn paths(transport: &StubTransport) -> Vec<String> {
+            (0..transport.request_count())
+                .map(|index| {
+                    let request = transport.request(index);
+                    format!("{} {}", request.method.as_str(), request.url.path())
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn sends_the_measured_hours_when_nothing_changed() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![
+                Scripted::ok(&harvest_entry(Some("2026-08-29T09:00:00Z"), 0.0)),
+                Scripted::ok(&fixture::time_entry()),
+                Scripted::ok(&fixture::time_entry()),
+            ]);
+            queue.enqueue(stop());
+            let report = queue.drain(&client(transport.clone())).await;
+
+            assert_eq!(report.applied, 1);
+            assert_eq!(
+                paths(&transport),
+                [
+                    "GET /v2/time_entries/636708906",
+                    "PATCH /v2/time_entries/636708906/stop",
+                    "PATCH /v2/time_entries/636708906",
+                ]
+            );
+            assert_eq!(hours_sent(&transport), [5.5]);
+            assert_eq!(report.touched, [636708906]);
+        }
+
+        /// The worked example in docs/gnome-port.md: the timer started at nine, was
+        /// trimmed on another machine at two to continue from twelve with an hour
+        /// banked, and was stopped here at half past two before this machine had
+        /// heard. One hour banked plus two and a half since twelve, not five and a
+        /// half.
+        #[tokio::test]
+        async fn recomputes_after_a_trim_elsewhere() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![
+                Scripted::ok(&harvest_entry(Some("2026-08-29T12:00:00Z"), 1.0)),
+                Scripted::ok(&fixture::time_entry()),
+                Scripted::ok(&fixture::time_entry()),
+            ]);
+            queue.enqueue(stop());
+            queue.drain(&client(transport.clone())).await;
+
+            assert_eq!(hours_sent(&transport), [3.5]);
+        }
+
+        /// Stopped elsewhere already: the hours there stand, and nothing is sent.
+        #[tokio::test]
+        async fn drops_a_stop_another_client_made_first() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![Scripted::ok(&harvest_entry(None, 4.25))]);
+            queue.enqueue(stop());
+            let report = queue.drain(&client(transport.clone())).await;
+
+            assert!(queue.is_empty());
+            assert!(report.discarded.is_empty());
+            assert_eq!(paths(&transport), ["GET /v2/time_entries/636708906"]);
+        }
+
+        /// Stopped elsewhere and started again after the moment this stop speaks
+        /// for: the later action wins, and the timer keeps running.
+        #[tokio::test]
+        async fn drops_a_stop_older_than_a_restart_elsewhere() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![Scripted::ok(&harvest_entry(
+                Some("2026-08-29T14:45:00Z"),
+                5.0,
+            ))]);
+            queue.enqueue(stop());
+            queue.drain(&client(transport.clone())).await;
+
+            assert!(queue.is_empty());
+            assert_eq!(paths(&transport), ["GET /v2/time_entries/636708906"]);
+        }
+
+        /// `/stop` landed and the hours correction failed. The retry finds the timer
+        /// stopped, by this queue's own hand, and still sends the hours it decided
+        /// on rather than dropping them as somebody else's stop.
+        #[tokio::test]
+        async fn finishes_its_own_stop_after_a_failure() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let first = StubTransport::new(vec![
+                Scripted::ok(&harvest_entry(Some("2026-08-29T12:00:00Z"), 1.0)),
+                Scripted::ok(&fixture::time_entry()),
+                Scripted::status(500, ""),
+            ]);
+            queue.enqueue(stop());
+            let report = queue.drain(&client(first.clone())).await;
+            assert!(report.stopped_with.is_some());
+            assert_eq!(queue.count(), 1);
+
+            // Reopened from its file, as after a relaunch.
+            let queue = open(&scratch);
+            let second = StubTransport::new(vec![
+                Scripted::ok(&harvest_entry(None, 6.0)),
+                Scripted::status(422, r#"{"message": "This time entry is not running."}"#),
+                Scripted::ok(&fixture::time_entry()),
+            ]);
+            queue.drain(&client(second.clone())).await;
+
+            assert!(queue.is_empty());
+            assert_eq!(hours_sent(&second), [3.5]);
+        }
+
+        /// A stop queued before stops carried their run reads back without one, and
+        /// sends its hours as it always did.
+        #[test]
+        fn reads_a_stop_without_its_run() {
+            let mutation: Mutation =
+                serde_json::from_str(r#"{"kind":"stop","id":{"server":636708906},"hours":2.0}"#)
+                    .unwrap();
+            assert_eq!(
+                mutation,
+                Mutation::Stop {
+                    id: EntryId::Server(636708906),
+                    hours: 2.0,
+                    run: None
+                }
+            );
         }
     }
 }

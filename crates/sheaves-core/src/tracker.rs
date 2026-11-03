@@ -16,7 +16,8 @@ use crate::client::{Credentials, HarvestClient, HarvestError};
 use crate::clock::Clock;
 use crate::credentials::{CredentialError, CredentialStore, Login};
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
-use crate::queue::{Mutation, MutationQueue, Owner};
+use crate::peers::Peers;
+use crate::queue::{Mutation, MutationQueue, Owner, StoppedRun};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
 use crate::tracked_entry::{
     EntryId, ProjectTargets, TimerTarget, TrackedEntry, group_by_project, timer_targets,
@@ -124,6 +125,16 @@ impl TrackerState {
 
     pub fn is_today(&self) -> bool {
         self.day == self.today
+    }
+
+    /// Whether the question about `absence` still stands: a timer is running that
+    /// it could be trimmed from. A prompt stays open for as long as the user leaves
+    /// it, and meanwhile another machine may have answered the same question, or
+    /// the timer may have been stopped somewhere else. Either way the running
+    /// timer, if any, no longer ran through the absence, and the prompt can go.
+    pub fn absence_applies(&self, absence: &Absence) -> bool {
+        self.running_entry()
+            .is_some_and(|entry| absence.trimmed_hours(entry).is_some())
     }
 
     /// The budget to show beside `entry`, or `None` when there is nothing to show.
@@ -283,6 +294,8 @@ struct Inner {
     /// or `None` when that is not known yet. The queue's owner and the cached user
     /// are checked against this, never the other way round.
     known_user: Mutex<Option<i64>>,
+    /// The other machines told when this one changes a timer, and who tell it.
+    peers: Mutex<Option<Arc<Peers>>>,
 }
 
 /// The application's model.
@@ -344,6 +357,7 @@ impl TimeTracker {
                 ticker: Mutex::new(None),
                 revision: AtomicU64::new(0),
                 known_user: Mutex::new(None),
+                peers: Mutex::new(None),
             }),
         }
     }
@@ -364,6 +378,22 @@ impl TimeTracker {
     /// otherwise, the machine is treated as plugged in.
     pub fn set_power_source(&self, probe: impl Fn() -> PowerState + Send + Sync + 'static) {
         *self.inner.power.lock().unwrap() = Arc::new(probe);
+    }
+
+    /// Joins this machine's peers: each change this tracker delivers to Harvest is
+    /// announced to them, and each change they announce makes this tracker probe
+    /// Harvest at once.
+    pub fn join(&self, peers: Arc<Peers>) {
+        let weak = Arc::downgrade(&self.inner);
+        peers.on_touched(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                let tracker = TimeTracker { inner };
+                tokio::spawn(async move { tracker.sync().await });
+            }
+        });
+        *self.inner.peers.lock().unwrap() = Some(peers);
+        // Tells the peers whose machine this is.
+        self.inner.changed();
     }
 
     // MARK: Lifecycle
@@ -592,6 +622,13 @@ impl TimeTracker {
         }
 
         let report = inner.queue.drain(&inner.client).await;
+        if !report.touched.is_empty() {
+            let peers = inner.peers.lock().unwrap().clone();
+            if let Some(peers) = peers {
+                let touched = report.touched.clone();
+                tokio::spawn(async move { peers.announce(touched).await });
+            }
+        }
         let pending = inner.queue.count() as u32;
         inner.update(|state| {
             adopt(state, &report.resolved);
@@ -1067,6 +1104,28 @@ impl TimeTracker {
         Some(Mutation::Stop {
             id: entry.id,
             hours,
+            run: self.stopped_run(entry, stopped_at),
+        })
+    }
+
+    /// What the local copy believes about `entry`'s run, for the queue to check
+    /// against Harvest before sending a stop made at `stopped_at`.
+    ///
+    /// `None` while a change to the entry is still queued here. Harvest's copy is
+    /// then waiting on this machine's own changes, and a restart or a new total
+    /// landing after the stop was made would look like another client's doing.
+    fn stopped_run(&self, entry: &TrackedEntry, stopped_at: Timestamp) -> Option<StoppedRun> {
+        let started_at = entry.timer_started_at?;
+        let waiting = self
+            .inner
+            .queue
+            .pending()
+            .iter()
+            .any(|mutation| mutation.subject() == entry.id);
+        (!waiting).then_some(StoppedRun {
+            started_at,
+            banked_hours: entry.banked_hours,
+            stopped_at,
         })
     }
 
@@ -1285,6 +1344,7 @@ impl TimeTracker {
             Mutation::Stop {
                 id: entry.id,
                 hours,
+                run: self.stopped_run(entry, left_at),
             }
         }];
         if let Some(resumed_at) = resuming_at {
@@ -1506,6 +1566,10 @@ impl Inner {
     }
 
     fn changed(&self) {
+        let peers = self.peers.lock().unwrap().clone();
+        if let Some(peers) = peers {
+            peers.set_user(self.state.lock().unwrap().user.as_ref().map(|user| user.id));
+        }
         let observer = self.observer.lock().unwrap().clone();
         if let Some(observer) = observer {
             let snapshot = self.snapshot_of(&self.state.lock().unwrap());

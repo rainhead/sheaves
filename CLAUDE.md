@@ -68,6 +68,12 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **`onKeyPress(.delete)` never fires for ⌫.** SwiftUI's `.delete` is U+0008; the
   Mac's backspace key sends U+007F. Use `onDeleteCommand`, which both delete keys
   raise. Symptom: it builds, and pressing ⌫ does nothing.
+- **The application firewall drops connections to programs it does not know,
+  silently.** With the firewall on, a listener in an unsigned or ad-hoc signed
+  program binds without error and never answers, not even from this Mac to its own
+  tailnet address, and nothing is logged. A built-in such as `nc` on the same address
+  answers. Allow the app under System Settings › Network › Firewall › Options.
+  Symptom: peers time out against the Mac while the reverse direction works.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 

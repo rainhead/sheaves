@@ -11,6 +11,7 @@ pub mod demo;
 pub mod ffi;
 pub mod hours;
 pub mod models;
+pub mod peers;
 pub mod persistence;
 pub mod queue;
 pub mod snapshot;

@@ -35,6 +35,8 @@ use crate::credentials::CredentialStore;
 use crate::demo::DemoTransport;
 use crate::hours::{HoursEdit, HoursFormat, parse_hours};
 use crate::models::{HarvestUser, Reference};
+use crate::peers::server::Listener;
+use crate::peers::{HttpPeerTransport, PEER_PORT, Peers, Presence};
 use crate::queue::MutationQueue;
 use crate::snapshot::SnapshotStore;
 use crate::tracked_entry::{EntryId, ProjectTargets, TimerTarget, TrackedEntry};
@@ -153,6 +155,14 @@ impl Absence {
 }
 
 #[uniffi::export]
+impl TrackerState {
+    /// See [`TrackerState::absence_applies`].
+    pub fn asks_about(&self, absence: Absence) -> bool {
+        self.absence_applies(&absence)
+    }
+}
+
+#[uniffi::export]
 impl CalendarDate {
     /// The ISO 8601 text Harvest reads, such as `2026-08-29`.
     pub fn iso(&self) -> String {
@@ -235,39 +245,42 @@ pub fn presence_poll_interval() -> f64 {
 
 // MARK: Presence
 
-/// [`PresenceMonitor`] for a shell, which keeps the sensors and the timer and hands
-/// each reading here.
+/// [`Presence`] for a shell, which keeps the sensors and the timer and hands each
+/// reading here.
 #[derive(uniffi::Object)]
 pub struct PresenceFold {
-    monitor: Mutex<PresenceMonitor>,
+    presence: Arc<Presence>,
+    /// Where asking peers runs, which needs a Tokio runtime. A fold with no peers
+    /// never asks, and runs wherever it is called.
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 #[uniffi::export]
 impl PresenceFold {
+    /// A fold with no peers, deciding alone.
     #[uniffi::constructor]
     pub fn new(threshold: f64, now: Timestamp) -> Arc<Self> {
+        let peers = Arc::new(Peers::new(
+            threshold,
+            Arc::new(HttpPeerTransport::new(PEER_PORT)),
+        ));
         Arc::new(Self {
-            monitor: Mutex::new(PresenceMonitor::new(threshold, now)),
+            presence: Arc::new(Presence::new(threshold, now, peers)),
+            runtime: None,
         })
     }
 
-    /// Folds one reading taken at `now`, returning any absence it ended.
-    pub fn poll(&self, mut reading: PresenceReading, now: Timestamp) -> Vec<Absence> {
-        // A sensor's number is not to be trusted with arithmetic on instants: an
-        // infinite or absurd one would panic, and with the lock held every later
-        // poll would too. A reading that makes no sense says nothing about absence,
-        // so it counts as presence now.
-        const LONGEST_IDLE: f64 = 10.0 * 365.0 * 86_400.0;
-        let idle = reading.seconds_since_input;
-        reading.seconds_since_input = if idle.is_finite() {
-            idle.clamp(0.0, LONGEST_IDLE)
-        } else {
-            0.0
-        };
-        self.monitor
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .poll(reading, now)
+    /// Folds one reading taken at `now`, returning the absences it ended that no
+    /// peer saw the user during.
+    pub async fn poll(&self, reading: PresenceReading, now: Timestamp) -> Vec<Absence> {
+        let presence = self.presence.clone();
+        match &self.runtime {
+            Some(runtime) => runtime
+                .spawn(async move { presence.poll(reading, now).await })
+                .await
+                .expect("presence polls do not panic"),
+            None => presence.poll(reading, now).await,
+        }
     }
 }
 
@@ -384,6 +397,8 @@ pub struct Tracker {
     runtime: tokio::runtime::Runtime,
     tracker: TimeTracker,
     notice: Option<String>,
+    peers: Arc<Peers>,
+    listener: Mutex<Option<Listener>>,
 }
 
 impl Tracker {
@@ -449,11 +464,57 @@ impl Tracker {
         tracker.observe(move |state| {
             observer.state_changed(TrackerSnapshot::of(state, observed.clone()))
         });
+        let peers = Arc::new(Peers::new(
+            AbsenceDetector::DEFAULT_THRESHOLD,
+            Arc::new(HttpPeerTransport::new(PEER_PORT)),
+        ));
+        // The demo account is nobody's, and must not speak to real machines.
+        if !demo {
+            tracker.join(peers.clone());
+        }
         Arc::new(Self {
             runtime,
             tracker,
             notice,
+            peers,
+            listener: Mutex::new(None),
         })
+    }
+
+    /// A presence fold that asks this tracker's peers before it reports an absence,
+    /// and logs what it sees for them to ask about.
+    pub fn presence(&self, threshold: f64, now: Timestamp) -> Arc<PresenceFold> {
+        Arc::new(PresenceFold {
+            presence: Arc::new(Presence::new(threshold, now, self.peers.clone())),
+            runtime: Some(self.runtime.handle().clone()),
+        })
+    }
+
+    /// The other machines to share presence with, by their names on the tailnet,
+    /// such as `hostess`. With any named, this machine also answers them, on its
+    /// tailnet addresses only; with none, it neither asks nor answers.
+    pub fn set_peers(&self, names: Vec<String>) {
+        self.peers.set_names(names);
+        let mut listener = self
+            .listener
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.peers.names().is_empty() {
+            *listener = None;
+        } else if listener.is_none() {
+            let _entered = self.runtime.enter();
+            *listener = Some(Listener::start(self.peers.clone(), PEER_PORT));
+        }
+    }
+
+    /// Where this machine is listening for peers, such as `100.101.102.103:47147`.
+    pub fn listening_on(&self) -> Vec<String> {
+        self.listener
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|listener| listener.bound().iter().map(ToString::to_string).collect())
+            .unwrap_or_default()
     }
 
     pub fn snapshot(&self) -> TrackerSnapshot {
@@ -619,8 +680,8 @@ mod tests {
 
         /// A reading no sensor could honestly give must neither panic nor invent an
         /// absence, and the fold must keep working after it.
-        #[test]
-        fn survives_a_nonsense_reading() {
+        #[tokio::test]
+        async fn survives_a_nonsense_reading() {
             let start = Timestamp::from_second(1_700_000_000).unwrap();
             let fold = PresenceFold::new(15.0 * 60.0, start);
             for idle in [f64::INFINITY, f64::NAN, 1e300, -1e300] {
@@ -628,14 +689,14 @@ mod tests {
                     seconds_since_input: idle,
                     ..PresenceReading::default()
                 };
-                assert!(fold.poll(reading, start).is_empty(), "{idle}");
+                assert!(fold.poll(reading, start).await.is_empty(), "{idle}");
             }
             let later = crate::models::offset_by(start, 3600.0);
             let back = PresenceReading {
                 seconds_since_input: 1.0,
                 ..PresenceReading::default()
             };
-            assert_eq!(fold.poll(back, later).len(), 1);
+            assert_eq!(fold.poll(back, later).await.len(), 1);
         }
     }
 
