@@ -568,9 +568,10 @@ impl TimeTracker {
             inner.client.running_time_entry(user.id),
         )?;
         if let Some(credentials) = inner.client.installed_credentials() {
-            // A queue from before owners were recorded, or one filled before the
-            // first sync ever succeeded, belongs to whoever is connected now.
-            inner.queue.claim_if_unowned(Owner {
+            // A queue from before owners were recorded, one filled before the first
+            // sync ever succeeded, or an empty one still naming whoever was connected
+            // before, belongs to whoever is connected now.
+            inner.queue.claim_if_free(Owner {
                 account_id: credentials.account_id,
                 user_id: user.id,
             });

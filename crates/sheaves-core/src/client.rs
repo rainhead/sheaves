@@ -265,6 +265,10 @@ pub struct HarvestClient {
 }
 
 const MAX_RETRIES: u32 = 3;
+/// The longest `Retry-After` the client waits out itself. A longer one goes back to
+/// the caller as `RateLimited`, rather than holding every sync behind it; the Reports
+/// API, at 100 requests per 15 minutes, can ask for many minutes.
+const MAX_RETRY_WAIT: f64 = 60.0;
 
 impl HarvestClient {
     pub fn new(
@@ -574,7 +578,7 @@ impl HarvestClient {
                 404 => return Err(HarvestError::NotFound),
                 429 => {
                     let retry_after = retry_after(&response);
-                    if attempt >= MAX_RETRIES {
+                    if attempt >= MAX_RETRIES || retry_after > MAX_RETRY_WAIT {
                         return Err(HarvestError::RateLimited { retry_after });
                     }
                     attempt += 1;
@@ -832,6 +836,25 @@ mod tests {
         /// The Swift client mapped both to one error. They mean different things to
         /// the queue: a rejected token says nothing will get through, while a
         /// refusal says only this request will not.
+        /// A wait too long to sit through, or too large to sleep for at all, goes
+        /// straight back to the caller.
+        #[tokio::test]
+        async fn hands_back_a_long_wait() {
+            for wait in ["600", "1e300"] {
+                let transport = StubTransport::new(vec![
+                    Scripted::status(429, "").with_header("Retry-After", wait),
+                    Scripted::ok(fixture::CURRENT_USER),
+                ]);
+                let client =
+                    HarvestClient::new(Some(fixture::credentials()), transport.clone(), 1.0);
+                assert!(matches!(
+                    client.current_user().await,
+                    Err(HarvestError::RateLimited { .. })
+                ));
+                assert_eq!(transport.request_count(), 1);
+            }
+        }
+
         #[tokio::test]
         async fn maps_unauthorized() {
             for (status, error) in [

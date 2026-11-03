@@ -241,11 +241,23 @@ impl MutationQueue {
         });
     }
 
-    /// Names the owner of a queue that has none, and leaves any other alone.
-    pub fn claim_if_unowned(&self, owner: Owner) {
-        if self.owner().is_none() {
-            self.claim(owner);
-        }
+    /// Makes the queue `owner`'s if nobody's work is in it: it has no owner, or it
+    /// is empty. Checked and claimed under one lock, so a change enqueued meanwhile
+    /// cannot be handed to the wrong person.
+    ///
+    /// An empty queue can keep a stale owner when the app dies between saving new
+    /// credentials and claiming the queue for them; left so, the new user's next
+    /// change would be refused as someone else's.
+    pub fn claim_if_free(&self, owner: Owner) {
+        self.change(|state| {
+            if state.owner.as_ref() == Some(&owner) {
+                return;
+            }
+            if state.owner.is_none() || state.pending.is_empty() {
+                state.resolved.clear();
+                state.owner = Some(owner);
+            }
+        });
     }
 
     /// Marks a queued create as finished without adding a second mutation, for a
@@ -825,6 +837,37 @@ mod tests {
                     .unwrap()
                     .contains("teleport")
             );
+        }
+
+        #[test]
+        fn claims_only_a_queue_with_nobody_s_work() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let first = Owner {
+                account_id: "1".to_string(),
+                user_id: 1,
+            };
+            let second = Owner {
+                account_id: "1".to_string(),
+                user_id: 2,
+            };
+
+            queue.claim_if_free(first.clone());
+            assert_eq!(queue.owner(), Some(first.clone()));
+
+            queue.enqueue(Mutation::Delete {
+                id: EntryId::Server(1),
+            });
+            queue.claim_if_free(second.clone());
+            assert_eq!(queue.owner(), Some(first), "someone's work is queued");
+
+            queue.remove_all();
+            queue.claim(Owner {
+                account_id: "9".to_string(),
+                user_id: 9,
+            });
+            queue.claim_if_free(second.clone());
+            assert_eq!(queue.owner(), Some(second), "an empty queue is nobody's");
         }
 
         #[test]
