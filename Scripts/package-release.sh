@@ -15,6 +15,8 @@ derived=build/release
 products=$derived/Build/Products/Release
 app=$products/Sheaves.app
 
+# The app links the Rust core, which is built, not checked in.
+Scripts/build-xcframework.sh
 xcodegen generate
 
 # Ad-hoc, stated here rather than left to Config/Base.xcconfig's default. CI has

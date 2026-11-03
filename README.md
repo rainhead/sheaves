@@ -49,13 +49,20 @@ therefore waiting on the paragraph above.
 
 ## Building it
 
-Requires Xcode 26 or later.
+Requires Xcode 26 or later and [rustup](https://rustup.rs), which installs the Rust
+compiler that [`rust-toolchain.toml`](rust-toolchain.toml) names on first use. The
+core is moving from Swift to Rust so a GNOME app can share it; the plan is
+[`docs/gnome-port.md`](docs/gnome-port.md).
 
 ```sh
-brew install xcodegen     # the .xcodeproj is generated, not committed
+brew install xcodegen          # the .xcodeproj is generated, not committed
+Scripts/build-xcframework.sh   # the Rust core, built into the Swift package
 xcodegen generate
 open Sheaves.xcodeproj
 ```
+
+Xcode does not rebuild the Rust core, so rerun the script after changing anything
+under `crates/`. `make build` and `make test` run it for you.
 
 The project signs ad-hoc, so a fresh checkout builds and runs with no Apple
 Developer account. The catch is that an ad-hoc signature changes with every build,
@@ -67,6 +74,7 @@ is enough — the $99 Developer Program is for distribution, not for running you
 app on your own Mac.
 
 ```sh
+cargo test                                                  # Rust core
 swift test --package-path Packages/SheavesCore              # core logic
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
   -destination 'platform=macOS' test                        # app logic
@@ -191,10 +199,11 @@ Carbon reports that by failing silently, which is worth surfacing.
 
 | Path | What lives there |
 | --- | --- |
+| [`crates/sheaves-core`](crates/sheaves-core) | The Rust core, which will replace the Swift one. Called from Swift through [UniFFI](https://mozilla.github.io/uniffi-rs/). |
 | [`Packages/SheavesCore`](Packages/SheavesCore) | API client, models, store, persistence. No AppKit, no SwiftUI. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
-| [`Scripts`](Scripts) | Jobs that need more than a line: the release package, the documentation images. |
+| [`Scripts`](Scripts) | Jobs that need more than a line: the Rust core for the Mac, the release package, the documentation images. |
 | [`docs`](docs) | Notes too long for here, and the images this file uses. |
 
 ## Keyboard

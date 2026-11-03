@@ -38,6 +38,10 @@ jobs:
       - name: Select Xcode 26.6
         run: sudo xcode-select --switch /Applications/Xcode_26.6.app
 
+      # The app links the Rust core; rust-toolchain.toml names the compiler.
+      - name: Install Rust
+        run: rustup toolchain install --no-self-update
+
       - name: Install XcodeGen
         run: brew install --quiet xcodegen
 

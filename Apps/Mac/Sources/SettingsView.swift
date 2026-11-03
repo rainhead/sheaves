@@ -25,6 +25,7 @@ struct SettingsView: View {
             }
             shortcutSection
             startupSection
+            aboutSection
         }
         .formStyle(.grouped)
         .frame(width: 460)
@@ -132,6 +133,15 @@ struct SettingsView: View {
             Text("Opens the quick-entry panel from any app. Sheaves registers it with the window server, so no Accessibility permission is needed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Which build is running, so a bug report can say. The core's version comes
+    /// from the Rust library itself, which also proves the app is linked to it.
+    private var aboutSection: some View {
+        Section("About") {
+            LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")
+            LabeledContent("Core", value: coreVersion())
         }
     }
 

@@ -1,0 +1,7 @@
+# One compiler everywhere: this Mac, Hostess and CI. rustup reads this file and
+# installs the toolchain and targets on first use, so nothing else needs to.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+# Both Mac architectures, because a release build of the app is universal.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

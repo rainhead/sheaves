@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["crates/sheaves-core", "crates/uniffi-bindgen"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# The library and the bindings generator must be the same version: the generated
+# Swift checks a checksum of every exported function against the library at load
+# time and refuses to run on a mismatch. One line pins both.
+uniffi = "=0.32.2"

@@ -32,8 +32,19 @@ jobs:
       - name: Select Xcode 26.6
         run: sudo xcode-select --switch /Applications/Xcode_26.6.app
 
+      # rustup is on the image. With no arguments it installs what
+      # rust-toolchain.toml names: the pinned compiler and both Mac targets.
+      - name: Install Rust
+        run: rustup toolchain install --no-self-update
+
       - name: Show toolchain
-        run: swift --version && xcodebuild -version
+        run: swift --version && xcodebuild -version && cargo --version
+
+      - name: Test Rust core
+        run: cargo test --locked
+
+      - name: Build Rust core for the Swift package
+        run: Scripts/build-xcframework.sh
 
       - name: Install XcodeGen
         run: brew install --quiet xcodegen

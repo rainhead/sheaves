@@ -7,7 +7,9 @@ AppKit and SwiftUI shell.
 ## Commands
 
 ```sh
+Scripts/build-xcframework.sh                       # after changing anything in crates/
 xcodegen generate                                  # after adding or removing ANY file
+cargo test                                         # Rust core
 swift test --package-path Packages/SheavesCore     # core logic
 xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
   -destination 'platform=macOS' test               # app logic
@@ -17,6 +19,10 @@ Scripts/package-release.sh                         # what a release ships
 ```
 
 Signing lives in `Config/Local.xcconfig` (git-ignored, see the example beside it).
+
+The core is being ported to Rust in phases; `docs/gnome-port.md` is the plan and
+records what each phase decided. Until the port finishes, `crates/sheaves-core` and
+`Packages/SheavesCore` both exist and both test suites run.
 
 ## Platform traps that have already cost a day
 
