@@ -30,16 +30,20 @@ const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const GLYPH: &str = include_str!("../../../icons/sheaves-symbolic.svg");
 const GLYPH_NAME: &str = "sheaves-symbolic";
 
-/// Puts the glyph in `folder`, where the top bar is told to look for it, and
-/// returns the folder. The name ends in `-symbolic`, so the shell draws it in the
+/// Puts the glyph in `folder` and returns its path, which the item names as its
+/// icon while idle. The name ends in `-symbolic`, so the shell draws it in the
 /// bar's own colour, as it does its own icons.
+///
+/// A path rather than an icon folder: given a folder, the AppIndicator extension
+/// looks for every icon there and nowhere else, so the theme's play and pause
+/// icons would go missing.
 pub fn install_glyph(folder: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(folder)?;
     let path = folder.join(format!("{GLYPH_NAME}.svg"));
     if std::fs::read_to_string(&path).ok().as_deref() != Some(GLYPH) {
         std::fs::write(&path, GLYPH)?;
     }
-    Ok(folder.to_path_buf())
+    Ok(path)
 }
 
 /// What a click in the top bar asks the app to do.
@@ -144,8 +148,8 @@ const QUIT: i32 = 4;
 #[derive(Default)]
 struct Shared {
     look: Look,
-    /// The folder holding the glyph, empty when it could not be written.
-    icon_folder: String,
+    /// Where the glyph was written, or `None` when it could not be.
+    glyph: Option<String>,
     /// Counts layout changes, which the menu protocol reports with each layout.
     revision: u32,
 }
@@ -180,16 +184,19 @@ impl Item {
     #[zbus(property)]
     fn icon_name(&self) -> String {
         let shared = lock(&self.shared);
-        // With no folder to find Sheaves' glyph in, a stock icon says idle instead.
-        if shared.look.icon == GLYPH_NAME && shared.icon_folder.is_empty() {
-            return "alarm-symbolic".to_string();
+        if shared.look.icon != GLYPH_NAME {
+            return shared.look.icon.clone();
         }
-        shared.look.icon.clone()
+        // With no glyph on disk, a stock icon says idle instead.
+        shared
+            .glyph
+            .clone()
+            .unwrap_or_else(|| "alarm-symbolic".to_string())
     }
 
     #[zbus(property)]
-    fn icon_theme_path(&self) -> String {
-        lock(&self.shared).icon_folder.clone()
+    fn icon_theme_path(&self) -> &str {
+        ""
     }
 
     #[zbus(property)]
@@ -419,16 +426,14 @@ pub struct Indicator {
 
 impl Indicator {
     /// Puts the item in the top bar, and keeps it there when the shell restarts.
-    /// Clicks arrive on `commands`; the glyph is looked for in `icon_folder`. Must
-    /// run inside a Tokio runtime.
+    /// Clicks arrive on `commands`; `glyph` is the idle glyph's path, from
+    /// [`install_glyph`]. Must run inside a Tokio runtime.
     pub async fn start(
         commands: async_channel::Sender<Command>,
-        icon_folder: Option<PathBuf>,
+        glyph: Option<PathBuf>,
     ) -> zbus::Result<Self> {
         let shared = Arc::new(Mutex::new(Shared {
-            icon_folder: icon_folder
-                .map(|folder| folder.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            glyph: glyph.map(|path| path.to_string_lossy().into_owned()),
             ..Shared::default()
         }));
         let name = format!(
@@ -618,8 +623,8 @@ mod tests {
     fn the_glyph_is_written_once() {
         let folder = tempfile::tempdir().unwrap();
         let icons = folder.path().join("icons");
-        assert_eq!(install_glyph(&icons).unwrap(), icons);
         let path = icons.join("sheaves-symbolic.svg");
+        assert_eq!(install_glyph(&icons).unwrap(), path);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), GLYPH);
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();
         install_glyph(&icons).unwrap();

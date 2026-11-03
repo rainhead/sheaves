@@ -161,10 +161,10 @@ fn start_indicator(
                 .expect("a runtime can start");
             runtime.block_on(async move {
                 // A missing glyph leaves the item with no icon, not no item.
-                let icons = indicator::install_glyph(&persistence::data_directory().join("icons"))
+                let glyph = indicator::install_glyph(&persistence::data_directory().join("icons"))
                     .inspect_err(|error| log::warn!("could not write the top bar glyph: {error}"))
                     .ok();
-                let indicator = match Indicator::start(commands, icons).await {
+                let indicator = match Indicator::start(commands, glyph).await {
                     Ok(indicator) => indicator,
                     Err(error) => {
                         log::error!("no item in the top bar: {error}");

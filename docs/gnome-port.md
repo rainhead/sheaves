@@ -506,7 +506,10 @@ it on Ubuntu 26.04, the release Hostess runs.
   "timer" on the Mac, which Apple's licence keeps off other platforms, and an
   alarm clock on GNOME. The source is `icons/sheaves-symbolic.svg`, drawn in fills
   only, because GNOME recolours a symbolic icon's fills and not its strokes; the
-  Mac's asset catalog holds a copy, and a test fails if they differ. The app icon,
+  Mac's asset catalog holds a copy, and a test fails if they differ. The top bar
+  item names the glyph by its file path rather than handing the extension an icon
+  folder, because given a folder the extension looks for every icon there, and the
+  theme's play and pause icons went missing. The app icon,
   `icons/com.rainhead.Sheaves.svg`, is the same sheaf on a wheat-gold tile; the
   GNOME app installs it with a desktop entry at each launch, or the dock shows a
   generic gear.
