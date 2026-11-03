@@ -501,7 +501,11 @@ impl TimeTracker {
             // deliberately looking at another day.
             if !state.is_pinned_to_day && state.day != today {
                 state.day = today;
-                state.entries.clear();
+                // A running timer belongs in the menu bar whatever its day, and
+                // only a refresh that succeeds replaces it: offline, clearing it
+                // would leave nothing to stop, and the next start would queue no
+                // measured stop for it.
+                state.entries.retain(|entry| entry.is_running);
                 state.last_active_today = None;
             }
         });
@@ -800,7 +804,8 @@ impl TimeTracker {
                 return false;
             }
             state.day = new_day;
-            state.entries.clear();
+            // As at midnight: a running timer stays until a refresh replaces it.
+            state.entries.retain(|entry| entry.is_running);
             true
         });
         if changed {

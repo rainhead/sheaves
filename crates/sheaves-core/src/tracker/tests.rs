@@ -524,6 +524,25 @@ mod time_tracker {
         assert!(matches!(pending[1], Mutation::Restart { .. }));
     }
 
+    /// Browsing to another day offline cannot load it, so the running timer must
+    /// not go with the old day's list: it would be left with nothing to stop it.
+    #[tokio::test]
+    async fn changing_day_offline_keeps_the_running_timer() {
+        let scratch = scratch();
+        let transport = RoutingTransport::account_with_running_timer();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let running = tracker.state().running_entry().cloned().unwrap();
+        transport.go_offline();
+
+        tracker.shift_day(-1).await;
+
+        assert_eq!(
+            tracker.state().running_entry().map(|entry| entry.id),
+            Some(running.id)
+        );
+    }
+
     #[tokio::test]
     async fn stop_banks_elapsed_time() {
         let scratch = scratch();
