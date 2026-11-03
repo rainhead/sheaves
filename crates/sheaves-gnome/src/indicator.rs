@@ -9,6 +9,7 @@
 //! of three entries needs.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
@@ -23,6 +24,27 @@ use crate::format;
 const ITEM_PATH: &str = "/StatusNotifierItem";
 const MENU_PATH: &str = "/MenuBar";
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
+
+/// Sheaves' own glyph, a sheaf of wheat between the plates of an hourglass, shown
+/// while no timer runs. The same file is the Mac's idle glyph.
+const GLYPH: &str = include_str!("../../../icons/sheaves-symbolic.svg");
+const GLYPH_NAME: &str = "sheaves-symbolic";
+
+/// Puts the glyph in `folder` and returns its path, which the item names as its
+/// icon while idle. The name ends in `-symbolic`, so the shell draws it in the
+/// bar's own colour, as it does its own icons.
+///
+/// A path rather than an icon folder: given a folder, the AppIndicator extension
+/// looks for every icon there and nowhere else, so the theme's play and pause
+/// icons would go missing.
+pub fn install_glyph(folder: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(folder)?;
+    let path = folder.join(format!("{GLYPH_NAME}.svg"));
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(GLYPH) {
+        std::fs::write(&path, GLYPH)?;
+    }
+    Ok(path)
+}
 
 /// What a click in the top bar asks the app to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,7 +79,7 @@ impl Look {
     pub fn of(activity: &Activity, format: HoursFormat, now: Timestamp) -> Self {
         match activity {
             Activity::Idle => Look {
-                icon: "alarm-symbolic".to_string(),
+                icon: GLYPH_NAME.to_string(),
                 label: String::new(),
                 guide: String::new(),
                 tooltip: "Sheaves: no timer running".to_string(),
@@ -126,6 +148,8 @@ const QUIT: i32 = 4;
 #[derive(Default)]
 struct Shared {
     look: Look,
+    /// Where the glyph was written, or `None` when it could not be.
+    glyph: Option<String>,
     /// Counts layout changes, which the menu protocol reports with each layout.
     revision: u32,
 }
@@ -159,7 +183,15 @@ impl Item {
 
     #[zbus(property)]
     fn icon_name(&self) -> String {
-        lock(&self.shared).look.icon.clone()
+        let shared = lock(&self.shared);
+        if shared.look.icon != GLYPH_NAME {
+            return shared.look.icon.clone();
+        }
+        // With no glyph on disk, a stock icon says idle instead.
+        shared
+            .glyph
+            .clone()
+            .unwrap_or_else(|| "alarm-symbolic".to_string())
     }
 
     #[zbus(property)]
@@ -394,9 +426,16 @@ pub struct Indicator {
 
 impl Indicator {
     /// Puts the item in the top bar, and keeps it there when the shell restarts.
-    /// Clicks arrive on `commands`. Must run inside a Tokio runtime.
-    pub async fn start(commands: async_channel::Sender<Command>) -> zbus::Result<Self> {
-        let shared = Arc::new(Mutex::new(Shared::default()));
+    /// Clicks arrive on `commands`; `glyph` is the idle glyph's path, from
+    /// [`install_glyph`]. Must run inside a Tokio runtime.
+    pub async fn start(
+        commands: async_channel::Sender<Command>,
+        glyph: Option<PathBuf>,
+    ) -> zbus::Result<Self> {
+        let shared = Arc::new(Mutex::new(Shared {
+            glyph: glyph.map(|path| path.to_string_lossy().into_owned()),
+            ..Shared::default()
+        }));
         let name = format!(
             "org.freedesktop.StatusNotifierItem-{}-1",
             std::process::id()
@@ -568,6 +607,31 @@ mod tests {
         assert_eq!(look.label, "");
         assert_eq!(look.icon, "media-playback-start-symbolic");
         assert_eq!(look.toggle.as_deref(), Some("Resume Programming"));
+    }
+
+    /// The Mac's asset catalog needs its own copy of the glyph. This is where a
+    /// change to one and not the other is caught.
+    #[test]
+    fn the_mac_shows_the_same_glyph() {
+        let mac = include_str!(
+            "../../../Apps/Mac/Resources/Assets.xcassets/Sheaves.imageset/sheaves-symbolic.svg"
+        );
+        assert_eq!(GLYPH, mac);
+    }
+
+    #[test]
+    fn the_glyph_is_written_once() {
+        let folder = tempfile::tempdir().unwrap();
+        let icons = folder.path().join("icons");
+        let path = icons.join("sheaves-symbolic.svg");
+        assert_eq!(install_glyph(&icons).unwrap(), path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), GLYPH);
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        install_glyph(&icons).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            written
+        );
     }
 
     #[test]

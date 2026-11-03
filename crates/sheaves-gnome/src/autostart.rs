@@ -61,7 +61,6 @@ fn entry(program: &Path) -> String {
          Name=Sheaves\n\
          Comment=Harvest timer in the top bar\n\
          Exec={} --background\n\
-         Icon=alarm-symbolic\n\
          X-GNOME-Autostart-enabled=true\n\
          NoDisplay=true\n",
         quoted(program)
@@ -75,7 +74,7 @@ fn entry(program: &Path) -> String {
 /// whose own escapes are undone first, and inside its quotes `"`, `` ` ``, `$`
 /// and `\` each need a backslash before them. So `"` is written `\\"`, and a
 /// backslash, escaped once for the quotes and again for the key file, `\\\\`.
-fn quoted(path: &Path) -> String {
+pub(crate) fn quoted(path: &Path) -> String {
     let mut quoted = String::from("\"");
     for character in path.to_string_lossy().chars() {
         match character {

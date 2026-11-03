@@ -12,7 +12,7 @@ use sheaves_core::ffi::{Tracker, TrackerObserver, TrackerSnapshot};
 use sheaves_core::persistence;
 use sheaves_core::tracker::{Activity, Connection};
 
-use crate::indicator::{Command, Indicator, Look};
+use crate::indicator::{self, Command, Indicator, Look};
 use crate::keyring::Keyring;
 use crate::settings;
 use crate::window::{self, Action, Window};
@@ -71,6 +71,14 @@ pub fn run() -> glib::ExitCode {
 fn start(app: &adw::Application) -> Rc<Shell> {
     // The top bar item keeps the app alive with no window open.
     std::mem::forget(app.hold());
+
+    // So GNOME shows Sheaves' name and icon for its window, not a generic gear.
+    gtk::Window::set_default_icon_name(APP_ID);
+    if let Err(error) = crate::autostart::this_program()
+        .and_then(|program| crate::launcher::install(&glib::user_data_dir(), &program))
+    {
+        log::warn!("could not install Sheaves' desktop entry: {error}");
+    }
 
     let (snapshots, snapshot_rx) = async_channel::unbounded();
     let directory = persistence::data_directory();
@@ -152,7 +160,11 @@ fn start_indicator(
                 .build()
                 .expect("a runtime can start");
             runtime.block_on(async move {
-                let indicator = match Indicator::start(commands).await {
+                // A missing glyph leaves the item with no icon, not no item.
+                let glyph = indicator::install_glyph(&persistence::data_directory().join("icons"))
+                    .inspect_err(|error| log::warn!("could not write the top bar glyph: {error}"))
+                    .ok();
+                let indicator = match Indicator::start(commands, glyph).await {
                     Ok(indicator) => indicator,
                     Err(error) => {
                         log::error!("no item in the top bar: {error}");

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Sheaves' app icon: its glyph, a sheaf of wheat between the plates of an
+       hourglass, in brown on a wheat-gold tile, in GNOME's icon style. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8e45c"/>
+      <stop offset="1" stop-color="#e5a50a"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="12" width="112" height="108" rx="20" fill="#c64600"/>
+  <rect x="8" y="8" width="112" height="106" rx="20" fill="url(#tile)"/>
+  <g fill="#63452c" transform="translate(22 19) scale(5.25)">
+  <ellipse cx="6.35" cy="6.11" rx="0.35" ry="0.66" transform="rotate(-52 6.35 6.11)"/><ellipse cx="7.01" cy="5.73" rx="0.35" ry="0.66" transform="rotate(-8 7.01 5.73)"/><ellipse cx="5.9" cy="5.33" rx="0.35" ry="0.66" transform="rotate(-52 5.9 5.33)"/><ellipse cx="6.56" cy="4.94" rx="0.35" ry="0.66" transform="rotate(-8 6.56 4.94)"/><ellipse cx="5.44" cy="4.53" rx="0.35" ry="0.66" transform="rotate(-52 5.44 4.53)"/><ellipse cx="6.1" cy="4.14" rx="0.35" ry="0.66" transform="rotate(-8 6.1 4.14)"/><ellipse cx="4.99" cy="3.75" rx="0.35" ry="0.66" transform="rotate(-52 4.99 3.75)"/><ellipse cx="5.65" cy="3.36" rx="0.35" ry="0.66" transform="rotate(-8 5.65 3.36)"/><ellipse cx="5.01" cy="3.02" rx="0.32" ry="0.62" transform="rotate(-30 5.01 3.02)"/>
+  <rect x="6.1" y="6.87" width="2.9" height="1.1" rx="0.55" transform="rotate(-120 7.55 7.42)"/>
+  <ellipse cx="7.62" cy="5.56" rx="0.35" ry="0.66" transform="rotate(-22 7.62 5.56)"/><ellipse cx="8.38" cy="5.56" rx="0.35" ry="0.66" transform="rotate(22 8.38 5.56)"/><ellipse cx="7.62" cy="4.66" rx="0.35" ry="0.66" transform="rotate(-22 7.62 4.66)"/><ellipse cx="8.38" cy="4.66" rx="0.35" ry="0.66" transform="rotate(22 8.38 4.66)"/><ellipse cx="7.62" cy="3.74" rx="0.35" ry="0.66" transform="rotate(-22 7.62 3.74)"/><ellipse cx="8.38" cy="3.74" rx="0.35" ry="0.66" transform="rotate(22 8.38 3.74)"/><ellipse cx="7.62" cy="2.84" rx="0.35" ry="0.66" transform="rotate(-22 7.62 2.84)"/><ellipse cx="8.38" cy="2.84" rx="0.35" ry="0.66" transform="rotate(22 8.38 2.84)"/><ellipse cx="8" cy="2.22" rx="0.32" ry="0.62" transform="rotate(0 8 2.22)"/>
+  <rect x="6.55" y="6.75" width="2.9" height="1.1" rx="0.55" transform="rotate(-90 8 7.3)"/>
+  <ellipse cx="8.99" cy="5.73" rx="0.35" ry="0.66" transform="rotate(8 8.99 5.73)"/><ellipse cx="9.65" cy="6.11" rx="0.35" ry="0.66" transform="rotate(52 9.65 6.11)"/><ellipse cx="9.44" cy="4.94" rx="0.35" ry="0.66" transform="rotate(8 9.44 4.94)"/><ellipse cx="10.1" cy="5.33" rx="0.35" ry="0.66" transform="rotate(52 10.1 5.33)"/><ellipse cx="9.9" cy="4.14" rx="0.35" ry="0.66" transform="rotate(8 9.9 4.14)"/><ellipse cx="10.56" cy="4.53" rx="0.35" ry="0.66" transform="rotate(52 10.56 4.53)"/><ellipse cx="10.35" cy="3.36" rx="0.35" ry="0.66" transform="rotate(8 10.35 3.36)"/><ellipse cx="11.01" cy="3.75" rx="0.35" ry="0.66" transform="rotate(52 11.01 3.75)"/><ellipse cx="10.99" cy="3.02" rx="0.32" ry="0.62" transform="rotate(30 10.99 3.02)"/>
+  <rect x="7" y="6.87" width="2.9" height="1.1" rx="0.55" transform="rotate(-60 8.45 7.42)"/>
+  <rect x="2.8" y="11.15" width="6.4" height="1.2" rx="0.6" transform="rotate(120.02 6 11.75)"/>
+  <rect x="5.15" y="11.15" width="5.7" height="1.2" rx="0.6" transform="rotate(90 8 11.75)"/>
+  <rect x="6.8" y="11.15" width="6.4" height="1.2" rx="0.6" transform="rotate(59.98 10 11.75)"/>
+  <rect x="2.95" y="0.45" width="10.1" height="1.3" rx="0.65" transform="rotate(0 8 1.1)"/>
+  <rect x="2.95" y="14.15" width="10.1" height="1.3" rx="0.65" transform="rotate(0 8 14.8)"/>
+  <rect x="5.7" y="7.5" width="4.6" height="1.7" rx="0.85"/>
+  </g>
+</svg>

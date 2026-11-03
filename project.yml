@@ -30,6 +30,9 @@ targets:
     platform: macOS
     sources:
       - path: Apps/Mac/Sources
+      # The Sheaves glyph. Its source is icons/sheaves-symbolic.svg; the GNOME
+      # app's tests fail if this copy drifts from it.
+      - path: Apps/Mac/Resources/Assets.xcassets
     dependencies:
       - package: SheavesCore
         product: SheavesCore

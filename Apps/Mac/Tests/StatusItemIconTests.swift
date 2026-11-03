@@ -30,6 +30,15 @@ struct StatusItemIconTests {
         #expect(icon.isTemplate == false)
     }
 
+    /// The idle glyph is Sheaves' own, from the asset catalog, not a system symbol:
+    /// a missing asset would leave the menu bar item with no image at all.
+    @Test("idle shows the Sheaves glyph, sized for the menu bar")
+    func idleIsTheSheavesGlyph() throws {
+        let icon = try #require(StatusItemController.icon(for: .idle))
+        #expect(icon.name() == "Sheaves")
+        #expect(icon.size == NSSize(width: 16, height: 16))
+    }
+
     @Test("every other state follows the menu bar")
     func othersAreTemplates() throws {
         for activity in [TimeTracker.Activity.recent(entry(running: false)), .idle] {

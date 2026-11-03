@@ -501,6 +501,18 @@ it on Ubuntu 26.04, the release Hostess runs.
 - **Durations are formatted through the C locale:** the decimal form takes the
   locale's separator; `1:30` keeps ASCII digits, since the C library has no
   duration formatting. Days are formatted by GLib.
+- **Sheaves has a glyph of its own,** a sheaf of wheat between the plates of an
+  hourglass, which both apps show while no timer runs. It replaced SF Symbols'
+  "timer" on the Mac, which Apple's licence keeps off other platforms, and an
+  alarm clock on GNOME. The source is `icons/sheaves-symbolic.svg`, drawn in fills
+  only, because GNOME recolours a symbolic icon's fills and not its strokes; the
+  Mac's asset catalog holds a copy, and a test fails if they differ. The top bar
+  item names the glyph by its file path rather than handing the extension an icon
+  folder, because given a folder the extension looks for every icon there, and the
+  theme's play and pause icons went missing. The app icon,
+  `icons/com.rainhead.Sheaves.svg`, is the same sheaf on a wheat-gold tile; the
+  GNOME app installs it with a desktop entry at each launch, or the dock shows a
+  generic gear.
 - **`SHEAVES_RENDER=<folder>`** in a debug build draws the window from the demo
   account to `gnome-window.png`, as the Mac's documentation images do.
 - **Not in this phase:** the power source (the tracker assumes mains power, which
