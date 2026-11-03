@@ -7,18 +7,12 @@ import Foundation
 public typealias HarvestCredentials = Credentials
 
 public extension Credentials {
-    /// Trims whitespace pasted around either value, as the core's own constructor
-    /// does.
+    /// The core trims whitespace pasted around either value when it connects.
     init(accountID: String, token: String) {
-        self.init(
-            accountId: accountID.trimmingCharacters(in: .whitespacesAndNewlines),
-            token: token.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        self.init(accountId: accountID, token: token)
     }
 
     var accountID: String { accountId }
-
-    var isComplete: Bool { !accountId.isEmpty && !token.isEmpty }
 }
 
 extension TrackedEntry: Identifiable {}
@@ -36,10 +30,7 @@ public extension TrackedEntry {
 }
 
 public extension EntryId {
-    var serverID: Int64? {
-        if case .server(let id) = self { return id }
-        return nil
-    }
+    var serverID: Int64? { harvestId() }
 }
 
 extension TimerTarget: Identifiable {
@@ -70,7 +61,7 @@ public extension ProjectBudget {
 }
 
 public extension HarvestUser {
-    var name: String { "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces) }
+    var name: String { displayName() }
 }
 
 public extension Absence {
@@ -90,7 +81,7 @@ extension CalendarDate: CustomStringConvertible, Comparable {
     public var description: String { iso() }
 
     public static func < (lhs: CalendarDate, rhs: CalendarDate) -> Bool {
-        (lhs.year, lhs.month, lhs.day) < (rhs.year, rhs.month, rhs.day)
+        lhs.isBefore(other: rhs)
     }
 }
 
@@ -109,7 +100,7 @@ public extension CalendarDate {
 }
 
 public extension Connection {
-    var isConfigured: Bool { self != .needsCredentials }
+    var isConfigured: Bool { hasCredentials() }
 }
 
 public extension Activity {

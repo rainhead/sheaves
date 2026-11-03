@@ -395,6 +395,9 @@ impl TimeTracker {
         credentials: Credentials,
         discarding_unsent_changes: bool,
     ) -> Result<(), ConnectError> {
+        // Whitespace pasted around either value is trimmed here, so every shell gets
+        // the same rule.
+        let credentials = Credentials::new(&credentials.account_id, &credentials.token);
         let inner = &self.inner;
         let previous_connection = inner.state.lock().unwrap().connection.clone();
         inner.update(|state| state.connection = Connection::Connecting);
@@ -550,7 +553,7 @@ impl TimeTracker {
             return;
         }
         for (mutation, error) in &report.discarded {
-            log::error!("dropped refused mutation {mutation:?}: {error}");
+            log::error!("dropped refused {}: {error}", mutation.summary());
         }
         // A refused change is dropped rather than retried forever; say so, but carry
         // on: the refresh below will show what Harvest actually holds. Said after the

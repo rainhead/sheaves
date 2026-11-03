@@ -57,18 +57,6 @@ struct KeychainStoreTests {
         #expect(try store.read() == nil)
     }
 
-    @Test("trims whitespace pasted around a token")
-    func trimsPastedWhitespace() throws {
-        let store = makeStore()
-        defer { try? store.delete() }
-        let credentials = HarvestCredentials(accountID: "  12345\n", token: " sekrit ")
-
-        try store.write(credentials: credentials)
-
-        #expect(try store.read()?.token == "sekrit")
-        #expect(try store.read()?.accountID == "12345")
-    }
-
     /// The switch to the Rust core must not sign anybody out: the item the Swift
     /// core saved, keyed `accountID` and `token`, still reads.
     @Test("reads a token saved before the Rust core")

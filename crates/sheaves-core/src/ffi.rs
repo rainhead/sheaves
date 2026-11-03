@@ -34,11 +34,11 @@ use crate::clock::{Clock, SystemClock};
 use crate::credentials::CredentialStore;
 use crate::demo::DemoTransport;
 use crate::hours::{HoursEdit, HoursFormat, parse_hours};
-use crate::models::Reference;
+use crate::models::{HarvestUser, Reference};
 use crate::queue::MutationQueue;
 use crate::snapshot::SnapshotStore;
-use crate::tracked_entry::{ProjectTargets, TimerTarget, TrackedEntry};
-use crate::tracker::{Activity, ConnectError, PowerState, TimeTracker, TrackerState};
+use crate::tracked_entry::{EntryId, ProjectTargets, TimerTarget, TrackedEntry};
+use crate::tracker::{Activity, ConnectError, Connection, PowerState, TimeTracker, TrackerState};
 
 // MARK: Methods on records
 //
@@ -54,6 +54,28 @@ impl TrackedEntry {
 
     pub fn timer_target(&self) -> TimerTarget {
         self.target()
+    }
+}
+
+#[uniffi::export]
+impl EntryId {
+    /// Harvest's id, or `None` for an entry Harvest has not heard of yet.
+    pub fn harvest_id(&self) -> Option<i64> {
+        self.server_id()
+    }
+}
+
+#[uniffi::export]
+impl HarvestUser {
+    pub fn display_name(&self) -> String {
+        self.name()
+    }
+}
+
+#[uniffi::export]
+impl Connection {
+    pub fn has_credentials(&self) -> bool {
+        self.is_configured()
     }
 }
 
@@ -127,6 +149,10 @@ impl CalendarDate {
     /// The ISO 8601 text Harvest reads, such as `2026-08-29`.
     pub fn iso(&self) -> String {
         self.to_string()
+    }
+
+    pub fn is_before(&self, other: CalendarDate) -> bool {
+        *self < other
     }
 
     pub fn plus_days(&self, days: i32) -> CalendarDate {

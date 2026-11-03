@@ -81,6 +81,23 @@ impl Mutation {
         }
     }
 
+    /// What the change is and which entry it acts on, for a log line. Never the
+    /// notes or anything else the user wrote, which the log must not carry.
+    pub fn summary(&self) -> String {
+        let kind = match self {
+            Mutation::Create { .. } => "create",
+            Mutation::Stop { .. } => "stop",
+            Mutation::Restart { .. } => "restart",
+            Mutation::Update { .. } => "update",
+            Mutation::Adjust { .. } => "adjust",
+            Mutation::Delete { .. } => "delete",
+        };
+        match self.subject() {
+            EntryId::Server(id) => format!("{kind} of entry {id}"),
+            EntryId::Local(local) => format!("{kind} of unsent entry {local}"),
+        }
+    }
+
     fn retargeted(&self, to: EntryId) -> Mutation {
         let mut copy = self.clone();
         match &mut copy {
@@ -868,6 +885,18 @@ mod tests {
             });
             queue.claim_if_free(second.clone());
             assert_eq!(queue.owner(), Some(second), "an empty queue is nobody's");
+        }
+
+        /// The log is readable by anyone at the machine, so it gets what a change
+        /// is and which entry, never what the user wrote.
+        #[test]
+        fn summarises_without_the_notes() {
+            let update = Mutation::Update {
+                id: EntryId::Server(42),
+                notes: Some("Client X merger talks".to_string()),
+                hours: None,
+            };
+            assert_eq!(update.summary(), "update of entry 42");
         }
 
         #[test]
