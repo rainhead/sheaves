@@ -179,7 +179,12 @@ impl Item {
 
     #[zbus(property)]
     fn icon_name(&self) -> String {
-        lock(&self.shared).look.icon.clone()
+        let shared = lock(&self.shared);
+        // With no folder to find Sheaves' glyph in, a stock icon says idle instead.
+        if shared.look.icon == GLYPH_NAME && shared.icon_folder.is_empty() {
+            return "alarm-symbolic".to_string();
+        }
+        shared.look.icon.clone()
     }
 
     #[zbus(property)]
