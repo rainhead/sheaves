@@ -17,6 +17,7 @@ xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
 /usr/bin/log show --last 5m --info \
   --predicate 'subsystem == "com.rainhead.Sheaves"'   # what the app did
 Scripts/package-release.sh                         # what a release ships
+Scripts/render-mac-app-icon.sh                     # after changing icons/com.rainhead.Sheaves.svg
 ```
 
 On Hostess (Ubuntu, GNOME), in `~/dev/sheaves`:

@@ -512,7 +512,8 @@ it on Ubuntu 26.04, the release Hostess runs.
   theme's play and pause icons went missing. The app icon,
   `icons/com.rainhead.Sheaves.svg`, is the same sheaf on a wheat-gold tile; the
   GNOME app installs it with a desktop entry at each launch, or the dock shows a
-  generic gear.
+  generic gear. The Mac app's icon is the same tile, rendered to PNGs by
+  `Scripts/render-mac-app-icon.sh`.
 - **`SHEAVES_RENDER=<folder>`** in a debug build draws the window from the demo
   account to `gnome-window.png`, as the Mac's documentation images do.
 - **Not in this phase:** the power source (the tracker assumes mains power, which
