@@ -1079,8 +1079,22 @@ impl TimeTracker {
         if entry.is_locked {
             return;
         }
-        self.inner
-            .update(|state| state.entries.retain(|candidate| candidate.id != entry.id));
+        let today = self.inner.clock.today();
+        self.inner.update(|state| {
+            state.entries.retain(|candidate| candidate.id != entry.id);
+            // The menu bar's memory of today goes too, or "start on today" would
+            // resume the deleted entry instead of creating one: the queue would
+            // send the delete, then a restart Harvest refuses, and the new timer
+            // would never exist.
+            if state
+                .last_active_today
+                .as_ref()
+                .is_some_and(|recent| recent.id == entry.id)
+            {
+                state.last_active_today = None;
+                note_last_activity(state, today);
+            }
+        });
         self.enqueue(vec![Mutation::Delete { id: entry.id }]).await;
     }
 
