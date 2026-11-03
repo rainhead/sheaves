@@ -419,11 +419,7 @@ impl Indicator {
             )?
             .build()
             .await?;
-        register(&connection, &name).await;
-        tokio::spawn(reregister_when_the_watcher_returns(
-            connection.clone(),
-            name,
-        ));
+        tokio::spawn(stay_registered(connection.clone(), name));
         Ok(Self { connection, shared })
     }
 
@@ -476,16 +472,32 @@ async fn register(connection: &Connection, name: &str) {
     }
 }
 
-/// The watcher lives in GNOME Shell, so a shell restart or the extension being
-/// turned off and on forgets every item. Each time it comes back, register again.
-async fn reregister_when_the_watcher_returns(connection: Connection, name: String) {
-    let Ok(bus) = fdo::DBusProxy::new(&connection).await else {
-        return;
+/// Registers with the watcher now if it is there, and again each time it
+/// returns. The watcher lives in GNOME Shell, so a shell restart or the extension
+/// being turned off and on forgets every item.
+///
+/// The watch is set up before looking, so a watcher that appears in between, as
+/// it can while the session is still starting at login, is not missed.
+async fn stay_registered(connection: Connection, name: String) {
+    let bus = match fdo::DBusProxy::new(&connection).await {
+        Ok(bus) => bus,
+        Err(error) => {
+            log::warn!("cannot watch for the top bar: {error}");
+            register(&connection, &name).await;
+            return;
+        }
     };
-    let Ok(mut changes) = bus
+    let changes = bus
         .receive_name_owner_changed_with_args(&[(0, WATCHER)])
+        .await;
+    match bus
+        .name_has_owner(WATCHER.try_into().expect("a valid bus name"))
         .await
-    else {
+    {
+        Ok(true) => register(&connection, &name).await,
+        _ => log::info!("waiting for the top bar's tray to appear"),
+    }
+    let Ok(mut changes) = changes else {
         return;
     };
     use futures_lite::StreamExt;
