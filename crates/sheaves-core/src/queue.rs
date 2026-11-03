@@ -540,8 +540,14 @@ impl MutationQueue {
         else {
             return Ok(None);
         };
+        // The tracker claims a queue before draining it, so this is a fallback: with
+        // no owner there is no telling whose entries to search, and posting again
+        // could duplicate the entry.
         let Some(owner) = self.owner() else {
-            return Ok(None);
+            return Err(HarvestError::Network {
+                reason: "the queue has no owner yet, so an earlier attempt cannot be checked"
+                    .to_string(),
+            });
         };
         let taken: Vec<i64> = {
             let state = self.state.lock().unwrap();

@@ -1400,6 +1400,37 @@ mod queue_ownership {
         assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
     }
 
+    /// A queue is claimed before its first change is sent, so a retried create can
+    /// always look among its owner's entries rather than post again.
+    #[tokio::test]
+    async fn an_unowned_queue_is_claimed_before_it_drains() {
+        let scratch = scratch();
+        let target = TimerTarget {
+            project: Reference::new(14308069, "Online Store - Phase 1"),
+            task: Reference::new(8083366, "Programming"),
+            client: None,
+        };
+        reopened_queue(&scratch).enqueue(Mutation::Create {
+            local: Uuid::new_v4(),
+            target,
+            spent_date: today(),
+            notes: None,
+            started_at: offset_by(Timestamp::now(), -3600.0),
+            ended_at: Some(Timestamp::now()),
+        });
+        let failing = RoutingTransport::new(vec![
+            Route::new(Method::Get, "users/me", fixture::CURRENT_USER),
+            Route::new(Method::Post, "time_entries", "").status(500),
+        ]);
+
+        tracker(failing, &scratch).sync().await;
+
+        assert_eq!(
+            reopened_queue(&scratch).owner().map(|owner| owner.user_id),
+            Some(1782959)
+        );
+    }
+
     #[tokio::test]
     async fn unowned_queue_is_kept() {
         let scratch = scratch();

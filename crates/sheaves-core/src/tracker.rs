@@ -572,6 +572,25 @@ impl TimeTracker {
             }
         }
 
+        // A queue nobody has claimed yet is claimed before anything is sent, so the
+        // drain knows whose entries to look among when it retries a create whose
+        // fate is unknown. Without an owner it could only post again.
+        if inner.queue.owner().is_none()
+            && !inner.queue.is_empty()
+            && let Some(credentials) = inner.client.installed_credentials()
+        {
+            match self.current_user().await {
+                Ok(user) => inner.queue.claim_if_free(Owner {
+                    account_id: credentials.account_id,
+                    user_id: user.id,
+                }),
+                Err(error) => {
+                    inner.note_sync_failure(&error);
+                    return;
+                }
+            }
+        }
+
         let report = inner.queue.drain(&inner.client).await;
         let pending = inner.queue.count() as u32;
         inner.update(|state| {
