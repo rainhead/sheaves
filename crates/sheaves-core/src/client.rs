@@ -486,7 +486,15 @@ impl HarvestClient {
             })?;
             collected.extend(page.items);
             next = match (page.next_link, page.next_page) {
-                (Some(link), _) => Some(link),
+                // The token goes with every request, so it follows a link only while
+                // the link stays on the API.
+                (Some(link), _) if is_api_url(&link) => Some(link),
+                (Some(link), _) => {
+                    return Err(HarvestError::Decoding {
+                        endpoint: path.to_string(),
+                        detail: format!("links.next points outside the API: {link}"),
+                    });
+                }
                 (None, Some(number)) => {
                     let mut query = query.clone();
                     query.retain(|(key, _)| *key != "page");
@@ -623,6 +631,11 @@ fn decode<T: DeserializeOwned>(data: &[u8], endpoint: &str) -> Result<T, Harvest
         endpoint: endpoint.to_string(),
         detail,
     })
+}
+
+fn is_api_url(url: &Url) -> bool {
+    let base = Url::parse(BASE_URL).expect("BASE_URL is well formed");
+    url.origin() == base.origin() && url.path().starts_with(base.path())
 }
 
 /// Seconds Harvest asks us to wait, or its own window of fifteen when the header is
@@ -1038,6 +1051,24 @@ mod tests {
                 .unwrap();
             assert_eq!(entries.len(), 2);
             assert!(transport.request(1).url.as_str().contains("page=2"));
+        }
+
+        /// The token rides on every request, so a link off the API is not followed.
+        #[tokio::test]
+        async fn refuses_a_link_off_the_api() {
+            let elsewhere = "https://example.com/v2/time_entries?page=2";
+            let transport = StubTransport::new(vec![Scripted::ok(&fixture::time_entries_page(
+                &[fixture::time_entry()],
+                None,
+                1,
+                1,
+                Some(elsewhere),
+            ))]);
+            let result = client(&transport)
+                .time_entries(1782959, today(), today())
+                .await;
+            assert!(matches!(result, Err(HarvestError::Decoding { .. })));
+            assert_eq!(transport.request_count(), 1);
         }
 
         /// A link pointing back at a page already fetched would otherwise never end.

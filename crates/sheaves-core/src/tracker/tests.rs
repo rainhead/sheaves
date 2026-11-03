@@ -490,6 +490,40 @@ mod time_tracker {
         assert!(correction.hours.unwrap() >= 1.0);
     }
 
+    /// Started, stopped and resumed, all before the queue drained. The create keeps
+    /// the first run, and the resume goes as a restart, so the pause between them is
+    /// never billed.
+    #[tokio::test]
+    async fn a_pause_before_the_first_drain_is_not_billed() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        transport.go_offline();
+
+        tracker.start(&target, None).await;
+        let running = tracker.state().running_entry().cloned().unwrap();
+        tracker.stop(&running).await;
+        let stopped = tracker
+            .state()
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == running.id)
+            .unwrap();
+        tracker.resume(&stopped).await;
+
+        let pending = reopened_queue(&scratch).pending();
+        assert!(matches!(
+            pending[0],
+            Mutation::Create {
+                ended_at: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(pending[1], Mutation::Restart { .. }));
+    }
+
     #[tokio::test]
     async fn stop_banks_elapsed_time() {
         let scratch = scratch();

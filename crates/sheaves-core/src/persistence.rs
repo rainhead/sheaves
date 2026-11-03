@@ -41,8 +41,15 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
 /// For files whose loss loses work: an older build meeting a kind of change only a
 /// newer one writes would otherwise start empty and save over every unsent change.
 pub fn read_json_or_set_aside<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    let data = std::fs::read(path).ok()?;
-    match serde_json::from_slice(&data) {
+    // Only a missing file means there is nothing; a file that exists but will not
+    // read, for permissions or a disk error, is set aside like one that will not
+    // decode.
+    let parsed = match std::fs::read(path) {
+        Ok(data) => serde_json::from_slice(&data).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => Err(error.to_string()),
+    };
+    match parsed {
         Ok(value) => Some(value),
         Err(error) => {
             let stamp = jiff::Timestamp::now().as_nanosecond();

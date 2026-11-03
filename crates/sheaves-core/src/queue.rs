@@ -248,36 +248,49 @@ impl MutationQueue {
         }
     }
 
-    /// Marks a queued create as finished, or running again, without adding a second
-    /// mutation, for a timer started and stopped before the queue ever drained.
-    /// Returns false when no such create is pending, and the caller queues a stop or
-    /// a restart instead.
+    /// Marks a queued create as finished without adding a second mutation, for a
+    /// timer started and stopped before the queue ever drained. Returns false when
+    /// the create cannot be amended, and the caller queues a stop or a restart
+    /// instead, which carry the times the tracker measured.
     ///
-    /// The create at the head of a queue that is draining may already be on its way
-    /// to Harvest, and is refused. Amended in flight, it would no longer match the
-    /// copy the drain sent, so the drain would leave it queued and send it again: a
-    /// second entry for one timer.
+    /// A create's hours are the span from its start to its end, so it can describe
+    /// only a timer that ran once without a break. It is refused:
+    ///
+    /// - when it is not pending;
+    /// - when it is the head of a queue that is draining, since it may already be on
+    ///   its way to Harvest. Amended in flight, it would no longer match the copy
+    ///   the drain sent, so the drain would leave it queued and send it again: a
+    ///   second entry for one timer;
+    /// - when it has ended and the caller would reopen it, or when a later queued
+    ///   change already refers to it. Either way the timer has paused, and a span
+    ///   from the first start would bill the pause.
     pub fn amend_create(&self, local: Uuid, ended_at: Option<Timestamp>) -> bool {
         let mut amended = false;
         self.change(|state| {
-            for (index, mutation) in state.pending.iter_mut().enumerate() {
-                if let Mutation::Create {
-                    local: id,
-                    ended_at: end,
-                    ..
-                } = mutation
-                    && *id == local
-                {
-                    // Read under the lock the drain takes to copy the head, so the
-                    // two cannot interleave.
-                    if index == 0 && self.is_draining.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    *end = ended_at;
-                    amended = true;
-                    return;
-                }
+            let Some(index) = state.pending.iter().position(
+                |mutation| matches!(mutation, Mutation::Create { local: id, .. } if *id == local),
+            ) else {
+                return;
+            };
+            // Read under the lock the drain takes to copy the head, so the two
+            // cannot interleave.
+            if index == 0 && self.is_draining.load(Ordering::SeqCst) {
+                return;
             }
+            if state.pending[index + 1..]
+                .iter()
+                .any(|mutation| mutation.subject() == EntryId::Local(local))
+            {
+                return;
+            }
+            let Mutation::Create { ended_at: end, .. } = &mut state.pending[index] else {
+                unreachable!("found as a create");
+            };
+            if end.is_some() && ended_at.is_none() {
+                return;
+            }
+            *end = ended_at;
+            amended = true;
         });
         amended
     }
@@ -1082,6 +1095,32 @@ mod tests {
             assert!(queue.amend_create(local, Some(Timestamp::now())));
             assert_eq!(queue.count(), 1);
             assert!(!queue.amend_create(Uuid::new_v4(), Some(Timestamp::now())));
+        }
+
+        /// Stopped and resumed before the queue drained: the create cannot describe
+        /// that, since its span from the first start would bill the pause. Reopening
+        /// is refused, the tracker queues a restart from the resume, and from then on
+        /// the create stays as it is.
+        #[test]
+        fn never_reopens_a_finished_create() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let local = Uuid::new_v4();
+            queue.enqueue(create(local, ago(3600.0), None));
+            assert!(queue.amend_create(local, Some(ago(1800.0))));
+
+            assert!(!queue.amend_create(local, None));
+            queue.enqueue(Mutation::Restart {
+                id: EntryId::Local(local),
+                resumed_at: ago(600.0),
+                banked_hours: 0.5,
+            });
+            assert!(!queue.amend_create(local, Some(Timestamp::now())));
+
+            let Mutation::Create { ended_at, .. } = &queue.pending()[0] else {
+                panic!("the create is still first");
+            };
+            assert!(ended_at.is_some());
         }
     }
 
