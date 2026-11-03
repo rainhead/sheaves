@@ -1018,6 +1018,32 @@ mod queue_ownership {
         assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
     }
 
+    /// The same, with the previous user still in the cache: a launch after dying
+    /// between saving new credentials and claiming the queue.
+    #[tokio::test]
+    async fn sync_refuses_another_users_queue_despite_the_cache() {
+        let scratch = scratch();
+        queue_one_start_offline(&scratch).await;
+        assert!(
+            SnapshotStore::new(&scratch.snapshot)
+                .load()
+                .unwrap()
+                .user
+                .is_some()
+        );
+
+        let transport = colleague();
+        let tracker = tracker(transport.clone(), &scratch);
+        // Restores the cached user. The store holds no credentials, so it syncs
+        // nothing itself; the client was given the colleague's token directly.
+        tracker.bootstrap().await;
+        assert_eq!(tracker.state().user.map(|user| user.id), Some(1782959));
+        tracker.sync().await;
+
+        assert!(transport.calls_to(Method::Post, "time_entries").is_empty());
+        assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
+    }
+
     #[tokio::test]
     async fn unowned_queue_is_kept() {
         let scratch = scratch();

@@ -434,9 +434,11 @@ impl TimeTracker {
                 Ok(())
             }
             Err(error) => {
-                inner.is_changing_credentials.store(false, Ordering::SeqCst);
-                inner.update(|state| state.connection = previous_connection);
+                // The old credentials go back before syncs are let through again,
+                // or one could drain under the token just refused.
                 inner.client.set_credentials(previous);
+                inner.update(|state| state.connection = previous_connection);
+                inner.is_changing_credentials.store(false, Ordering::SeqCst);
                 Err(error)
             }
         }
@@ -617,7 +619,16 @@ impl TimeTracker {
         if owner.account_id != credentials.account_id {
             return Ok(true);
         }
-        Ok(owner.user_id != self.current_user().await?.id)
+        // Asked of Harvest, not of the cached user: the cache can come from a snapshot
+        // written under other credentials, such as a colleague's on the same
+        // account. This runs only while changes are queued, so it costs one request
+        // at most per sync.
+        let user = inner.client.current_user().await?;
+        let mismatched = owner.user_id != user.id;
+        if !mismatched {
+            inner.update(|state| state.user = Some(user));
+        }
+        Ok(mismatched)
     }
 
     /// Project assignments and company settings change rarely and cost two

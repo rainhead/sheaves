@@ -34,6 +34,37 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     }
 }
 
+/// The value stored at `path`, or `None` when there is no file. A file that exists
+/// but cannot be read as a `T` is moved aside first, to `<name>.unreadable-<time>`,
+/// so the caller's next write cannot destroy it.
+///
+/// For files whose loss loses work: an older build meeting a kind of change only a
+/// newer one writes would otherwise start empty and save over every unsent change.
+pub fn read_json_or_set_aside<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let data = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&data) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            let stamp = jiff::Timestamp::now().as_nanosecond();
+            let mut aside = path.as_os_str().to_owned();
+            aside.push(format!(".unreadable-{stamp}"));
+            let aside = PathBuf::from(aside);
+            match std::fs::rename(path, &aside) {
+                Ok(()) => log::error!(
+                    "could not read {}: {error}; kept it as {}",
+                    path.display(),
+                    aside.display()
+                ),
+                Err(rename) => log::error!(
+                    "could not read {}: {error}, nor move it aside: {rename}",
+                    path.display()
+                ),
+            }
+            None
+        }
+    }
+}
+
 /// Writes `value` to `path` through a temporary file and a rename, so a crash
 /// mid-write leaves the previous file intact.
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {

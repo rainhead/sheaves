@@ -251,7 +251,12 @@ stub peer transport through three scenarios: the nine, ten, twelve case prompts 
 neither; a shared lunch prompts on both and the second prompt withdraws when the
 first is answered; a stop after a remote trim sends the recomputed hours. A fourth
 test sends a request from an address outside the tailnet ranges and checks that it
-is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
+is refused. Settle here too a gap the phase 1 review found, in Swift and
+Rust alike: when a create's POST fails with a 5xx or times out after Harvest saved
+it, the queue sends it again and the user gets two entries. Harvest has no
+idempotency key, so the fix is the same move as the stop re-read: mark the create as
+attempted before sending, and on a retry look for the entry first. What counts as a
+match is the open question, since project, task and day alone are not unique. The Mac gains a peers field in Settings, and the sandboxed app needs
 the `com.apple.security.network.server` entitlement to listen. Done when the
 scenarios pass and the Mac serves and answers the requests on the tailnet.
 

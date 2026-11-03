@@ -181,7 +181,7 @@ impl MutationQueue {
     /// cannot be read.
     pub fn open(path: impl Into<PathBuf>, clock: Arc<dyn Clock>) -> Self {
         let path = path.into();
-        let state = persistence::read_json(&path).unwrap_or_default();
+        let state = persistence::read_json_or_set_aside(&path).unwrap_or_default();
         Self {
             state: Mutex::new(state),
             is_draining: AtomicBool::new(false),
@@ -786,6 +786,32 @@ mod tests {
             assert_eq!(report.discarded.len(), 1);
             assert_eq!(report.applied, 1);
             assert!(queue.is_empty());
+        }
+
+        /// A queue file this build cannot read, such as one a newer build wrote, is
+        /// kept beside the new one rather than overwritten by it.
+        #[test]
+        fn sets_aside_an_unreadable_file() {
+            let scratch = scratch();
+            std::fs::write(&scratch.path, r#"{"pending": [{"kind": "teleport"}]}"#).unwrap();
+
+            let queue = open(&scratch);
+            assert!(queue.is_empty());
+            queue.enqueue(Mutation::Delete {
+                id: EntryId::Server(1),
+            });
+
+            let kept: Vec<_> = std::fs::read_dir(scratch.path.parent().unwrap())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().contains(".unreadable-"))
+                .collect();
+            assert_eq!(kept.len(), 1);
+            assert!(
+                std::fs::read_to_string(kept[0].path())
+                    .unwrap()
+                    .contains("teleport")
+            );
         }
 
         #[test]
