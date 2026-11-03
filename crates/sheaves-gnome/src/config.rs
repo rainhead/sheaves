@@ -33,7 +33,14 @@ impl Config {
                 );
                 Self::default()
             }),
-            Err(_) => Self::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) => {
+                log::warn!(
+                    "ignoring settings in {} that cannot be read: {error}",
+                    path.display()
+                );
+                Self::default()
+            }
         }
     }
 

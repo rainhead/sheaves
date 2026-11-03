@@ -86,33 +86,26 @@ async fn run(
     // Unlocking and waking are not needed to measure an absence: the gap in the
     // evidence does that. They are what lets it be asked about the moment the user
     // is back, rather than up to half a minute later.
+    // Both are optional: without them the half-minute poll still notices every
+    // absence, only up to half a minute later.
     let (wake, mut woken) = tokio::sync::mpsc::unbounded_channel::<&'static str>();
-    let mut unlocked = screen.receive_active_changed().await?;
-    let unlock = wake.clone();
-    tokio::spawn(async move {
-        while let Some(change) = unlocked.next().await {
-            if change.args().is_ok_and(|args| !args.new_value) && unlock.send("unlock").is_err() {
-                return;
-            }
-        }
-    });
-    match Connection::system().await {
-        Ok(system) => match LoginProxy::new(&system).await {
-            Ok(login) => {
-                let mut sleeps = login.receive_prepare_for_sleep().await?;
-                tokio::spawn(async move {
-                    // Hold the connection for as long as the signal is wanted.
-                    let _system = system;
-                    while let Some(sleep) = sleeps.next().await {
-                        if sleep.args().is_ok_and(|args| !args.start) && wake.send("wake").is_err()
-                        {
-                            return;
-                        }
+    match screen.receive_active_changed().await {
+        Ok(mut unlocked) => {
+            let unlock = wake.clone();
+            tokio::spawn(async move {
+                while let Some(change) = unlocked.next().await {
+                    if change.args().is_ok_and(|args| !args.new_value)
+                        && unlock.send("unlock").is_err()
+                    {
+                        return;
                     }
-                });
-            }
-            Err(error) => log::warn!("will not notice waking from sleep: {error}"),
-        },
+                }
+            });
+        }
+        Err(error) => log::warn!("will not notice the screen unlocking: {error}"),
+    }
+    match watch_for_waking(wake).await {
+        Ok(()) => {}
         Err(error) => log::warn!("will not notice waking from sleep: {error}"),
     }
 
@@ -147,6 +140,25 @@ async fn run(
             }
         }
     }
+}
+
+/// Sends on `wake` each time the machine resumes from sleep.
+async fn watch_for_waking(
+    wake: tokio::sync::mpsc::UnboundedSender<&'static str>,
+) -> zbus::Result<()> {
+    let system = Connection::system().await?;
+    let login = LoginProxy::new(&system).await?;
+    let mut sleeps = login.receive_prepare_for_sleep().await?;
+    tokio::spawn(async move {
+        // Hold the connection for as long as the signal is wanted.
+        let _system = system;
+        while let Some(sleep) = sleeps.next().await {
+            if sleep.args().is_ok_and(|args| !args.start) && wake.send("wake").is_err() {
+                return;
+            }
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]

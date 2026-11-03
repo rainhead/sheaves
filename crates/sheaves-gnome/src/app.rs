@@ -331,6 +331,9 @@ impl Shell {
                 let shell = self.clone();
                 glib::spawn_future_local(async move {
                     shell.tracker.resolve(absence, entry, resolution).await;
+                    // The state the answer left, before the next question is
+                    // checked against it: its report may not have arrived yet.
+                    shell.receive(shell.tracker.snapshot());
                     *shell.prompt.borrow_mut() = Prompt::Idle;
                     shell.ask_about_next_absence();
                 });
