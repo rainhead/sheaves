@@ -342,6 +342,11 @@ impl HarvestClient {
         .await
     }
 
+    /// One entry as Harvest holds it now.
+    pub async fn time_entry(&self, id: i64) -> Result<TimeEntry, HarvestError> {
+        self.get(&format!("time_entries/{id}"), &[]).await
+    }
+
     /// The user's running timer, if any. Harvest permits at most one.
     pub async fn running_time_entry(
         &self,

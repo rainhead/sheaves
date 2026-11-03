@@ -529,6 +529,46 @@ mod time_tracker {
         assert!(matches!(pending[2], Mutation::Restart { .. }));
     }
 
+    /// A stop carries what the local copy believed about the run, so delivery can
+    /// check it against Harvest, unless a change to the same entry is still queued
+    /// here. Harvest's copy then waits on this machine's own change, and that
+    /// change landing late would look like another client's doing.
+    #[tokio::test]
+    async fn a_stop_carries_its_run_unless_a_change_waits_ahead_of_it() {
+        let scratch = scratch();
+        let transport = RoutingTransport::account_with_running_timer();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let running = tracker.state().running_entry().cloned().unwrap();
+        transport.go_offline();
+
+        tracker.stop(&running).await;
+        let Mutation::Stop { run: Some(run), .. } = reopened_queue(&scratch).pending()[0] else {
+            panic!("expected a stop with its run");
+        };
+        assert_eq!(Some(run.started_at), running.timer_started_at);
+        assert_eq!(run.banked_hours, running.banked_hours);
+
+        let stopped = tracker.state().running_entry().cloned();
+        assert!(stopped.is_none());
+        let entry = tracker
+            .state()
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == running.id)
+            .unwrap();
+        tracker.resume(&entry).await;
+        let resumed = tracker.state().running_entry().cloned().unwrap();
+        tracker.stop(&resumed).await;
+        let pending = reopened_queue(&scratch).pending();
+        assert!(matches!(pending[1], Mutation::Restart { .. }));
+        assert!(
+            matches!(pending[2], Mutation::Stop { run: None, .. }),
+            "{:?}",
+            pending[2]
+        );
+    }
+
     /// Browsing to another day offline cannot load it, so the running timer must
     /// not go with the old day's list: it would be left with nothing to stop it.
     #[tokio::test]

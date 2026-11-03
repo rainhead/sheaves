@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(TimeTracker.self) private var tracker
     @Environment(HotKeyPreference.self) private var hotKeys
     @Environment(LoginItemPreference.self) private var loginItem
+    @Environment(PeerPreference.self) private var peers
 
     @State private var accountID = ""
     @State private var token = ""
@@ -15,6 +16,9 @@ struct SettingsView: View {
     /// How many queued changes the credentials just tried would orphan, while the
     /// user is being asked what to do about them.
     @State private var unsentElsewhere: Int?
+    /// The peers as typed, kept apart from the names so a separator typed last is
+    /// not taken away mid-word.
+    @State private var peerText: String?
 
     var body: some View {
         Form {
@@ -25,6 +29,7 @@ struct SettingsView: View {
             }
             shortcutSection
             startupSection
+            peersSection
             aboutSection
         }
         .formStyle(.grouped)
@@ -142,6 +147,35 @@ struct SettingsView: View {
         Section("About") {
             LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")
             LabeledContent("Core", value: coreVersion())
+        }
+    }
+
+    private var peersSection: some View {
+        Section {
+            TextField(
+                "Peers",
+                text: Binding(
+                    get: { peerText ?? peers.names.joined(separator: ", ") },
+                    set: { text in
+                        peerText = text
+                        peers.names = PeerPreference.names(in: text)
+                    }
+                ),
+                prompt: Text("hostess, peters-macbook-air")
+            )
+            if !peers.names.isEmpty {
+                let addresses = tracker.listeningOn
+                LabeledContent(
+                    "Answering on",
+                    value: addresses.isEmpty ? "No tailnet address" : addresses.joined(separator: ", ")
+                )
+            }
+        } header: {
+            Text("Peers")
+        } footer: {
+            Text("Other machines running Sheaves, by their names on your tailnet. Before asking whether you were away, this Mac asks them whether they saw you meanwhile, and it answers them in turn. Only machines on the tailnet are asked or answered.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

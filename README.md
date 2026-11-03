@@ -99,6 +99,12 @@ Create a personal access token at
 with the account ID shown beside it, into Sheaves' settings. The token is stored in
 the Keychain and sent only to `api.harvestapp.com`.
 
+To share presence with another machine running Sheaves, name it under Peers in
+Settings by its name on your tailnet. The Mac then answers on its tailnet addresses,
+port 47147. Allow Sheaves under System Settings › Network › Firewall › Options if
+the firewall is on: it holds incoming connections to an app it does not know without
+saying so, and an ad-hoc signed build may need allowing again after an update.
+
 Settings has a switch to open Sheaves at login, which registers the bundle where it
 sits right now — move the app and the switch has to go off and on again to point at
 the new location.
@@ -162,6 +168,16 @@ or a phone is left alone, because this Mac knows nothing about it.
 [How Sheaves decides you are here](docs/presence.md) has the measurements and the
 limits.
 
+**Two machines agree about when you were away.** Start a timer on the Mac, work at
+another machine for two hours, come back, and the Mac alone would offer to trim two
+hours of real work. So each instance keeps a day's log of when it saw you, and before
+asking about an absence it asks its peers whether they saw you meanwhile. When it
+changes a timer it tells them, so they look at Harvest at once, and an open question
+the change answered goes away. A stop reads the entry back before sending its hours,
+so a trim made on the other machine is not overwritten. Peers talk only over the
+tailnet, which is what authenticates and encrypts them; the rules are in
+[`peers.rs`](crates/sheaves-core/src/peers.rs).
+
 <img src="docs/images/absence-prompt.png" width="440"
   alt="The Sheaves absence prompt: a timer that ran while nobody was here, with
   buttons to trim and keep timing, trim and stop, log the time away against another
@@ -199,7 +215,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 
 | Path | What lives there |
 | --- | --- |
-| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence. Rust, so a GNOME app can share it. |
+| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and the peers it is shared with. Rust, so a GNOME app can share it. |
 | [`Packages/SheavesCore`](Packages/SheavesCore) | The core as Swift sees it: the [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings, an `@Observable` wrapper, the Keychain, and formatting. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |

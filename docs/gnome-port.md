@@ -359,6 +359,40 @@ when every target above has a property test that a deliberately introduced defec
 makes fail, and each failure the tests found is fixed or written up as an open
 question.
 
+**Found in phase 4.** The property tests are on the branch `gnome-4-property-tests`,
+in `crates/sheaves-core/tests`, and stay unmerged. There are three:
+
+- **`timesheet_model.rs`** runs the tracker and its queue against a simulated
+  Harvest through random user actions, interleaved with a network that drops
+  requests, fails, or saves a request and loses the reply, with relaunches of
+  the app from its files, and with edits made elsewhere (hours, notes, deletes,
+  timers started on the web). Once the network recovers, the queue must drain,
+  Harvest must hold what the user did, and the app must show what a fresh launch
+  reading Harvest alone shows. It covers the queue and tracker targets except a
+  token for another account, which it does not generate; the tracker's unit tests
+  for connecting cover that.
+- **`presence_model.rs`** lays out a day at the desk (typing, reading, calls, a
+  locked screen, sleep), polls it as the Mac app does, and checks the absences
+  reported against the gaps in the evidence a poll could see. The order in which
+  evidence arrives only varies once peers exist, so phase 5 extends this test.
+- **`round_trips.rs`** covers `CalendarDate` text, durations as the shells display
+  them, and the queue and cache files.
+
+Each was checked against planted defects, among them a queue file that forgets a
+create was attempted, a queue that retries a change to an entry deleted
+elsewhere, a halved absence threshold, an ignored microphone, and a field the
+cache file drops. Each planted defect made its test fail.
+
+Two bugs were found and fixed: a deleted entry could be resumed
+([#18](https://github.com/rainhead/sheaves/pull/18)), and four hundred digits
+typed as a duration read as infinite hours, which made the queue file unreadable
+([#22](https://github.com/rainhead/sheaves/pull/22)). Three questions about when
+an absence begins are open in [#23](https://github.com/rainhead/sheaves/issues/23).
+One finding was written up and not changed: serde_json reads a float back up to one
+unit in the last place away from what it wrote, because its `float_roundtrip`
+feature is off. That is harmless here, because every hours figure is rounded to
+two decimals before it is sent.
+
 ### Phase 5: peers (core and Mac, a few days; Opus)
 
 Implement the presence log, the two requests, the merge before reporting, the
@@ -371,6 +405,60 @@ test sends a request from an address outside the tailnet ranges and checks that 
 is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
 the `com.apple.security.network.server` entitlement to listen. Done when the
 scenarios pass and the Mac serves and answers the requests on the tailnet.
+
+**Decided in phase 5.** The peers live in
+[`crates/sheaves-core/src/peers.rs`](../crates/sheaves-core/src/peers.rs), so the
+GNOME app gets them whole:
+
+- **One object per machine, `Peers`,** holds the presence log, the names to ask,
+  and whose machine it is. `Presence` wraps the presence monitor around it: each
+  poll's evidence goes into the log, and each absence the monitor finds is checked
+  with the peers before it is reported. The tracker `join`s the same `Peers`, so it
+  announces what it delivered and syncs when told. On the Mac,
+  `Tracker::presence` hands out a fold joined to the tracker's peers.
+- **The merge subtracts what peers saw rather than feeding a detector.** Feeding
+  interval boundaries into `AbsenceDetector`, as this file first said, would
+  measure the inside of a peer's interval as a gap. `unwitnessed` removes every
+  covered stretch from the absence and keeps what is left over the threshold, so
+  half an hour seen at Hostess in the middle of a morning leaves two absences, each
+  asked about in turn.
+- **The log is in memory.** A relaunch counts as presence anyway, so there is
+  nothing to lose. It reaches back a day.
+- **Port 47147, HTTP/1.1 through hyper.** reqwest already brings hyper, so the
+  server adds little. The listener looks for this machine's tailnet addresses once a
+  minute, so Tailscale started after the app is found. It listens only while at
+  least one peer is named. `POST /touched` carries a list of entry ids, since one
+  drain can change several.
+- **A stop carries its run:** when the timer started, the hours banked before, and
+  when the user stopped it. Delivery reads the entry back first. Not running: the
+  stop is dropped. Running since the same start with the same banked hours: the hours
+  measured here go. Running since some other start: Harvest's banked hours plus the
+  time from that start to the stop. Restarted more than two minutes after the stop:
+  dropped, since the later action wins. Two cases needed care. A stop made while a
+  change to the same entry is still queued here carries no run, because this
+  machine's own restart landing late would look like another client's. And the
+  hours decided on are written into the queued stop with the attempt, so a stop
+  whose `/stop` landed but whose correction failed still sends them on retry.
+- **A prompt withdraws itself** when, on any change of state, the running timer no
+  longer ran through the absence (`TrackerState::absence_applies`). The Mac's
+  prompt watches the tracker for that.
+
+Checked on the machines, 2026-11-03: the core built and served on Hostess, and
+answered from the Mac over the tailnet with presence for the right user, 403 for
+another, and the change notice; nothing answered on Hostess's LAN address. From the
+Mac, the core's client found Hostess by name and read its log. The Mac's own
+listener bound to both tailnet addresses but answered nothing, because the macOS
+application firewall silently holds incoming connections to programs it does not
+know (a built-in `nc` on the same address answered). The app is ad-hoc signed, so
+it will need allowing under System Settings › Network › Firewall › Options, and may
+need it again after each build. Whether the sandboxed app then answers is unchecked.
+
+Open, for Peter: answering **Keep** on one machine changes nothing in Harvest, so
+the other machine's prompt for the same lunch stays open and asks again. Withdrawing
+it would need the answer itself shared between peers. And if both prompts are
+answered with a trim within the few seconds before the notice arrives, the second
+machine's stop is dropped as stale but its restart still goes, which patches the
+running timer's hours to its own trim.
 
 ### Phase 6: the GNOME app (Hostess, a few days)
 

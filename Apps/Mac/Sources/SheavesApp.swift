@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let tracker = AppDelegate.makeTracker()
     let hotKeyPreference = HotKeyPreference()
     let loginItem = LoginItemPreference()
+    let peerPreference = PeerPreference()
 
     /// A demo instance runs beside the real one, on the documentation account —
     /// so a real screenshot can show the status item and its panel without
@@ -64,7 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var settings = SettingsWindowController(
         tracker: tracker,
         hotKeys: hotKeyPreference,
-        loginItem: loginItem
+        loginItem: loginItem,
+        peers: peerPreference
     )
 
     /// True when the app was launched only to host a unit test bundle.
@@ -116,7 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         absencePrompt.onFinished = { [weak self] in self?.askAboutNextAbsence() }
 
-        let presence = PresenceMonitor()
+        peerPreference.onChange = { [weak self] names in self?.tracker.setPeers(names) }
+        tracker.setPeers(peerPreference.names)
+
+        let presence = PresenceMonitor(tracker: tracker)
         presence.onAbsence = { [weak self] absence in self?.offerToTrim(absence) }
         presence.start()
         self.presence = presence
