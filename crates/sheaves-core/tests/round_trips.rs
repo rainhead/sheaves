@@ -13,7 +13,7 @@ use sheaves_core::calendar_date::CalendarDate;
 use sheaves_core::clock::SystemClock;
 use sheaves_core::hours::parse_hours;
 use sheaves_core::models::Reference;
-use sheaves_core::queue::{Mutation, MutationQueue};
+use sheaves_core::queue::{StoppedRun, Mutation, MutationQueue};
 use sheaves_core::snapshot::{CachedSnapshot, SnapshotStore};
 use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
 
@@ -80,7 +80,16 @@ fn mutation() -> impl Strategy<Value = Mutation> {
                 started_at,
                 ended_at,
             }),
-        (entry_id(), hours()).prop_map(|(id, hours)| Mutation::Stop { id, hours }),
+        (entry_id(), hours(), proptest::option::of((instant(), hours(), instant())))
+            .prop_map(|(id, hours, run)| Mutation::Stop {
+                id,
+                hours,
+                run: run.map(|(started_at, banked_hours, stopped_at)| StoppedRun {
+                    started_at,
+                    banked_hours,
+                    stopped_at,
+                }),
+            }),
         (entry_id(), instant(), hours())
             .prop_map(|(id, resumed_at, banked_hours)| Mutation::Restart { id, resumed_at, banked_hours }),
         (entry_id(), proptest::option::of(text()), proptest::option::of(hours()))

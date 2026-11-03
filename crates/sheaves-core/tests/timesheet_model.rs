@@ -207,6 +207,13 @@ impl FakeHarvest {
                     .collect();
                 (200, Self::page(items, "time_entries"))
             }
+            (Method::Get, ["time_entries", id]) => {
+                let id: i64 = id.parse().unwrap();
+                match entries.iter().find(|entry| entry.id == id) {
+                    Some(entry) => (200, entry.json(now)),
+                    None => (404, json!({})),
+                }
+            }
             (Method::Post, ["time_entries"]) => {
                 let hours = body.get("hours").and_then(Value::as_f64);
                 if hours.is_none() {
