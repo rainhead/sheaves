@@ -28,34 +28,34 @@ struct PresenceMonitorTests {
 
     /// Polls every half minute for `minutes`, with the sensor reporting no input at
     /// all since `start` — the shape of somebody sitting still.
-    private func run(_ monitor: PresenceMonitor, _ sensor: FakeSensor, minutes: Double) {
+    private func run(_ monitor: PresenceMonitor, _ sensor: FakeSensor, minutes: Double) async {
         for tick in stride(from: 30.0, through: minutes * 60, by: 30) {
             sensor.secondsSinceInput = tick
-            monitor.poll(now: start + tick)
+            await monitor.poll(now: start + tick)
         }
     }
 
     @Test("says nothing while someone is typing")
-    func quietWhileTyping() {
+    func quietWhileTyping() async {
         let sensor = FakeSensor()
         let (monitor, box) = monitor(sensor)
         for tick in stride(from: 30.0, through: 3600, by: 30) {
             sensor.secondsSinceInput = 5
-            monitor.poll(now: start + tick)
+            await monitor.poll(now: start + tick)
         }
         #expect(box.absences.isEmpty)
     }
 
     @Test("reports the absence when they come back")
-    func reportsOnReturn() throws {
+    func reportsOnReturn() async throws {
         let sensor = FakeSensor()
         let (monitor, box) = monitor(sensor)
-        run(monitor, sensor, minutes: 20)
+        await run(monitor, sensor, minutes: 20)
         #expect(box.absences.isEmpty)
 
         // Back at the keyboard, two seconds ago.
         sensor.secondsSinceInput = 2
-        monitor.poll(now: start + 20 * 60 + 2)
+        await monitor.poll(now: start + 20 * 60 + 2)
 
         let absence = try #require(box.absences.first)
         #expect(absence.began == start)
@@ -66,36 +66,36 @@ struct PresenceMonitorTests {
     /// so an hour on a call looks exactly like an hour at lunch and it interrupts to
     /// ask. A machine whose microphone is in use has somebody in front of it.
     @Test("a call counts as being here")
-    func microphoneCountsAsPresence() {
+    func microphoneCountsAsPresence() async {
         let sensor = FakeSensor()
         sensor.isMicrophoneInUse = true
         let (monitor, box) = monitor(sensor)
 
-        run(monitor, sensor, minutes: 90)
+        await run(monitor, sensor, minutes: 90)
 
         // An absence only ever surfaces when somebody comes back, so this has to
         // come back to mean anything. Without it the assertion holds even with the
         // microphone ignored entirely, which is the whole claim under test.
         sensor.isMicrophoneInUse = false
         sensor.secondsSinceInput = 1
-        monitor.poll(now: start + 90 * 60 + 1)
+        await monitor.poll(now: start + 90 * 60 + 1)
 
         #expect(box.absences.isEmpty)
     }
 
     @Test("the absence starts when the call ended, not when the typing did")
-    func absenceBeginsAtEndOfCall() throws {
+    func absenceBeginsAtEndOfCall() async throws {
         let sensor = FakeSensor()
         sensor.isMicrophoneInUse = true
         let (monitor, box) = monitor(sensor)
 
-        run(monitor, sensor, minutes: 30)
+        await run(monitor, sensor, minutes: 30)
         let callEnded = start + 30 * 60
         sensor.isMicrophoneInUse = false
-        run2(monitor, sensor, from: 30 * 60 + 30, to: 50 * 60)
+        await run2(monitor, sensor, from: 30 * 60 + 30, to: 50 * 60)
 
         sensor.secondsSinceInput = 1
-        monitor.poll(now: start + 50 * 60 + 1)
+        await monitor.poll(now: start + 50 * 60 + 1)
 
         // One poll interval earlier than the call actually ended: a microphone found
         // running could have started at any point since the last look, so its
@@ -109,42 +109,42 @@ struct PresenceMonitorTests {
     /// *during* the call. Dating the microphone to the moment of noticing let the
     /// gap before it reach the threshold and did exactly that.
     @Test("a call joined just before the threshold does not raise one")
-    func callJoinedJustBeforeTheThresholdIsPresence() {
+    func callJoinedJustBeforeTheThresholdIsPresence() async {
         let sensor = FakeSensor()
         let (monitor, box) = monitor(sensor)
 
         // Fourteen and a half minutes reading, then a call starts.
-        run(monitor, sensor, minutes: 14.5)
+        await run(monitor, sensor, minutes: 14.5)
         #expect(box.absences.isEmpty)
 
         sensor.isMicrophoneInUse = true
-        run2(monitor, sensor, from: 14.5 * 60 + 30, to: 40 * 60)
+        await run2(monitor, sensor, from: 14.5 * 60 + 30, to: 40 * 60)
 
         #expect(box.absences.isEmpty)
     }
 
-    private func run2(_ monitor: PresenceMonitor, _ sensor: FakeSensor, from: Double, to: Double) {
+    private func run2(_ monitor: PresenceMonitor, _ sensor: FakeSensor, from: Double, to: Double) async {
         for tick in stride(from: from, through: to, by: 30) {
             sensor.secondsSinceInput = tick
-            monitor.poll(now: start + tick)
+            await monitor.poll(now: start + tick)
         }
     }
 
     /// A meeting left open on a locked Mac still holds the microphone. That is a
     /// machine alone in a room, not somebody working.
     @Test("a locked screen outranks the microphone")
-    func lockedScreenBeatsMicrophone() throws {
+    func lockedScreenBeatsMicrophone() async throws {
         let sensor = FakeSensor()
         sensor.isMicrophoneInUse = true
         sensor.isScreenLocked = true
         let (monitor, box) = monitor(sensor)
 
-        run(monitor, sensor, minutes: 40)
+        await run(monitor, sensor, minutes: 40)
         #expect(box.absences.isEmpty)
 
         sensor.isScreenLocked = false
         sensor.secondsSinceInput = 1
-        monitor.poll(now: start + 40 * 60 + 1)
+        await monitor.poll(now: start + 40 * 60 + 1)
 
         let absence = try #require(box.absences.first)
         #expect(absence.began == start)
@@ -153,13 +153,13 @@ struct PresenceMonitorTests {
     /// Sleeping needs no special case: the evidence simply stops arriving, and the
     /// gap is measured when the user touches the machine again.
     @Test("an absence over sleep is measured when they touch the keyboard")
-    func measuresSleep() throws {
+    func measuresSleep() async throws {
         let sensor = FakeSensor()
         let (monitor, box) = monitor(sensor)
 
         let overnight = 9.0 * 3600
         sensor.secondsSinceInput = 1
-        monitor.poll(now: start + overnight)
+        await monitor.poll(now: start + overnight)
 
         let absence = try #require(box.absences.first)
         #expect(absence.began == start)
@@ -169,13 +169,13 @@ struct PresenceMonitorTests {
     /// A Mac that wakes on its own overnight — Power Nap, a Time Machine run — has
     /// nobody in front of it, and must not be mistaken for somebody coming back.
     @Test("waking without anyone touching it reports nothing")
-    func ignoresUnattendedWake() {
+    func ignoresUnattendedWake() async {
         let sensor = FakeSensor()
         let (monitor, box) = monitor(sensor)
 
         let overnight = 9.0 * 3600
         sensor.secondsSinceInput = overnight
-        monitor.poll(now: start + overnight)
+        await monitor.poll(now: start + overnight)
 
         #expect(box.absences.isEmpty)
     }

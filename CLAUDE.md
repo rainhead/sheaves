@@ -68,6 +68,12 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **`onKeyPress(.delete)` never fires for ⌫.** SwiftUI's `.delete` is U+0008; the
   Mac's backspace key sends U+007F. Use `onDeleteCommand`, which both delete keys
   raise. Symptom: it builds, and pressing ⌫ does nothing.
+- **The application firewall drops connections to programs it does not know,
+  silently.** With the firewall on, a listener in an unsigned or ad-hoc signed
+  program binds without error and never answers, not even from this Mac to its own
+  tailnet address, and nothing is logged. A built-in such as `nc` on the same address
+  answers. Allow the app under System Settings › Network › Firewall › Options.
+  Symptom: peers time out against the Mac while the reverse direction works.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
@@ -75,6 +81,9 @@ nothing. They are listed with their symptom, because that is how you will meet t
 
 - **`xcodegen generate` after adding a file.** XcodeGen enumerates at generation
   time, so a new test file is silently absent from the target.
+- **Entitlements live in `project.yml`.** `xcodegen generate` rewrites
+  `Apps/Mac/Resources/Sheaves.entitlements` from it, so an edit made to that file
+  vanishes at the next generation, and the build still succeeds.
 - **"Executed 0 tests" with `TEST SUCCEEDED` is a failure.** It means nothing ran.
 - **System Events' `keystroke`/`key code` does not trigger a Carbon global hotkey.**
   Post a real `CGEvent` to `.cghidEventTap` instead. A synthetic click also trips

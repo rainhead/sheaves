@@ -48,6 +48,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # To answer peers on the tailnet (crates/sheaves-core/src/peers.rs).
+        com.apple.security.network.server: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rainhead.Sheaves
