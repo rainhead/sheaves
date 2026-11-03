@@ -328,6 +328,9 @@ impl MutationQueue {
     ///   its way to Harvest. Amended in flight, it would no longer match the copy
     ///   the drain sent, so the drain would leave it queued and send it again: a
     ///   second entry for one timer;
+    /// - when it has been attempted, since Harvest may hold it already, with the
+    ///   hours measured at that attempt, and an end amended here would be lost when
+    ///   the retry adopts that entry;
     /// - when it has ended and the caller would reopen it, or when a later queued
     ///   change already refers to it. Either way the timer has paused, and a span
     ///   from the first start would bill the pause.
@@ -342,6 +345,9 @@ impl MutationQueue {
             // Read under the lock the drain takes to copy the head, so the two
             // cannot interleave.
             if index == 0 && self.is_draining.load(Ordering::SeqCst) {
+                return;
+            }
+            if state.pending[index].attempted_at.is_some() {
                 return;
             }
             if state.pending[index + 1..]
@@ -1649,6 +1655,19 @@ mod tests {
             let second = queue.drain(&client(retry)).await;
             assert_eq!(second.resolved.get(&local), Some(&779));
             assert!(queue.is_empty());
+        }
+
+        /// A create that may already be on Harvest is not amended: the retry would
+        /// adopt the saved entry and the amended end would be lost with it.
+        #[tokio::test]
+        async fn an_attempted_create_is_not_amended() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            let local = Uuid::new_v4();
+            queue.enqueue(create(local, ago(3600.0), None));
+            assert!(first_attempt_fails(&queue).await.stopped_with.is_some());
+
+            assert!(!queue.amend_create(local, Some(Timestamp::now())));
         }
 
         /// The lookup failing is not the create failing: the change stays queued.

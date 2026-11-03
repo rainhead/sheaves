@@ -513,15 +513,20 @@ mod time_tracker {
             .unwrap();
         tracker.resume(&stopped).await;
 
+        // The create was attempted while offline, so Harvest may hold it already;
+        // it is left as it was, and the stop and the resume go as changes of
+        // their own. The stop carries the hours measured before the pause, so the
+        // pause is never billed, however the create's own span comes out.
         let pending = reopened_queue(&scratch).pending();
-        assert!(matches!(
-            pending[0],
-            Mutation::Create {
-                ended_at: Some(_),
-                ..
-            }
-        ));
-        assert!(matches!(pending[1], Mutation::Restart { .. }));
+        assert!(matches!(pending[0], Mutation::Create { .. }));
+        let Mutation::Stop { hours, .. } = pending[1] else {
+            panic!("expected the stop second, got {:?}", pending[1]);
+        };
+        assert!(
+            hours < 0.01,
+            "the stop carries the measured run, {hours} hours"
+        );
+        assert!(matches!(pending[2], Mutation::Restart { .. }));
     }
 
     /// Browsing to another day offline cannot load it, so the running timer must
@@ -979,6 +984,27 @@ mod one_record_of_the_connection {
         assert!(state.user.is_none());
         assert!(state.entries.is_empty());
         assert!(state.targets.is_empty());
+    }
+
+    /// A login saved before user ids were recorded vouches for nobody: its cache is
+    /// shown only once Harvest has said whose the token is, so not on a launch that
+    /// cannot reach Harvest.
+    #[tokio::test]
+    async fn an_old_login_shows_no_cache_it_cannot_vouch_for() {
+        let scratch = scratch();
+        leave_work_queued(&scratch).await;
+
+        // Offline, so Harvest cannot say whose the token is.
+        let colleague = RoutingTransport::new(Vec::new());
+        let old = Login {
+            credentials: Credentials::new("12345", "colleague"),
+            user_id: None,
+        };
+        let (tracker, _) = tracker_with_login(colleague, &scratch, old);
+        tracker.bootstrap().await;
+
+        assert!(tracker.state().entries.is_empty());
+        assert!(tracker.state().targets.is_empty());
     }
 
     /// A login saved before user ids were recorded is completed the first time

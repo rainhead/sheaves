@@ -379,13 +379,24 @@ impl TimeTracker {
             .flatten()
             .filter(|login| login.credentials.is_complete());
         *self.inner.known_user.lock().unwrap() = login.as_ref().and_then(|login| login.user_id);
-        self.inner.apply_cached_snapshot();
         match login {
-            None => self
-                .inner
-                .update(|state| state.connection = Connection::NeedsCredentials),
+            None => {
+                self.inner.apply_cached_snapshot(false);
+                self.inner
+                    .update(|state| state.connection = Connection::NeedsCredentials);
+            }
             Some(login) => {
                 self.inner.client.set_credentials(Some(login.credentials));
+                // A login saved before user ids were recorded vouches for nobody,
+                // so Harvest is asked before any cache is believed. Offline, that
+                // launch starts without the cache; the login is completed on the
+                // first sync that reaches Harvest.
+                if login.user_id.is_none()
+                    && let Ok(user) = self.inner.client.current_user().await
+                {
+                    self.learn_user(user.id);
+                }
+                self.inner.apply_cached_snapshot(true);
                 self.sync().await;
                 self.start_ticking();
             }
@@ -1550,15 +1561,20 @@ impl Inner {
         last_started.is_none_or(|started| seconds_between(started, self.clock.now()) >= interval)
     }
 
-    fn apply_cached_snapshot(&self) {
+    /// Restores the cache, if it belongs to the login's user. `has_login` says a
+    /// login is stored: one whose user is not known yet vouches for no cache.
+    fn apply_cached_snapshot(&self, has_login: bool) {
         let Some(snapshot) = self.snapshots.load() else {
             return;
         };
         // A cache written for anyone but the login's user describes someone else's
-        // timesheet, however it came to be left behind.
-        if let Some(known) = *self.known_user.lock().unwrap()
-            && snapshot.user.as_ref().map(|user| user.id) != Some(known)
-        {
+        // timesheet, however it came to be left behind. With credentials whose user
+        // is not known, no cache can be vouched for.
+        let vouched = match *self.known_user.lock().unwrap() {
+            Some(known) => snapshot.user.as_ref().map(|user| user.id) == Some(known),
+            None => !has_login,
+        };
+        if !vouched {
             log::info!("the cache is not the stored login's; starting without it");
             self.snapshots.clear();
             return;
