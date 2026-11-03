@@ -1,0 +1,15 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cc6f4115403d7142101c51824f5c809eee098cee09115079a71a177e2b1bcc01 # shrinks to segments = [Segment { kind: Call, seconds: 61 }, Segment { kind: Locked { call: false }, seconds: 859 }]
+cc 61ac05a414be1a9d380d19e777b6a23d886039de14adbb7c254ed574c0d2589e # shrinks to segments = [Segment { kind: Typing { every: 5 }, seconds: 182 }, Segment { kind: Typing { every: 5 }, seconds: 2828 }, Segment { kind: Typing { every: 5 }, seconds: 284 }, Segment { kind: Typing { every: 39 }, seconds: 703 }, Segment { kind: Locked { call: false }, seconds: 840 }]
+cc a8a0639eac7b24bba1056d2d844503b4b50f31da7b688f954e574ca21971bbd3 # shrinks to segments = [Segment { kind: Quiet, seconds: 31 }, Segment { kind: Asleep, seconds: 1079 }, Segment { kind: Quiet, seconds: 1110 }]
+cc 5a2fbe82cc87c3c2bfd99cbd0c748f545bdf059d64512f300adfbeaa07f4e121 # shrinks to segments = [Segment { kind: Locked { call: false }, seconds: 829 }, Segment { kind: Locked { call: false }, seconds: 71 }]
+cc 34c8fa86ea24b234f4d682824b379e5c17def043324e20c63ff27f86a628391a # shrinks to segments = [Segment { kind: Quiet, seconds: 151 }, Segment { kind: Locked { call: false }, seconds: 749 }]
+cc b00878d9472ecf6f7f96ba1d50722f102e476f0c65c6e9e25059da34aa257a54 # shrinks to segments = [Segment { kind: Typing { every: 7 }, seconds: 31 }, Segment { kind: Locked { call: false }, seconds: 957 }, Segment { kind: Call, seconds: 10 }]
+cc 402e07df0b8600ec57ee32c9b4acfabf99297baddf7f77639a6df7dada5a7f4f # shrinks to segments = [Segment { kind: Typing { every: 5 }, seconds: 334 }, Segment { kind: Typing { every: 5 }, seconds: 382 }, Segment { kind: Typing { every: 5 }, seconds: 752 }, Segment { kind: Typing { every: 5 }, seconds: 1835 }, Segment { kind: Typing { every: 5 }, seconds: 158 }, Segment { kind: Typing { every: 20 }, seconds: 410 }, Segment { kind: Call, seconds: 21 }, Segment { kind: Quiet, seconds: 940 }]
+cc a32f193ea0f553360030d3fcf79d9874b8dadddd89c30ab558a39c8b73657887 # shrinks to segments = [Segment { kind: Typing { every: 5 }, seconds: 2808 }, Segment { kind: Typing { every: 5 }, seconds: 20 }, Segment { kind: Call, seconds: 2332 }, Segment { kind: Locked { call: true }, seconds: 870 }]
+cc 742a387f8711ea9b41e0d9d067144382b08f88b684a51916146bd85eacd6b0ab # shrinks to segments = [Segment { kind: Typing { every: 5 }, seconds: 10 }, Segment { kind: Locked { call: false }, seconds: 861 }, Segment { kind: Call, seconds: 60 }]

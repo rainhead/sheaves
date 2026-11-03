@@ -23,7 +23,7 @@ use sheaves_core::client::{
     Credentials, HarvestClient, HarvestError, Method, Request, Response, Transport,
 };
 use sheaves_core::clock::{Clock, ManualClock};
-use sheaves_core::credentials::MemoryCredentialStore;
+use sheaves_core::credentials::{CredentialStore, Login, MemoryCredentialStore};
 use sheaves_core::queue::MutationQueue;
 use sheaves_core::snapshot::SnapshotStore;
 use sheaves_core::tracked_entry::TimerTarget;
@@ -385,6 +385,9 @@ enum Action {
     /// back. Lets a lost reply land on a particular request of a drain: the lookup
     /// a retried create makes first, then its POST.
     SyncThrough(Vec<Fate>),
+    /// The app quits and is launched again, keeping only what it wrote to disk
+    /// and the stored login.
+    Relaunch,
 }
 
 #[derive(Clone, Debug)]
@@ -424,6 +427,7 @@ fn action() -> impl Strategy<Value = Action> {
             Just(vec![Fate::Garbled]),
         ].prop_map(|fates| Action::Network(Network::Flaky(fates))),
         1 => Just(Action::Sync),
+        2 => Just(Action::Relaunch),
     ]
 }
 
@@ -446,6 +450,25 @@ fn target(index: usize) -> TimerTarget {
     }
 }
 
+/// Launches the app as a shell does: a tracker over the files in `directory` and
+/// the stored login, bootstrapped.
+async fn launch(
+    harvest: &Arc<FakeHarvest>,
+    clock: &Arc<ManualClock>,
+    directory: &std::path::Path,
+    credentials: &Arc<MemoryCredentialStore>,
+) -> TimeTracker {
+    let tracker = TimeTracker::new(
+        HarvestClient::new(None, harvest.clone(), 0.0),
+        credentials.clone() as Arc<dyn CredentialStore>,
+        SnapshotStore::new(directory.join("cache.json")),
+        MutationQueue::open(directory.join("queue.json"), clock.clone()),
+        clock.clone(),
+    );
+    tracker.bootstrap().await;
+    tracker
+}
+
 fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -456,14 +479,11 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
         let clock = Arc::new(ManualClock::new(start, TimeZone::UTC));
         let harvest = FakeHarvest::new(clock.clone());
         let directory = tempfile::tempdir().unwrap();
-        let tracker = TimeTracker::new(
-            HarvestClient::new(Some(Credentials::new("12345", "token")), harvest.clone(), 0.0),
-            Arc::new(MemoryCredentialStore::default()),
-            SnapshotStore::new(directory.path().join("cache.json")),
-            MutationQueue::open(directory.path().join("queue.json"), clock.clone()),
-            clock.clone(),
-        );
-        tracker.sync().await;
+        let credentials = Arc::new(MemoryCredentialStore::new(Some(Login {
+            credentials: Credentials::new("12345", "token"),
+            user_id: Some(USER_ID),
+        })));
+        let mut tracker = launch(&harvest, &clock, directory.path(), &credentials).await;
         let today = CalendarDate::of(start, &TimeZone::UTC);
         let mut model = Model::default();
 
@@ -533,6 +553,11 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
                     *harvest.fates.lock().unwrap() = fates;
                     tracker.sync().await;
                     harvest.fates.lock().unwrap().clear();
+                }
+                Action::Relaunch => {
+                    // The old process is gone before the new one reads its files.
+                    drop(tracker);
+                    tracker = launch(&harvest, &clock, directory.path(), &credentials).await;
                 }
             }
         }
