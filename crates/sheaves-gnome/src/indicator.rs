@@ -38,6 +38,9 @@ pub struct Look {
     pub icon: String,
     /// Beside the icon. Empty when nothing runs, so the icon alone stays.
     pub label: String,
+    /// The widest the label will grow while this timer runs, so the top bar can
+    /// keep its width as the minutes tick.
+    pub guide: String,
     pub tooltip: String,
     /// The first menu entry, "Stop …" or "Resume …", when there is something to
     /// stop or resume.
@@ -56,14 +59,17 @@ impl Look {
             Activity::Idle => Look {
                 icon: "alarm-symbolic".to_string(),
                 label: String::new(),
+                guide: String::new(),
                 tooltip: "Sheaves: no timer running".to_string(),
                 toggle: None,
             },
             Activity::Running(entry) => {
                 let hours = format::hours(entry.hours(now), format);
+                let name = shortened(&entry.project.name);
                 Look {
                     icon: "media-playback-pause-symbolic".to_string(),
-                    label: format!("{} {hours}", shortened(&entry.project.name)),
+                    label: format!("{name} {hours}"),
+                    guide: format!("{name} {}", widest(&hours)),
                     tooltip: format!("{} · {}, {hours}", entry.task.name, entry.project.name),
                     toggle: Some(format!("Stop {}", entry.task.name)),
                 }
@@ -71,6 +77,7 @@ impl Look {
             Activity::Recent(entry) => Look {
                 icon: "media-playback-start-symbolic".to_string(),
                 label: String::new(),
+                guide: String::new(),
                 tooltip: format!(
                     "Sheaves: {} · {} stopped",
                     entry.task.name, entry.project.name
@@ -79,6 +86,22 @@ impl Look {
             },
         }
     }
+}
+
+/// `hours` with every digit an 8, the widest in most fonts, and one digit more
+/// than it has now, so `9:59` becoming `10:00` does not widen the label either.
+fn widest(hours: &str) -> String {
+    let eights: String = hours
+        .chars()
+        .map(|character| {
+            if character.is_ascii_digit() {
+                '8'
+            } else {
+                character
+            }
+        })
+        .collect();
+    format!("8{eights}")
 }
 
 fn shortened(name: &str) -> String {
@@ -166,10 +189,9 @@ impl Item {
         lock(&self.shared).look.label.clone()
     }
 
-    /// The widest label expected, so the top bar does not jump as minutes tick.
     #[zbus(property, name = "XAyatanaLabelGuide")]
     fn label_guide(&self) -> String {
-        lock(&self.shared).look.label.clone()
+        lock(&self.shared).look.guide.clone()
     }
 
     fn activate(&self, _x: i32, _y: i32) {
@@ -425,8 +447,8 @@ impl Indicator {
         if previous.tooltip != look.tooltip {
             Item::new_tool_tip(&item).await?;
         }
-        if previous.label != look.label {
-            Item::new_label(&item, &look.label, &look.label).await?;
+        if previous.label != look.label || previous.guide != look.guide {
+            Item::new_label(&item, &look.label, &look.guide).await?;
         }
         if previous.toggle != look.toggle {
             let menu = SignalEmitter::new(&self.connection, MENU_PATH)?;
@@ -519,6 +541,7 @@ mod tests {
             at("2026-11-03T09:30:00Z"),
         );
         assert_eq!(look.label, "Orcasound 1:30");
+        assert_eq!(look.guide, "Orcasound 88:88");
         assert_eq!(look.icon, "media-playback-pause-symbolic");
         assert_eq!(look.toggle.as_deref(), Some("Stop Programming"));
     }

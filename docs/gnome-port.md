@@ -492,8 +492,10 @@ it on Ubuntu 26.04, the release Hostess runs.
   core asks for credentials synchronously from inside its own runtime, so each
   keyring call runs on a thread of its own.
 - **One instance per session,** through GApplication. Closing the window hides it;
-  `--background` starts with no window, and the login item passes it. The login
-  item is a desktop entry in `~/.config/autostart` running the binary where it is.
+  `--background` starts with no window, and the login item passes it, though a
+  first launch with no token opens Settings anyway. The login item is
+  `~/.config/autostart/com.rainhead.Sheaves.desktop`, named for the app id rather
+  than `sheaves.desktop`, and runs the binary where it is.
 - **Durations are formatted through the C locale:** the decimal form takes the
   locale's separator; `1:30` keeps ASCII digits, since the C library has no
   duration formatting. Days are formatted by GLib.

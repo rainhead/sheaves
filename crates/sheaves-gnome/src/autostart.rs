@@ -2,7 +2,7 @@
 //! when the session starts.
 //!
 //! The entry runs the binary where it is now. There is no package to install, so
-//! moving or rebuilding into another folder needs the switch turned off and on.
+//! moving the checkout needs the switch turned off and on.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,6 +16,28 @@ pub fn folder() -> PathBuf {
 
 pub fn is_enabled(folder: &Path) -> bool {
     folder.join(FILE_NAME).exists()
+}
+
+/// The program to start at login: this one, as it is on disk now.
+///
+/// Linux names a running program whose file has since been replaced, as `cargo
+/// build` replaces it, with " (deleted)" after its path. The rebuilt file at that
+/// path is the one to run, so the suffix is dropped, and a path with no file at it
+/// is refused rather than written into an entry that would start nothing.
+pub fn this_program() -> io::Result<PathBuf> {
+    let running = std::env::current_exe()?;
+    let path = running
+        .to_str()
+        .and_then(|text| text.strip_suffix(" (deleted)"))
+        .map_or(running.clone(), PathBuf::from);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{} is no longer there", path.display()),
+        ))
+    }
 }
 
 /// Writes the entry, running `program`.
@@ -48,14 +70,20 @@ fn entry(program: &Path) -> String {
 
 /// `path` as one argument of an `Exec` line: in double quotes, with the
 /// characters the Desktop Entry spec reserves inside them escaped.
+///
+/// Two layers of escaping apply. The `Exec` value is a string in a key file,
+/// whose own escapes are undone first, and inside its quotes `"`, `` ` ``, `$`
+/// and `\` each need a backslash before them. So `"` is written `\\"`, and a
+/// backslash, escaped once for the quotes and again for the key file, `\\\\`.
 fn quoted(path: &Path) -> String {
     let mut quoted = String::from("\"");
     for character in path.to_string_lossy().chars() {
         match character {
-            '"' | '`' | '$' | '\\' => {
+            '"' | '`' | '$' => {
                 quoted.push_str("\\\\");
                 quoted.push(character);
             }
+            '\\' => quoted.push_str("\\\\\\\\"),
             '%' => quoted.push_str("%%"),
             other => quoted.push(other),
         }
@@ -96,5 +124,7 @@ mod tests {
     fn quotes_the_program() {
         assert_eq!(quoted(Path::new("/a b/100%/x")), "\"/a b/100%%/x\"");
         assert_eq!(quoted(Path::new("/a\"b")), "\"/a\\\\\"b\"");
+        assert_eq!(quoted(Path::new("/a$b`c")), "\"/a\\\\$b\\\\`c\"");
+        assert_eq!(quoted(Path::new("/a\\b")), "\"/a\\\\\\\\b\"");
     }
 }

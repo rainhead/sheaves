@@ -53,6 +53,18 @@ fn failed(error: impl std::fmt::Display) -> CredentialError {
     }
 }
 
+/// Asks for the keyring to be unlocked if it is locked, as after an automatic
+/// login. Writing or deleting in a locked keyring fails rather than asking, and a
+/// failed delete on disconnect would leave the token there for the next launch.
+// The error is oo7's own, and the closures in `run` return it too.
+#[allow(clippy::result_large_err)]
+async fn unlocked(keyring: &oo7::Keyring) -> Result<(), oo7::Error> {
+    if keyring.is_locked().await? {
+        keyring.unlock().await?;
+    }
+    Ok(())
+}
+
 impl CredentialStore for Keyring {
     fn read(&self) -> Result<Option<Login>, CredentialError> {
         let secret = Self::run(async |keyring| {
@@ -86,6 +98,7 @@ impl CredentialStore for Keyring {
         })
         .expect("a login encodes");
         Self::run(async move |keyring| {
+            unlocked(&keyring).await?;
             keyring
                 .create_item("Sheaves: Harvest login", &ATTRIBUTES, secret, true)
                 .await
@@ -93,6 +106,9 @@ impl CredentialStore for Keyring {
     }
 
     fn delete(&self) -> Result<(), CredentialError> {
-        Self::run(async |keyring| keyring.delete(&ATTRIBUTES).await)
+        Self::run(async |keyring| {
+            unlocked(&keyring).await?;
+            keyring.delete(&ATTRIBUTES).await
+        })
     }
 }

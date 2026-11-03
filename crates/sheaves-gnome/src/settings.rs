@@ -167,7 +167,7 @@ fn startup_group() -> adw::PreferencesGroup {
     let folder = autostart::folder();
     let row = adw::SwitchRow::builder()
         .title("Open Sheaves at login")
-        .subtitle("Starts in the top bar, with no window.")
+        .subtitle("Starts in the top bar, with no window once connected.")
         .active(autostart::is_enabled(&folder))
         .build();
     let error = gtk::Label::new(None);
@@ -176,9 +176,16 @@ fn startup_group() -> adw::PreferencesGroup {
     error.set_visible(false);
     {
         let error = error.clone();
+        // Putting the switch back after a failure notifies again, and handled, that
+        // second notification would undo the first: with nothing to remove, it hides
+        // the error just shown.
+        let reverting = std::rc::Rc::new(std::cell::Cell::new(false));
         row.connect_active_notify(move |row| {
+            if reverting.get() {
+                return;
+            }
             let result = if row.is_active() {
-                std::env::current_exe().and_then(|program| autostart::enable(&folder, &program))
+                autostart::this_program().and_then(|program| autostart::enable(&folder, &program))
             } else {
                 autostart::disable(&folder)
             };
@@ -187,7 +194,9 @@ fn startup_group() -> adw::PreferencesGroup {
                 Err(failure) => {
                     error.set_label(&format!("Could not change the login item: {failure}"));
                     error.set_visible(true);
+                    reverting.set(true);
                     row.set_active(autostart::is_enabled(&folder));
+                    reverting.set(false);
                 }
             }
         });

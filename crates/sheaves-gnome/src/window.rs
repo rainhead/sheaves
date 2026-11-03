@@ -229,7 +229,10 @@ impl Window {
             Connection::Offline { reason } => (Some(format!("Offline: {reason}")), Some("Retry")),
             Connection::Connecting | Connection::Online => (snapshot.notice.clone(), None),
         };
-        self.banner.set_title(title.as_deref().unwrap_or(""));
+        // A banner reads its title as markup, and the reason is error text, which
+        // can hold an `&` or a `<`.
+        self.banner
+            .set_title(&glib::markup_escape_text(title.as_deref().unwrap_or("")));
         self.banner.set_button_label(button);
         self.banner.set_revealed(title.is_some());
     }

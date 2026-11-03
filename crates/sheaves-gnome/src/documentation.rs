@@ -30,7 +30,12 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id("com.rainhead.Sheaves.Documentation")
         .build();
+    // GApplication reports success however the work went, so a failure to write
+    // is carried out separately for the exit status.
+    let failed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let activated = failed.clone();
     app.connect_activate(move |app| {
+        let failed = activated.clone();
         // Pinned, so the images do not follow whatever the desktop is set to.
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
         let tracker = Tracker::new(
@@ -43,6 +48,7 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
         let window = Window::new(app, actions);
         let directory = directory.clone();
         let app = app.clone();
+        let failed = failed.clone();
         glib::spawn_future_local(async move {
             tracker.sync().await;
             window.render(&tracker.snapshot());
@@ -51,12 +57,20 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
             glib::timeout_future(Duration::from_millis(600)).await;
             match write(&window, &directory.join("gnome-window.png")) {
                 Ok(path) => println!("{}", path.display()),
-                Err(error) => eprintln!("could not render the window: {error}"),
+                Err(error) => {
+                    eprintln!("could not render the window: {error}");
+                    failed.set(true);
+                }
             }
             app.quit();
         });
     });
-    app.run_with_args::<&str>(&[])
+    let status = app.run_with_args::<&str>(&[]);
+    if failed.get() {
+        glib::ExitCode::FAILURE
+    } else {
+        status
+    }
 }
 
 fn write(window: &Rc<Window>, path: &std::path::Path) -> Result<PathBuf, String> {

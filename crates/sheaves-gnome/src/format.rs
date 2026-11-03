@@ -49,7 +49,7 @@ fn decimal(value: f64) -> String {
         .unwrap_or_else(|_| format!("{value:.2}"))
 }
 
-/// A day as a heading: "Thursday 29 August", in the locale's words and order.
+/// A day as a heading: "Thursday 29 August", in the locale's words.
 pub fn day(day: CalendarDate) -> String {
     let date = gtk::glib::DateTime::from_local(
         day.year.into(),
