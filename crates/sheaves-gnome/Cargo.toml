@@ -1,0 +1,25 @@
+[package]
+name = "sheaves-gnome"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Sheaves for GNOME: the running timer in the top bar, the day in a window"
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_5"] }
+async-channel = "2.5.0"
+futures-lite = "2.6.1"
+gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
+jiff = "0.2.39"
+libc = "0.2.191"
+log = "0.4.35"
+oo7 = "0.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sheaves-core = { path = "../sheaves-core" }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

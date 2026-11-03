@@ -19,8 +19,10 @@ local state immediately and reconciles with Harvest afterwards.
 
 ## Status
 
-Early. The macOS app tracks time; iOS is not built yet, but everything except the
-views lives in a platform-neutral package so it can be.
+Early. The macOS app tracks time, and a GNOME app is being built beside it on the
+same Rust core ([the plan](docs/gnome-port.md)): it starts and stops timers and
+shows the running one in the top bar, but does not yet notice when you are away.
+iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.
 **If this is interesting to you, please get in touch** —
@@ -84,6 +86,22 @@ The core suite is the bulk of it. The app suite exists because the parts that on
 compile against AppKit had no tests at all, and that is where the worst bugs turned
 up — a shortcut recorder that trapped on every key press, and a missing main menu
 that made ⌘V silently do nothing.
+
+### On GNOME
+
+Requires GTK 4, libadwaita and rustup. There is no package; build from the checkout
+and run.
+
+```sh
+sudo apt install libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
+cargo run --release -p sheaves-gnome
+cargo test -p sheaves-gnome
+```
+
+The running timer shows in the top bar through Ubuntu's AppIndicator extension,
+which is on by default there; elsewhere, install that extension. Settings has a
+switch to start at login, which runs the binary where it is now. The token is kept
+in the keyring.
 
 A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml) and
 pushing a matching `v` tag.
@@ -218,6 +236,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and the peers it is shared with. Rust, so a GNOME app can share it. |
 | [`Packages/SheavesCore`](Packages/SheavesCore) | The core as Swift sees it: the [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings, an `@Observable` wrapper, the Keychain, and formatting. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
+| [`crates/sheaves-gnome`](crates/sheaves-gnome) | The GNOME app: the running timer in the top bar, the day in a libadwaita window. |
 | [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
 | [`Scripts`](Scripts) | Jobs that need more than a line: the Rust core for the Mac, the release package, the documentation images. |
 | [`docs`](docs) | Notes too long for here, and the images this file uses. |

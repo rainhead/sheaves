@@ -69,3 +69,24 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
+
+  gnome:
+    name: GNOME app
+    # The release Hostess runs, so CI builds against the same GTK and libadwaita.
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install GTK 4 and libadwaita
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libgtk-4-dev libadwaita-1-dev
+
+      - name: Install Rust
+        run: rustup toolchain install --no-self-update
+
+      # The GNOME app is not a default member, so it is named.
+      - name: Lint GNOME app
+        run: cargo clippy --locked -p sheaves-gnome --all-targets -- --deny warnings
+
+      - name: Test GNOME app
+        run: cargo test --locked -p sheaves-gnome

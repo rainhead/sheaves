@@ -472,6 +472,49 @@ the label in the top bar shows the running timer. Verify in the first hour that
 Ubuntu's extension renders the indicator label at all; if it does not, the icon
 alone must carry the state, as the Mac's does.
 
+**Decided in phase 6.** The app is
+[`crates/sheaves-gnome`](../crates/sheaves-gnome), a workspace member left out of
+the default members so `cargo test` on a Mac does not try to build GTK; CI builds
+it on Ubuntu 26.04, the release Hostess runs.
+
+- **It uses the Mac's tracker object.** `ffi::Tracker` is plain Rust, so the GNOME
+  app calls it directly and gets the same runtime, sync and peers wiring. GTK keeps
+  the main thread; the core's state reports reach it over a channel, and each action
+  is awaited on GLib's executor.
+- **The top bar item is written on zbus.** The label beside the icon is the Ayatana
+  extension's `XAyatanaLabel` property, which no Rust tray crate offers (`ksni`
+  0.3.7 has no way to add it), so `indicator.rs` implements the item and the small
+  part of `com.canonical.dbusmenu` a flat menu needs. Checked at the desk on
+  2026-11-03: Ubuntu's extension draws the label. A click opens the window, a
+  middle click stops or resumes, and the right-click menu offers Stop or Resume,
+  Open Sheaves and Quit. The item registers again whenever the tray comes back:
+  GNOME Shell turns the extension off on the lock screen, so the tray vanishes at
+  every lock and returns at unlock, as well as after a shell restart.
+- **The token is in the keyring through oo7,** stored with its user id as JSON. The
+  core asks for credentials synchronously from inside its own runtime, so each
+  keyring call runs on a thread of its own.
+- **One instance per session,** through GApplication. Closing the window hides it;
+  `--background` starts with no window, and the login item passes it, though a
+  first launch with no token opens Settings anyway. The login item is
+  `~/.config/autostart/com.rainhead.Sheaves.desktop`, named for the app id rather
+  than `sheaves.desktop`, and runs the binary where it is.
+- **Durations are formatted through the C locale:** the decimal form takes the
+  locale's separator; `1:30` keeps ASCII digits, since the C library has no
+  duration formatting. Days are formatted by GLib.
+- **`SHEAVES_RENDER=<folder>`** in a debug build draws the window from the demo
+  account to `gnome-window.png`, as the Mac's documentation images do.
+- **Not in this phase:** the power source (the tracker assumes mains power, which
+  Hostess is), editing notes or hours (phase 8), presence and its prompt, and the
+  peers field (phase 7).
+
+Checked at the desk, 2026-11-03: a timer started on Hostess appeared on the Mac,
+and stopping it on the Mac changed Hostess's top bar to the play icon within a
+minute. "Within a minute" holds while either machine has a timer running, because
+the probe then runs every minute. From an idle machine it does not: the Mac picked
+up Hostess's new timer at its next idle probe, two minutes later, and that probe
+can be ten minutes away. The change notices of phase 5 close that gap once the
+GNOME app joins its peers in phase 7 and the Mac's firewall lets Sheaves answer.
+
 ### Phase 7: presence on GNOME (Hostess, a few days; Opus)
 
 Implement `PresenceSensor` from `org.gnome.Mutter.IdleMonitor.GetIdletime` and

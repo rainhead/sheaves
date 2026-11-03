@@ -19,6 +19,17 @@ xcodebuild -project Sheaves.xcodeproj -scheme Sheaves \
 Scripts/package-release.sh                         # what a release ships
 ```
 
+On Hostess (Ubuntu, GNOME), in `~/dev/sheaves`:
+
+```sh
+cargo test -p sheaves-gnome                        # the GNOME app; not a default member
+cargo run -p sheaves-gnome                         # into the session, if run from it
+SHEAVES_RENDER=docs/images cargo run -p sheaves-gnome   # the window, from the demo account
+```
+
+Over SSH, launch into the logged-in session with `XDG_RUNTIME_DIR=/run/user/$(id -u)
+WAYLAND_DISPLAY=wayland-0 DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus`.
+
 Signing lives in `Config/Local.xcconfig` (git-ignored, see the example beside it).
 
 The port to GNOME runs in phases; `docs/gnome-port.md` is the plan and records what
@@ -74,6 +85,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
   tailnet address, and nothing is logged. A built-in such as `nc` on the same address
   answers. Allow the app under System Settings › Network › Firewall › Options.
   Symptom: peers time out against the Mac while the reverse direction works.
+- **GNOME turns the tray off while the screen is locked.** Ubuntu's AppIndicator
+  extension does not run on the lock screen, so `org.kde.StatusNotifierWatcher`
+  leaves the session bus at every lock and every item with it. An item that
+  registers once and never again disappears for good after the first lock.
+  Symptom over SSH: "The name org.kde.StatusNotifierWatcher was not provided".
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
