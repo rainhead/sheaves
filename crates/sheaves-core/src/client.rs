@@ -61,9 +61,15 @@ pub enum HarvestError {
     /// No credentials have been supplied yet.
     #[error("Sheaves isn’t connected to Harvest yet.")]
     NotConfigured,
-    /// 401 or 403: the token or account id is wrong, or the token was revoked.
+    /// 401: the token or account id is wrong, or the token was revoked. Nothing
+    /// will succeed until the credentials change.
     #[error("Harvest rejected the token. Check the token and account ID.")]
     Unauthorized,
+    /// 403: the token is good, but may not do this. Harvest answers this way for a
+    /// report or a record the user's role does not reach, so it refuses one request
+    /// rather than the account.
+    #[error("Harvest says this account may not do that.")]
+    Forbidden,
     /// 429: Harvest allows 100 requests per 15 seconds.
     #[error("Harvest is rate limiting requests. Retrying in {}s.", .retry_after.round())]
     RateLimited { retry_after: f64 },
@@ -99,6 +105,7 @@ impl HarvestError {
             // change already landed: only reading the reply failed.
             HarvestError::NotConfigured
             | HarvestError::Unauthorized
+            | HarvestError::Forbidden
             | HarvestError::NotFound
             | HarvestError::Rejected { .. }
             | HarvestError::Decoding { .. } => false,
@@ -182,7 +189,15 @@ pub struct HttpTransport {
 impl HttpTransport {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            // A connection that dies silently, on a sleeping laptop or behind a
+            // captive portal, would otherwise hold the request until the operating
+            // system gives up, and every sync and queued change waits behind it. A
+            // timeout is a network failure, which the queue retries.
+            client: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("rustls is compiled in"),
         }
     }
 }
@@ -546,7 +561,8 @@ impl HarvestClient {
             let response = self.transport.send(request.clone()).await?;
             match response.status {
                 200..=299 => return Ok(response.body),
-                401 | 403 => return Err(HarvestError::Unauthorized),
+                401 => return Err(HarvestError::Unauthorized),
+                403 => return Err(HarvestError::Forbidden),
                 404 => return Err(HarvestError::NotFound),
                 429 => {
                     let retry_after = retry_after(&response);
@@ -800,14 +816,17 @@ mod tests {
             );
         }
 
+        /// The Swift client mapped both to one error. They mean different things to
+        /// the queue: a rejected token says nothing will get through, while a
+        /// refusal says only this request will not.
         #[tokio::test]
         async fn maps_unauthorized() {
-            for status in [401, 403] {
+            for (status, error) in [
+                (401, HarvestError::Unauthorized),
+                (403, HarvestError::Forbidden),
+            ] {
                 let transport = StubTransport::new(vec![Scripted::status(status, "")]);
-                assert_eq!(
-                    client(&transport).current_user().await,
-                    Err(HarvestError::Unauthorized)
-                );
+                assert_eq!(client(&transport).current_user().await, Err(error));
             }
         }
 

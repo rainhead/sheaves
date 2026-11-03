@@ -42,6 +42,9 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     let data = serde_json::to_vec(value).map_err(std::io::Error::other)?;
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
     temporary.write_all(&data)?;
+    // On disk before the rename, or a power cut after it can leave the new name
+    // pointing at nothing, and a queue read back empty has lost every unsent change.
+    temporary.as_file().sync_all()?;
     temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
 }

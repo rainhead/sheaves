@@ -444,6 +444,11 @@ impl TimeTracker {
 
     pub async fn disconnect(&self) {
         self.stop_ticking();
+        // Wait out a sync already in flight, holding its turn, or its refresh lands
+        // after the teardown: the old account's entries back on screen and back in
+        // the cache the next launch restores. Syncs queued behind this find no
+        // credentials.
+        let _turn = self.inner.sync_gate.lock().await;
         if let Err(error) = self.inner.credentials.delete() {
             log::error!("could not delete the stored credentials: {error}");
         }
@@ -523,11 +528,8 @@ impl TimeTracker {
             state.pending_count = pending;
         });
         if let Some(blocker) = &report.stopped_with {
-            inner.update(|state| {
-                state.connection = Connection::Offline {
-                    reason: blocker.to_string(),
-                }
-            });
+            // A rejected token stops the drain too, and asks for new credentials.
+            inner.note_sync_failure(blocker);
             return;
         }
         for (mutation, error) in &report.discarded {
@@ -720,7 +722,7 @@ impl TimeTracker {
                     }
                 });
             }
-            Err(HarvestError::Unauthorized) => {
+            Err(HarvestError::Unauthorized | HarvestError::Forbidden) => {
                 // The report is readable only by an administrator, or a manager
                 // holding the billable-rates permission. A refusal is a settled
                 // answer rather than a failure worth retrying: the sync has already
@@ -763,7 +765,7 @@ impl TimeTracker {
                 log::info!("currencies: {} clients name one", currencies.len());
                 inner.update(|state| state.currencies = currencies);
             }
-            Err(HarvestError::Unauthorized) => {
+            Err(HarvestError::Unauthorized | HarvestError::Forbidden) => {
                 log::info!("currencies: this token may not read clients; money shows no symbol");
                 inner.update(|state| state.currencies_refused = true);
             }

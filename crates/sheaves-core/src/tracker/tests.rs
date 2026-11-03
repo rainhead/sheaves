@@ -635,6 +635,75 @@ mod observing {
     }
 }
 
+mod disconnecting {
+    use super::*;
+    use crate::test_support::Held;
+
+    /// A sync whose refresh is still in flight when the user disconnects must not
+    /// land afterwards: it would put the old account's entries back on screen, and
+    /// into the cache the next launch restores.
+    #[tokio::test]
+    async fn waits_out_a_sync_in_flight() {
+        let scratch = scratch();
+        let transport = Held::new(RoutingTransport::standard_account(), "time_entries");
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+
+        transport.hold();
+        let syncing = {
+            let tracker = tracker.clone();
+            tokio::spawn(async move { tracker.sync().await })
+        };
+        while transport.held() == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        let disconnecting = {
+            let tracker = tracker.clone();
+            tokio::spawn(async move { tracker.disconnect().await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        transport.release();
+        syncing.await.unwrap();
+        disconnecting.await.unwrap();
+
+        let state = tracker.state();
+        assert_eq!(state.connection, Connection::NeedsCredentials);
+        assert!(state.entries.is_empty());
+        assert!(state.user.is_none());
+        assert!(SnapshotStore::new(&scratch.snapshot).load().is_none());
+    }
+}
+
+/// A token revoked while changes wait offline: the tracker asks for new
+/// credentials, and keeps the changes for them.
+mod rejected_token {
+    use super::*;
+
+    #[tokio::test]
+    async fn asks_for_credentials_and_keeps_the_queue() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        transport.go_offline();
+        tracker.start(&target, None).await;
+
+        let revoked = RoutingTransport::new(vec![
+            Route::new(Method::Post, "time_entries", "").status(401),
+            // Who the token speaks for is still readable, so the drain runs and meets
+            // the rejection on the change itself.
+            Route::new(Method::Get, "users/me", fixture::CURRENT_USER),
+        ]);
+        let reopened = self::tracker(revoked, &scratch);
+        reopened.sync().await;
+
+        assert_eq!(reopened.state().connection, Connection::NeedsCredentials);
+        assert_eq!(reopened.state().pending_count, 1);
+        assert_eq!(reopened_queue(&scratch).count(), 1);
+    }
+}
+
 mod budget_currencies {
     use super::*;
 

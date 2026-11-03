@@ -300,6 +300,54 @@ impl Transport for RoutingTransport {
     }
 }
 
+/// Passes requests to another transport, but parks those whose URL contains
+/// `fragment` until the test releases them.
+pub struct Held {
+    inner: Arc<dyn Transport>,
+    fragment: String,
+    held: AtomicUsize,
+    released: tokio::sync::watch::Sender<bool>,
+}
+
+impl Held {
+    pub fn new(inner: Arc<dyn Transport>, fragment: &str) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            fragment: fragment.to_string(),
+            held: AtomicUsize::new(0),
+            released: tokio::sync::watch::channel(true).0,
+        })
+    }
+
+    /// From now on, matching requests wait for `release`.
+    pub fn hold(&self) {
+        self.released.send_replace(false);
+    }
+
+    pub fn held(&self) -> usize {
+        self.held.load(Ordering::SeqCst)
+    }
+
+    pub fn release(&self) {
+        self.released.send_replace(true);
+    }
+}
+
+#[async_trait]
+impl Transport for Held {
+    async fn send(&self, request: Request) -> Result<Response, HarvestError> {
+        if request.url.as_str().contains(&self.fragment) && !*self.released.borrow() {
+            self.held.fetch_add(1, Ordering::SeqCst);
+            let mut released = self.released.subscribe();
+            released
+                .wait_for(|released| *released)
+                .await
+                .expect("the transport outlives its requests");
+        }
+        self.inner.send(request).await
+    }
+}
+
 /// Parks every request until the test releases it, so a drain can be caught with a
 /// request in flight, which is when the queue is free to be changed under it.
 pub struct GatedTransport {

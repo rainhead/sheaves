@@ -250,11 +250,17 @@ impl MutationQueue {
 
     /// Marks a queued create as finished, or running again, without adding a second
     /// mutation, for a timer started and stopped before the queue ever drained.
-    /// Returns false when no such create is pending.
+    /// Returns false when no such create is pending, and the caller queues a stop or
+    /// a restart instead.
+    ///
+    /// The create at the head of a queue that is draining may already be on its way
+    /// to Harvest, and is refused. Amended in flight, it would no longer match the
+    /// copy the drain sent, so the drain would leave it queued and send it again: a
+    /// second entry for one timer.
     pub fn amend_create(&self, local: Uuid, ended_at: Option<Timestamp>) -> bool {
         let mut amended = false;
         self.change(|state| {
-            for mutation in &mut state.pending {
+            for (index, mutation) in state.pending.iter_mut().enumerate() {
                 if let Mutation::Create {
                     local: id,
                     ended_at: end,
@@ -262,6 +268,11 @@ impl MutationQueue {
                 } = mutation
                     && *id == local
                 {
+                    // Read under the lock the drain takes to copy the head, so the
+                    // two cannot interleave.
+                    if index == 0 && self.is_draining.load(Ordering::SeqCst) {
+                        return;
+                    }
                     *end = ended_at;
                     amended = true;
                     return;
@@ -343,7 +354,16 @@ impl MutationQueue {
             };
             match outcome {
                 Ok(()) => report.applied += 1,
-                Err(error) if error.is_transient() => {
+                // A rejected token fails every request alike. Treated as a refusal
+                // of this one change, it would discard the whole queue in one drain,
+                // and the work a renewed token exists to send would be gone.
+                Err(error)
+                    if error.is_transient()
+                        || matches!(
+                            error,
+                            HarvestError::Unauthorized | HarvestError::NotConfigured
+                        ) =>
+                {
                     report.stopped_with = Some(error);
                     break;
                 }
@@ -718,6 +738,56 @@ mod tests {
             assert!(queue.is_empty());
         }
 
+        /// A rejected token fails every request alike, so it must stop the drain
+        /// with everything kept for the renewed token, not discard the queue one
+        /// change at a time.
+        #[tokio::test]
+        async fn keeps_everything_when_the_token_is_rejected() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![Scripted::status(401, ""); 2]);
+
+            queue.enqueue(Mutation::Stop {
+                id: EntryId::Server(1),
+                hours: 1.0,
+            });
+            queue.enqueue(Mutation::Stop {
+                id: EntryId::Server(2),
+                hours: 1.0,
+            });
+            let report = queue.drain(&client(transport.clone())).await;
+
+            assert_eq!(report.stopped_with, Some(HarvestError::Unauthorized));
+            assert!(report.discarded.is_empty());
+            assert_eq!(queue.count(), 2);
+            assert_eq!(transport.request_count(), 1);
+        }
+
+        /// A refusal of one change, by contrast, is that change's alone.
+        #[tokio::test]
+        async fn drops_only_a_forbidden_change() {
+            let scratch = scratch();
+            let queue = open(&scratch);
+            let transport = StubTransport::new(vec![
+                Scripted::status(403, ""),
+                Scripted::ok(&fixture::time_entry()),
+                Scripted::ok(&fixture::time_entry()),
+            ]);
+
+            queue.enqueue(Mutation::Delete {
+                id: EntryId::Server(1),
+            });
+            queue.enqueue(Mutation::Stop {
+                id: EntryId::Server(2),
+                hours: 1.0,
+            });
+            let report = queue.drain(&client(transport)).await;
+
+            assert_eq!(report.discarded.len(), 1);
+            assert_eq!(report.applied, 1);
+            assert!(queue.is_empty());
+        }
+
         #[test]
         fn persists_across_launches() {
             let scratch = scratch();
@@ -738,6 +808,36 @@ mod tests {
 
     mod draining_under_mutation {
         use super::*;
+
+        /// Stopping a timer while its create is on the wire. Amending the create
+        /// then would make it differ from the copy the drain sent, so the drain would
+        /// leave it queued and post it a second time. Refused, the caller queues a
+        /// stop instead, which the remembered resolution delivers.
+        #[tokio::test]
+        async fn amend_refused_while_the_create_is_in_flight() {
+            let scratch = scratch();
+            let queue = Arc::new(open(&scratch));
+            let local = Uuid::new_v4();
+            queue.enqueue(create(local, ago(3600.0), None));
+
+            let transport = GatedTransport::new(&fixture::running_time_entry());
+            let client = Arc::new(client(transport.clone()));
+            let drain = {
+                let (queue, client) = (queue.clone(), client.clone());
+                tokio::spawn(async move { queue.drain(&client).await })
+            };
+            while transport.arrived() == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+
+            assert!(!queue.amend_create(local, Some(Timestamp::now())));
+            transport.release_all();
+            drain.await.unwrap();
+
+            // One POST, then the restart that followed it, and no second create.
+            assert_eq!(transport.arrived(), 2);
+            assert!(queue.is_empty());
+        }
 
         /// The queue is free to be changed while a request is in flight:
         /// disconnecting mid-drain calls `remove_all` under a waiting drain. The
