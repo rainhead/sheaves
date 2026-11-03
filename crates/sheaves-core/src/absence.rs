@@ -154,6 +154,9 @@ pub struct PresenceMonitor {
     /// When the machine was last looked at, so a call found in progress can be
     /// credited to the whole interval it may have been running for.
     last_poll: Option<Timestamp>,
+    /// Every moment of evidence handed to the detector since the last
+    /// [`take_evidence`](Self::take_evidence), for the log peers are answered from.
+    evidence: Vec<Timestamp>,
 }
 
 impl PresenceMonitor {
@@ -165,7 +168,18 @@ impl PresenceMonitor {
         Self {
             detector: AbsenceDetector::new(threshold, now),
             last_poll: None,
+            evidence: Vec::new(),
         }
+    }
+
+    /// The evidence noted since the last call, oldest first as it arrived.
+    pub fn take_evidence(&mut self) -> Vec<Timestamp> {
+        std::mem::take(&mut self.evidence)
+    }
+
+    fn note(&mut self, when: Timestamp) -> Option<Absence> {
+        self.evidence.push(when);
+        self.detector.note_presence(when)
     }
 
     pub fn detector(&self) -> &AbsenceDetector {
@@ -193,15 +207,12 @@ impl PresenceMonitor {
         // this must never do. Reading it before the idle clock means the presence is
         // banked before any gap is measured.
         if reading.microphone_in_use {
-            absences.extend(self.detector.note_presence(self.last_poll.unwrap_or(now)));
+            absences.extend(self.note(self.last_poll.unwrap_or(now)));
         }
 
         // The idle clock says how long *since* the last event, which is a better
         // answer than the moment this poll happened to run.
-        absences.extend(
-            self.detector
-                .note_presence(offset_by(now, -reading.seconds_since_input)),
-        );
+        absences.extend(self.note(offset_by(now, -reading.seconds_since_input)));
         self.last_poll = Some(now);
         absences
     }

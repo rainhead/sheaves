@@ -233,7 +233,10 @@ mod tests {
         #[test]
         fn refuses_a_number_too_large_to_hold() {
             assert_eq!(parse_hours(&"9".repeat(400), '.'), None);
-            assert_eq!(parse_hours(&format!("1.{}", "0".repeat(400)), '.'), Some(1.0));
+            assert_eq!(
+                parse_hours(&format!("1.{}", "0".repeat(400)), '.'),
+                Some(1.0)
+            );
         }
 
         /// The edit field prefills with the formatted duration, so whatever the app
