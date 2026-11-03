@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Harvest returns `"2026-08-29"` with no zone. Turning that into an instant means
 /// every entry is one day off for somebody, so days stay days here and only become
 /// instants at the edges, against an explicit time zone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, uniffi::Record)]
 pub struct CalendarDate {
     pub year: i16,
     pub month: i8,
@@ -121,7 +121,7 @@ impl<'de> Deserialize<'de> for CalendarDate {
 }
 
 /// The account's `week_start_day`. Harvest only ever returns these three.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum Weekday {
     Saturday,
     Sunday,

@@ -9,7 +9,7 @@ use crate::models::{offset_by, seconds_between};
 use crate::tracked_entry::{TimerTarget, TrackedEntry};
 
 /// A stretch of time with nobody at the machine, noticed when they came back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct Absence {
     /// The last moment there was evidence of someone here.
     pub began: Timestamp,
@@ -123,7 +123,7 @@ impl AbsenceDetector {
 /// "Add Idle Time as a New Entry", which exists because the commonest reason a
 /// machine sits untouched is that its owner was in a meeting that is itself
 /// billable, just not to the project the timer was on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum AbsenceResolution {
     /// It was working time after all. Bill it.
     Keep,
@@ -137,7 +137,7 @@ pub enum AbsenceResolution {
 
 /// One look at the signals that say somebody is at the machine. Each shell reads
 /// them its own way; what they mean is decided here.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, uniffi::Record)]
 pub struct PresenceReading {
     /// Seconds since the last keyboard or mouse event.
     pub seconds_since_input: f64,

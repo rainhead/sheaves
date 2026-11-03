@@ -41,16 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func makeTracker() -> TimeTracker {
         #if DEBUG
         if isDemo {
-            let scratch = URL.temporaryDirectory.appending(path: "sheaves-demo-\(UUID().uuidString)")
-            return TimeTracker(
-                client: HarvestClient(
-                    credentials: .init(accountID: "0", token: "demo"),
-                    transport: DemoAccount()
-                ),
-                keychain: KeychainStore(service: "com.rainhead.Sheaves.demo-\(UUID().uuidString)"),
-                snapshots: SnapshotStore(fileURL: scratch.appending(path: "snapshot.json")),
-                queue: MutationQueue(fileURL: scratch.appending(path: "queue.json"))
-            )
+            return .demo()
         }
         #endif
         return TimeTracker()

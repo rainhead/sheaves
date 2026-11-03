@@ -53,16 +53,10 @@ enum DocumentationImages {
         ]
     }
 
-    /// `TimeTracker` state is `private(set)`, so the only way to populate one is to
-    /// let it sync — against the scripted account below rather than Harvest.
+    /// The tracker's state comes only from syncing, so the images sync it against
+    /// the core's demo account rather than Harvest.
     private static func makeTracker() async -> TimeTracker {
-        let scratch = URL.temporaryDirectory.appending(path: "sheaves-docs-\(UUID().uuidString)")
-        let tracker = TimeTracker(
-            client: HarvestClient(credentials: .init(accountID: "0", token: "none"), transport: DemoAccount()),
-            keychain: KeychainStore(service: "com.rainhead.Sheaves.docs-\(UUID().uuidString)"),
-            snapshots: SnapshotStore(fileURL: scratch.appending(path: "snapshot.json")),
-            queue: MutationQueue(fileURL: scratch.appending(path: "queue.json"))
-        )
+        let tracker = TimeTracker.demo()
         await tracker.sync()
         return tracker
     }

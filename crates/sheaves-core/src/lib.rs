@@ -7,6 +7,8 @@ pub mod calendar_date;
 pub mod client;
 pub mod clock;
 pub mod credentials;
+pub mod demo;
+pub mod ffi;
 pub mod hours;
 pub mod models;
 pub mod persistence;

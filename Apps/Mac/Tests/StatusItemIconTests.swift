@@ -17,9 +17,10 @@ struct StatusItemIconTests {
     private func entry(running: Bool) -> TrackedEntry {
         TrackedEntry(
             id: .server(1), project: Reference(id: 1, name: "Online Store"),
-            task: Reference(id: 2, name: "Programming"), spentDate: .today(),
-            bankedHours: 0.5, isRunning: running,
-            timerStartedAt: running ? Date() : nil
+            task: Reference(id: 2, name: "Programming"), client: nil, notes: nil,
+            spentDate: .today(), bankedHours: 0.5, isRunning: running,
+            timerStartedAt: running ? Date() : nil, isLocked: false, isBillable: true,
+            isPending: false, updatedAt: Date()
         )
     }
 

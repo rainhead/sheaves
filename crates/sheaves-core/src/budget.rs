@@ -8,7 +8,7 @@ use crate::models::PaginatedItem;
 ///
 /// The distinction that matters here is hours against money: it decides how the
 /// figures are formatted, and money is the case a token may not be allowed to read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetBasis {
     /// Hours across the whole project.
@@ -53,7 +53,7 @@ impl<'de> Deserialize<'de> for BudgetBasis {
 /// identical from here: a project with no budget at all, and a monetary budget that
 /// only administrators and managers with the billable-rates permission may read.
 /// `has_readable_budget` collapses both into the one question the UI asks.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct ProjectBudget {
     pub project_id: i64,
     pub project_name: String,
@@ -78,7 +78,7 @@ pub struct ProjectBudget {
 
 /// A budget figure ready for a shell to format: unsigned, and in the unit it must be
 /// shown in.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum BudgetFigure {
     /// A duration in hours, formatted the way the account shows durations.
     Hours(f64),

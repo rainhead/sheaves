@@ -8,7 +8,7 @@ import SwiftUI
 /// than by index because starting or stopping a timer reorders the entries under it.
 enum PanelRow: Hashable {
     case entry(TrackedEntry.ID)
-    case project(Int)
+    case project(Int64)
 }
 
 struct DayView: View {
@@ -16,7 +16,7 @@ struct DayView: View {
     @Environment(\.openSettingsWindow) private var openSettings
 
     @State private var selection: PanelRow?
-    @State private var chosenTasks: [Int: Int] = [:]
+    @State private var chosenTasks: [Int64: Int64] = [:]
     /// Which entry, if any, has its notes field open. Held here so the panel can hand
     /// the keyboard over to it entirely, and so only one row can be editing.
     @State private var editingNotes: TrackedEntry.ID?

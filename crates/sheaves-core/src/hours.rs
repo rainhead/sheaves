@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// How the account prefers to see durations. Harvest reports this as `time_format`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum HoursFormat {
     HoursMinutes,

@@ -2,7 +2,7 @@
 //! Sheaves still owes Harvest.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use crate::tracked_entry::{
     EntryId, ProjectTargets, TimerTarget, TrackedEntry, group_by_project, timer_targets,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum Connection {
     NeedsCredentials,
     Connecting,
@@ -40,7 +40,7 @@ impl Connection {
 }
 
 /// What the menu bar should offer: a timer to pause, one to resume, or nothing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Activity {
     Idle,
     Running(TrackedEntry),
@@ -58,7 +58,7 @@ impl Activity {
 }
 
 /// How the machine is powered, as far as polite background traffic cares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum PowerState {
     PluggedIn,
     Battery,
@@ -69,8 +69,10 @@ pub enum PowerState {
 
 /// Everything a shell draws, as one value. A shell receives a fresh copy each time
 /// anything in it changes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct TrackerState {
+    /// Counts changes, so a shell receiving states out of order can keep the newest.
+    pub revision: u64,
     pub connection: Connection,
     pub user: Option<HarvestUser>,
     pub company: Option<HarvestCompany>,
@@ -82,7 +84,7 @@ pub struct TrackerState {
     pub day: CalendarDate,
     pub today: CalendarDate,
     pub last_synced_at: Option<Timestamp>,
-    pub pending_count: usize,
+    pub pending_count: u32,
     /// Budgets for the projects that have one this token may read, keyed by project
     /// id. Permanently empty on accounts with none.
     pub budgets: HashMap<i64, ProjectBudget>,
@@ -220,7 +222,7 @@ struct State {
     frequent_targets: Vec<TimerTarget>,
     day: CalendarDate,
     last_synced_at: Option<Timestamp>,
-    pending_count: usize,
+    pending_count: u32,
     budgets: HashMap<i64, ProjectBudget>,
     now: Timestamp,
     last_active_today: Option<TrackedEntry>,
@@ -276,6 +278,7 @@ struct Inner {
     observer: Mutex<Option<Observer>>,
     power: Mutex<PowerProbe>,
     ticker: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    revision: AtomicU64,
 }
 
 /// The application's model.
@@ -300,7 +303,7 @@ impl TimeTracker {
     ) -> Self {
         let today = clock.today();
         let now = clock.now();
-        let pending_count = queue.count();
+        let pending_count = queue.count() as u32;
         Self {
             inner: Arc::new(Inner {
                 client,
@@ -335,6 +338,7 @@ impl TimeTracker {
                 observer: Mutex::new(None),
                 power: Mutex::new(Arc::new(|| PowerState::PluggedIn)),
                 ticker: Mutex::new(None),
+                revision: AtomicU64::new(0),
             }),
         }
     }
@@ -426,7 +430,7 @@ impl TimeTracker {
             // credentials are saved, a crash between the two cannot leave the next
             // launch restoring the old user beside the new token.
             inner.snapshots.clear();
-            inner.credentials.write(&credentials)?;
+            inner.credentials.write(credentials.clone())?;
             inner.queue.claim(owner);
             Ok(user)
         }
@@ -436,7 +440,7 @@ impl TimeTracker {
             Ok(user) => {
                 change.succeeded = true;
                 drop(change);
-                let pending = inner.queue.count();
+                let pending = inner.queue.count() as u32;
                 inner.update(|state| {
                     state.pending_count = pending;
                     inner.forget_account_data(state);
@@ -518,7 +522,7 @@ impl TimeTracker {
         match self.queue_belongs_elsewhere().await {
             Ok(true) => {
                 log::error!("queued changes belong to another account or user; not sending them");
-                let pending = inner.queue.count();
+                let pending = inner.queue.count() as u32;
                 // Settings is where this gets resolved: connecting there offers the
                 // choice between going back to their owner and discarding them.
                 inner.update(|state| {
@@ -535,7 +539,7 @@ impl TimeTracker {
         }
 
         let report = inner.queue.drain(&inner.client).await;
-        let pending = inner.queue.count();
+        let pending = inner.queue.count() as u32;
         inner.update(|state| {
             adopt(state, &report.resolved);
             state.pending_count = pending;
@@ -1269,7 +1273,7 @@ impl TimeTracker {
     }
 
     async fn queue_changed(&self) {
-        let pending = self.inner.queue.count();
+        let pending = self.inner.queue.count() as u32;
         self.inner.update(|state| state.pending_count = pending);
         self.inner.save_snapshot();
         self.sync().await;
@@ -1387,6 +1391,7 @@ async fn tick(weak: Weak<Inner>) {
 impl Inner {
     fn snapshot_of(&self, state: &State) -> TrackerState {
         TrackerState {
+            revision: self.revision.load(Ordering::SeqCst),
             connection: state.connection.clone(),
             user: state.user.clone(),
             company: state.company.clone(),
@@ -1406,7 +1411,13 @@ impl Inner {
 
     /// Applies `change` to the state, then tells the observer.
     fn update<T>(&self, change: impl FnOnce(&mut State) -> T) -> T {
-        let result = change(&mut self.state.lock().unwrap());
+        let result = {
+            let mut state = self.state.lock().unwrap();
+            let result = change(&mut state);
+            // Under the lock, so revisions advance in the order changes were made.
+            self.revision.fetch_add(1, Ordering::SeqCst);
+            result
+        };
         self.changed();
         result
     }

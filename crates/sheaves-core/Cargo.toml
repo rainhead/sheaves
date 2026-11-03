@@ -15,8 +15,7 @@ name = "sheaves_core"
 async-trait = "0.1.92"
 directories = "6.0.0"
 jiff = { version = "0.2.39", features = ["serde"] }
-log = "0.4.35"
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2"] }
+log = { version = "0.4.35", features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_path_to_error = "0.1.20"
@@ -29,3 +28,11 @@ uuid = { version = "1.29.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync", "test-util"] }
+
+# TLS from the system where it has one: Security.framework on a Mac, which costs the
+# app nothing to carry. Elsewhere rustls, so a Linux build needs no OpenSSL.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
