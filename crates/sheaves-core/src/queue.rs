@@ -97,19 +97,6 @@ impl Mutation {
             EntryId::Local(local) => format!("{kind} of unsent entry {local}"),
         }
     }
-
-    fn retargeted(&self, to: EntryId) -> Mutation {
-        let mut copy = self.clone();
-        match &mut copy {
-            Mutation::Create { .. } => {}
-            Mutation::Stop { id, .. }
-            | Mutation::Restart { id, .. }
-            | Mutation::Update { id, .. }
-            | Mutation::Adjust { id, .. }
-            | Mutation::Delete { id } => *id = to,
-        }
-        copy
-    }
 }
 
 #[derive(Debug, Default)]
@@ -142,16 +129,39 @@ pub struct Owner {
     pub user_id: i64,
 }
 
+/// A mutation as the queue holds it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Queued {
+    /// Minted when the change is enqueued, and how the drain recognises the change
+    /// it sent. Comparing whole values instead broke whenever anything amended a
+    /// queued change while it was on its way.
+    id: Uuid,
+    mutation: Mutation,
+    /// When a create was last sent. Set before the request goes, so that after a
+    /// failure that leaves it unclear whether Harvest saved the entry, the next
+    /// attempt looks for the entry before posting a second one.
+    #[serde(default)]
+    attempted_at: Option<Timestamp>,
+}
+
+impl Queued {
+    fn new(mutation: Mutation) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            mutation,
+            attempted_at: None,
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Stored {
     #[serde(default)]
-    pending: Vec<Mutation>,
-    /// Local ids that have earned a Harvest id, newest last.
-    ///
-    /// Rewriting only the mutations already queued is not enough: the user can stop
-    /// a timer after its create drained but before the tracker has adopted the real
-    /// id, and that stop would target a local id nothing recognises. It would be
-    /// discarded as "not found" and the timer would run on Harvest indefinitely.
+    pending: Vec<Queued>,
+    /// Local ids that have earned a Harvest id, newest last: the one place a change
+    /// queued against a local id learns which entry it means. A change can be queued
+    /// after its create drained but before the tracker adopted the real id, so the
+    /// mapping has to outlive the create.
     #[serde(default)]
     resolved: Vec<Resolution>,
     /// Whose work this is, or `None` for a queue nobody has claimed yet.
@@ -220,11 +230,17 @@ impl MutationQueue {
     }
 
     pub fn pending(&self) -> Vec<Mutation> {
-        self.state.lock().unwrap().pending.clone()
+        self.state
+            .lock()
+            .unwrap()
+            .pending
+            .iter()
+            .map(|queued| queued.mutation.clone())
+            .collect()
     }
 
     pub fn enqueue(&self, mutation: Mutation) {
-        self.change(|state| state.pending.push(mutation));
+        self.change(|state| state.pending.push(Queued::new(mutation)));
     }
 
     pub fn remove_all(&self) {
@@ -296,9 +312,9 @@ impl MutationQueue {
     pub fn amend_create(&self, local: Uuid, ended_at: Option<Timestamp>) -> bool {
         let mut amended = false;
         self.change(|state| {
-            let Some(index) = state.pending.iter().position(
-                |mutation| matches!(mutation, Mutation::Create { local: id, .. } if *id == local),
-            ) else {
+            let Some(index) = state.pending.iter().position(|queued| {
+                matches!(queued.mutation, Mutation::Create { local: id, .. } if id == local)
+            }) else {
                 return;
             };
             // Read under the lock the drain takes to copy the head, so the two
@@ -308,11 +324,11 @@ impl MutationQueue {
             }
             if state.pending[index + 1..]
                 .iter()
-                .any(|mutation| mutation.subject() == EntryId::Local(local))
+                .any(|queued| queued.mutation.subject() == EntryId::Local(local))
             {
                 return;
             }
-            let Mutation::Create { ended_at: end, .. } = &mut state.pending[index] else {
+            let Mutation::Create { ended_at: end, .. } = &mut state.pending[index].mutation else {
                 unreachable!("found as a create");
             };
             if end.is_some() && ended_at.is_none() {
@@ -341,9 +357,10 @@ impl MutationQueue {
         let mut report = DrainReport::default();
 
         loop {
-            let Some(mutation) = self.state.lock().unwrap().pending.first().cloned() else {
+            let Some(head) = self.state.lock().unwrap().pending.first().cloned() else {
                 break;
             };
+            let mutation = head.mutation.clone();
             let outcome = match &mutation {
                 Mutation::Create { local, .. } => {
                     // A create can need a second request, a restart or a stop.
@@ -353,23 +370,18 @@ impl MutationQueue {
                     // the queue the moment the POST succeeds, and the second request
                     // takes its place as an ordinary mutation with ordinary retries.
                     let local = *local;
-                    match self.create(&mutation, client).await {
+                    match self.deliver_create(&head, client).await {
                         Ok((entry, follow_up)) => {
                             self.change(|state| {
                                 remember(&mut state.resolved, local, entry.id);
-                                // Later queued changes still point at the
-                                // placeholder id; repoint them.
-                                for queued in &mut state.pending {
-                                    if queued.subject() == EntryId::Local(local) {
-                                        *queued = queued.retargeted(EntryId::Server(entry.id));
-                                    }
-                                }
                                 // The queue can have been emptied while the request
                                 // was in flight, by `remove_all` on disconnect.
-                                // Touch it only where the drained mutation stands.
-                                if state.pending.first() == Some(&mutation) {
+                                // Touch it only where the drained change stands.
+                                if state.pending.first().map(|queued| queued.id) == Some(head.id) {
                                     match follow_up {
-                                        Some(follow_up) => state.pending[0] = follow_up,
+                                        Some(follow_up) => {
+                                            state.pending[0] = Queued::new(follow_up)
+                                        }
                                         None => {
                                             state.pending.remove(0);
                                         }
@@ -384,11 +396,7 @@ impl MutationQueue {
                 }
                 _ => match self.apply(&mutation, client).await {
                     Ok(()) => {
-                        self.change(|state| {
-                            if state.pending.first() == Some(&mutation) {
-                                state.pending.remove(0);
-                            }
-                        });
+                        self.remove_head(head.id);
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -398,23 +406,23 @@ impl MutationQueue {
                 Ok(()) => report.applied += 1,
                 // A rejected token fails every request alike. Treated as a refusal
                 // of this one change, it would discard the whole queue in one drain,
-                // and the work a renewed token exists to send would be gone.
+                // and the work a renewed token exists to send would be gone. A create
+                // whose reply would not decode may well have been saved; it waits
+                // for the next drain, which looks for it before posting again.
                 Err(error)
                     if error.is_transient()
                         || matches!(
                             error,
                             HarvestError::Unauthorized | HarvestError::NotConfigured
-                        ) =>
+                        )
+                        || (matches!(mutation, Mutation::Create { .. })
+                            && matches!(error, HarvestError::Decoding { .. })) =>
                 {
                     report.stopped_with = Some(error);
                     break;
                 }
                 Err(error) => {
-                    self.change(|state| {
-                        if state.pending.first() == Some(&mutation) {
-                            state.pending.remove(0);
-                        }
-                    });
+                    self.remove_head(head.id);
                     report.discarded.push((mutation, error));
                 }
             }
@@ -428,6 +436,117 @@ impl MutationQueue {
     /// hours figure is therefore rounded to what Harvest can store before it is sent.
     pub fn storable_hours(hours: f64) -> f64 {
         (hours * 100.0).round() / 100.0
+    }
+
+    fn remove_head(&self, id: Uuid) {
+        self.change(|state| {
+            if state.pending.first().map(|queued| queued.id) == Some(id) {
+                state.pending.remove(0);
+            }
+        });
+    }
+
+    /// Delivers the create at the head of the queue, once.
+    ///
+    /// A create sent before, whose fate is unknown because its request failed in a
+    /// way that leaves it unclear whether Harvest saved the entry, is looked for
+    /// first. Only when Harvest has no such entry is it posted again.
+    async fn deliver_create(
+        &self,
+        head: &Queued,
+        client: &HarvestClient,
+    ) -> Result<(TimeEntry, Option<Mutation>), HarvestError> {
+        if let Some(attempted_at) = head.attempted_at
+            && let Some(entry) = self
+                .find_created(&head.mutation, attempted_at, client)
+                .await?
+        {
+            log::info!(
+                "found entry {} from an earlier attempt; not posting again",
+                entry.id
+            );
+            let follow_up = Self::follow_up_for_found(&head.mutation, &entry);
+            return Ok((entry, follow_up));
+        }
+        let now = self.clock.now();
+        self.change(|state| {
+            if let Some(first) = state.pending.first_mut()
+                && first.id == head.id
+            {
+                first.attempted_at = Some(now);
+            }
+        });
+        self.create(&head.mutation, client).await
+    }
+
+    /// Harvest has no idempotency key, so an earlier attempt is recognised by what it
+    /// sent: the same project, task, day and notes, on an entry created since the
+    /// attempt and not already taken by another create. Harvest's clock and this
+    /// machine's can differ, so the search reaches back a few minutes further.
+    async fn find_created(
+        &self,
+        mutation: &Mutation,
+        attempted_at: Timestamp,
+        client: &HarvestClient,
+    ) -> Result<Option<TimeEntry>, HarvestError> {
+        const CLOCK_SLACK: f64 = 5.0 * 60.0;
+        let Mutation::Create {
+            target,
+            spent_date,
+            notes,
+            ..
+        } = mutation
+        else {
+            return Ok(None);
+        };
+        let Some(owner) = self.owner() else {
+            return Ok(None);
+        };
+        let taken: Vec<i64> = {
+            let state = self.state.lock().unwrap();
+            state
+                .resolved
+                .iter()
+                .map(|resolution| resolution.server_id)
+                .collect()
+        };
+        let since = crate::models::offset_by(attempted_at, -CLOCK_SLACK);
+        let entries = client
+            .time_entries(owner.user_id, *spent_date, *spent_date)
+            .await?;
+        Ok(entries.into_iter().find(|entry| {
+            entry.project.id == target.project.id
+                && entry.task.id == target.task.id
+                && entry.notes.as_deref().unwrap_or("") == notes.as_deref().unwrap_or("")
+                && entry.created_at >= since
+                && !taken.contains(&entry.id)
+        }))
+    }
+
+    /// What must follow a create that an earlier attempt already made, judged from
+    /// the entry Harvest holds.
+    fn follow_up_for_found(mutation: &Mutation, entry: &TimeEntry) -> Option<Mutation> {
+        let Mutation::Create {
+            started_at,
+            ended_at,
+            ..
+        } = mutation
+        else {
+            return None;
+        };
+        let id = EntryId::Server(entry.id);
+        match (ended_at, entry.is_running) {
+            (Some(ended_at), true) => Some(Mutation::Stop {
+                id,
+                hours: Self::storable_hours(hours_between(*started_at, *ended_at)),
+            }),
+            (None, false) => Some(Mutation::Restart {
+                id,
+                resumed_at: entry.created_at,
+                banked_hours: entry.hours,
+            }),
+            _ => None,
+        }
     }
 
     /// Sends the POST for a queued create and names the mutation that must follow
@@ -491,14 +610,16 @@ impl MutationQueue {
         match mutation {
             Mutation::Create { .. } => unreachable!("creates go through create()"),
             Mutation::Stop { hours, .. } => {
-                match client.stop_time_entry(server_id).await {
+                match landed(client.stop_time_entry(server_id).await) {
                     // Already stopped on the server: the hours still need correcting.
-                    Ok(_) | Err(HarvestError::Rejected { .. }) => {}
+                    Ok(()) | Err(HarvestError::Rejected { .. }) => {}
                     Err(error) => return Err(error),
                 }
-                client
-                    .update_time_entry(server_id, hours_only(Self::storable_hours(*hours)))
-                    .await?;
+                landed(
+                    client
+                        .update_time_entry(server_id, hours_only(Self::storable_hours(*hours)))
+                        .await,
+                )?;
             }
             Mutation::Restart {
                 resumed_at,
@@ -509,32 +630,41 @@ impl MutationQueue {
                 if offline > 1.0 / 3600.0 {
                     // Bank the time it ran offline *before* resuming, so the total is
                     // never patched while the timer is live.
+                    landed(
+                        client
+                            .update_time_entry(
+                                server_id,
+                                hours_only(Self::storable_hours(banked_hours + offline)),
+                            )
+                            .await,
+                    )?;
+                }
+                landed(client.restart_time_entry(server_id).await)?;
+            }
+            Mutation::Update { notes, hours, .. } => {
+                landed(
                     client
                         .update_time_entry(
                             server_id,
-                            hours_only(Self::storable_hours(banked_hours + offline)),
+                            EntryUpdate {
+                                notes: notes.as_deref(),
+                                hours: hours.map(Self::storable_hours),
+                                ..EntryUpdate::default()
+                            },
                         )
-                        .await?;
-                }
-                client.restart_time_entry(server_id).await?;
-            }
-            Mutation::Update { notes, hours, .. } => {
-                client
-                    .update_time_entry(
-                        server_id,
-                        EntryUpdate {
-                            notes: notes.as_deref(),
-                            hours: hours.map(Self::storable_hours),
-                            ..EntryUpdate::default()
-                        },
-                    )
-                    .await?;
+                        .await,
+                )?;
             }
             Mutation::Adjust { hours, as_of, .. } => {
                 let elapsed = hours_between(*as_of, now);
-                client
-                    .update_time_entry(server_id, hours_only(Self::storable_hours(hours + elapsed)))
-                    .await?;
+                landed(
+                    client
+                        .update_time_entry(
+                            server_id,
+                            hours_only(Self::storable_hours(hours + elapsed)),
+                        )
+                        .await,
+                )?;
             }
             Mutation::Delete { .. } => client.delete_time_entry(server_id).await?,
         }
@@ -564,6 +694,20 @@ impl MutationQueue {
         if let Err(error) = persistence::write_json(&self.path, &*state) {
             log::error!("could not save the queue: {error}");
         }
+    }
+}
+
+/// A write's outcome, with a reply that would not decode counted as the write
+/// having landed: Harvest answered with success, and only reading the answer failed.
+/// Counted as a failure, it dropped a stop before its hours correction was sent.
+fn landed<T>(result: Result<T, HarvestError>) -> Result<(), HarvestError> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(HarvestError::Decoding { endpoint, detail }) => {
+            log::error!("{endpoint} landed, but its reply did not decode: {detail}");
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -1325,6 +1469,152 @@ mod tests {
             assert!(healthy.calls_to(Method::Post, "time_entries").is_empty());
             assert_eq!(healthy.calls_to(Method::Patch, "/stop").len(), 1);
             assert!(queue.is_empty());
+        }
+    }
+
+    /// A create whose request failed in a way that leaves it unclear whether Harvest
+    /// saved it, a 5xx or a timeout after the body went, must not be posted a second
+    /// time if Harvest did. Harvest has no idempotency key, so the retry looks first.
+    mod ambiguous_failures {
+        use super::*;
+
+        fn owned(scratch: &Scratch) -> MutationQueue {
+            let queue = open(scratch);
+            queue.claim(Owner {
+                account_id: "12345".to_string(),
+                user_id: 1782959,
+            });
+            queue
+        }
+
+        /// The entry an attempt might have saved: the target's project and task, no
+        /// notes, created just now.
+        fn saved_entry(id: i64) -> String {
+            fixture::time_entry()
+                .replace("636709355", &id.to_string())
+                .replace("14307913", "14308069")
+                .replace("8083365", "8083366")
+                .replace(r#""Adding CSS styling""#, "null")
+                .replace("2026-08-29T22:44:36Z", &Timestamp::now().to_string())
+        }
+
+        fn first_attempt_fails(queue: &MutationQueue) -> impl Future<Output = DrainReport> {
+            let failing = RoutingTransport::new(vec![
+                Route::new(Method::Post, "time_entries", "").status(500),
+            ]);
+            let client = client(failing);
+            async move { queue.drain(&client).await }
+        }
+
+        #[tokio::test]
+        async fn a_retry_adopts_the_entry_the_first_attempt_saved() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            let local = Uuid::new_v4();
+            queue.enqueue(create(local, ago(3600.0), Some(Timestamp::now())));
+            assert!(first_attempt_fails(&queue).await.stopped_with.is_some());
+
+            let retry = RoutingTransport::new(vec![
+                Route::new(
+                    Method::Get,
+                    "time_entries",
+                    &fixture::entries_page(&[saved_entry(777)]),
+                ),
+                Route::new(Method::Post, "time_entries", &fixture::time_entry()).status(201),
+            ]);
+            let report = queue.drain(&client(retry.clone())).await;
+
+            assert!(retry.calls_to(Method::Post, "time_entries").is_empty());
+            assert_eq!(report.resolved.get(&local), Some(&777));
+            assert!(queue.is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_retry_posts_again_when_nothing_was_saved() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            queue.enqueue(create(Uuid::new_v4(), ago(3600.0), Some(Timestamp::now())));
+            assert!(first_attempt_fails(&queue).await.stopped_with.is_some());
+
+            let retry = RoutingTransport::new(vec![
+                Route::new(Method::Get, "time_entries", &fixture::entries_page(&[])),
+                Route::new(Method::Post, "time_entries", &fixture::time_entry()).status(201),
+            ]);
+            queue.drain(&client(retry.clone())).await;
+
+            assert_eq!(retry.calls_to(Method::Post, "time_entries").len(), 1);
+            assert!(queue.is_empty());
+        }
+
+        /// An entry that only looks alike, because it was created before this
+        /// attempt, is somebody's earlier work and must not be taken.
+        #[tokio::test]
+        async fn an_older_lookalike_is_not_taken() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            queue.enqueue(create(Uuid::new_v4(), ago(3600.0), Some(Timestamp::now())));
+            assert!(first_attempt_fails(&queue).await.stopped_with.is_some());
+
+            let older =
+                saved_entry(778).replace(&Timestamp::now().to_string()[..13], "2020-01-01T00");
+            let retry = RoutingTransport::new(vec![
+                Route::new(
+                    Method::Get,
+                    "time_entries",
+                    &fixture::entries_page(&[older]),
+                ),
+                Route::new(Method::Post, "time_entries", &fixture::time_entry()).status(201),
+            ]);
+            queue.drain(&client(retry.clone())).await;
+
+            assert_eq!(retry.calls_to(Method::Post, "time_entries").len(), 1);
+        }
+
+        /// A create whose reply would not decode was very likely saved. It stays
+        /// queued, and the next drain finds it rather than posting again.
+        #[tokio::test]
+        async fn an_unreadable_reply_is_not_taken_for_a_refusal() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            let local = Uuid::new_v4();
+            queue.enqueue(create(local, ago(3600.0), Some(Timestamp::now())));
+            let garbled = RoutingTransport::new(vec![
+                Route::new(Method::Post, "time_entries", "{}").status(201),
+            ]);
+            let first = queue.drain(&client(garbled)).await;
+            assert!(first.discarded.is_empty());
+            assert_eq!(queue.count(), 1);
+
+            let retry = RoutingTransport::new(vec![Route::new(
+                Method::Get,
+                "time_entries",
+                &fixture::entries_page(&[saved_entry(779)]),
+            )]);
+            let second = queue.drain(&client(retry)).await;
+            assert_eq!(second.resolved.get(&local), Some(&779));
+            assert!(queue.is_empty());
+        }
+
+        /// A stop that reached Harvest still needs its hours corrected, even when
+        /// the reply to the stop could not be read.
+        #[tokio::test]
+        async fn a_stop_with_an_unreadable_reply_is_still_corrected() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            let transport = RoutingTransport::new(vec![
+                Route::new(Method::Patch, "/stop", "{}"),
+                Route::new(Method::Patch, "time_entries", &fixture::time_entry()),
+            ]);
+            queue.enqueue(Mutation::Stop {
+                id: EntryId::Server(636709355),
+                hours: 0.5,
+            });
+
+            let report = queue.drain(&client(transport.clone())).await;
+
+            assert_eq!(report.applied, 1);
+            assert!(report.discarded.is_empty());
+            assert_eq!(correction(&transport).hours, Some(0.5));
         }
     }
 
