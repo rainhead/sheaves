@@ -45,9 +45,11 @@ public final class KeychainStore: CredentialStore, Sendable {
     private struct Stored: Codable {
         var accountID: String
         var token: String
+        /// Absent from an item the Swift core saved; the core asks Harvest once.
+        var userID: Int64?
     }
 
-    public func read() throws -> Credentials? {
+    public func read() throws -> Login? {
         do {
             return try readStored()
         } catch {
@@ -55,9 +57,9 @@ public final class KeychainStore: CredentialStore, Sendable {
         }
     }
 
-    public func write(credentials: Credentials) throws {
+    public func write(login: Login) throws {
         do {
-            try writeStored(credentials)
+            try writeStored(login)
         } catch {
             throw CredentialError.Failed(message: error.localizedDescription)
         }
@@ -71,7 +73,7 @@ public final class KeychainStore: CredentialStore, Sendable {
         }
     }
 
-    func readStored() throws -> Credentials? {
+    func readStored() throws -> Login? {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -83,7 +85,10 @@ public final class KeychainStore: CredentialStore, Sendable {
             guard let data = item as? Data,
                   let stored = try? JSONDecoder().decode(Stored.self, from: data)
             else { throw Failure.malformedData }
-            return Credentials(accountID: stored.accountID, token: stored.token)
+            return Login(
+                credentials: Credentials(accountID: stored.accountID, token: stored.token),
+                userId: stored.userID
+            )
         case errSecItemNotFound:
             return nil
         default:
@@ -91,8 +96,12 @@ public final class KeychainStore: CredentialStore, Sendable {
         }
     }
 
-    func writeStored(_ credentials: Credentials) throws {
-        let data = try JSONEncoder().encode(Stored(accountID: credentials.accountId, token: credentials.token))
+    func writeStored(_ login: Login) throws {
+        let data = try JSONEncoder().encode(Stored(
+            accountID: login.credentials.accountId,
+            token: login.credentials.token,
+            userID: login.userId
+        ))
         let attributes: [String: Any] = [kSecValueData as String: data]
 
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)

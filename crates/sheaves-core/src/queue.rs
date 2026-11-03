@@ -456,11 +456,24 @@ impl MutationQueue {
         head: &Queued,
         client: &HarvestClient,
     ) -> Result<(TimeEntry, Option<Mutation>), HarvestError> {
-        if let Some(attempted_at) = head.attempted_at
-            && let Some(entry) = self
+        let found = match head.attempted_at {
+            Some(attempted_at) => self
                 .find_created(&head.mutation, attempted_at, client)
-                .await?
-        {
+                .await
+                // The lookup failing says nothing about the create. Taken as its
+                // refusal, the drain would discard the user's change; it waits for
+                // the next drain instead, unless the token itself was refused.
+                .map_err(|error| match error {
+                    HarvestError::Unauthorized | HarvestError::NotConfigured => error,
+                    other => HarvestError::Network {
+                        reason: format!(
+                            "could not check whether an earlier attempt was saved: {other}"
+                        ),
+                    },
+                })?,
+            None => None,
+        };
+        if let Some(entry) = found {
             log::info!(
                 "found entry {} from an earlier attempt; not posting again",
                 entry.id
@@ -1593,6 +1606,24 @@ mod tests {
             let second = queue.drain(&client(retry)).await;
             assert_eq!(second.resolved.get(&local), Some(&779));
             assert!(queue.is_empty());
+        }
+
+        /// The lookup failing is not the create failing: the change stays queued.
+        #[tokio::test]
+        async fn a_failed_lookup_keeps_the_create() {
+            let scratch = scratch();
+            let queue = owned(&scratch);
+            queue.enqueue(create(Uuid::new_v4(), ago(3600.0), Some(Timestamp::now())));
+            assert!(first_attempt_fails(&queue).await.stopped_with.is_some());
+
+            let broken = RoutingTransport::new(vec![
+                Route::new(Method::Get, "time_entries", "{}").status(404),
+            ]);
+            let report = queue.drain(&client(broken)).await;
+
+            assert!(report.discarded.is_empty());
+            assert!(report.stopped_with.is_some());
+            assert_eq!(queue.count(), 1);
         }
 
         /// A stop that reached Harvest still needs its hours corrected, even when

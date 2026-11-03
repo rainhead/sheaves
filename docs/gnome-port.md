@@ -299,6 +299,30 @@ case; this phase removes the causes. Nothing here changes what a user sees.
 Done when each finding listed in the two issues has a test that fails without the
 fix, and the property tests of phase 4 have the ids to work with.
 
+**Decided in phase 3.**
+
+- **The stored login is the record of who is connected.** The credential store
+  holds a `Login`: the credentials and the Harvest user they were verified to
+  belong to, saved in one write when a connect succeeds. The queue's owner and the
+  cached user are checked against it, never the reverse, so the owner check needs
+  no request and a cache left by someone else is discarded at launch. A login saved
+  before user ids were recorded asks Harvest once and is completed.
+- **Each queued change has an id,** minted when it is enqueued, and the drain
+  recognises the change it sent by that id. Rewriting later changes' local ids is
+  gone; the remembered mapping from local ids to Harvest's is the one way a change
+  learns its entry.
+- **A create is marked as attempted before it is sent.** A retry after an
+  ambiguous failure looks for the entry first, matching project, task, day and
+  notes on an entry created since the attempt, with five minutes' allowance for the
+  two clocks, and not already taken by another create. A failed lookup stops the
+  drain without discarding anything.
+- **Harvest's `external_reference` was not used.** It would make the match exact,
+  but if a personal token may not set it, every create would be refused, and that
+  can only be checked against a real account. The match above is the fallback until
+  someone checks.
+- **A write whose reply will not decode counts as landed.** A create whose reply
+  will not decode waits for the lookup.
+
 ### Phase 4: a property-testing pass over the core (either machine; Opus)
 
 Search the Rust core for correctness bugs with `proptest`, following the

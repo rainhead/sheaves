@@ -26,9 +26,9 @@ struct KeychainStoreTests {
         defer { try? store.delete() }
         let credentials = HarvestCredentials(accountID: "12345", token: "sekrit")
 
-        try store.write(credentials: credentials)
+        try store.write(login: Login(credentials: credentials, userId: 7))
 
-        #expect(try store.read() == credentials)
+        #expect(try store.read() == Login(credentials: credentials, userId: 7))
     }
 
     /// The second write has to update in place; a blind add would fail with
@@ -38,18 +38,19 @@ struct KeychainStoreTests {
         let store = makeStore()
         defer { try? store.delete() }
 
-        try store.write(credentials: HarvestCredentials(accountID: "1", token: "old"))
-        try store.write(credentials: HarvestCredentials(accountID: "2", token: "new"))
+        try store.write(login: Login(credentials: HarvestCredentials(accountID: "1", token: "old"), userId: 1))
+        try store.write(login: Login(credentials: HarvestCredentials(accountID: "2", token: "new"), userId: 2))
 
         let stored = try store.read()
-        #expect(stored?.token == "new")
-        #expect(stored?.accountID == "2")
+        #expect(stored?.credentials.token == "new")
+        #expect(stored?.credentials.accountID == "2")
+        #expect(stored?.userId == 2)
     }
 
     @Test("deletes, and deleting twice is not an error")
     func deletes() throws {
         let store = makeStore()
-        try store.write(credentials: HarvestCredentials(accountID: "1", token: "t"))
+        try store.write(login: Login(credentials: HarvestCredentials(accountID: "1", token: "t"), userId: nil))
 
         try store.delete()
         try store.delete()
@@ -73,7 +74,9 @@ struct KeychainStoreTests {
         ] as CFDictionary, nil)
         try #require(status == errSecSuccess)
 
-        #expect(try store.read() == HarvestCredentials(accountID: "12345", token: "sekrit"))
+        #expect(try store.read() == Login(
+            credentials: HarvestCredentials(accountID: "12345", token: "sekrit"), userId: nil
+        ))
     }
 
     @Test("explains a keychain failure in words")
