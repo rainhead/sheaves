@@ -164,11 +164,15 @@ struct SettingsView: View {
                 prompt: Text("hostess, peters-macbook-air")
             )
             if !peers.names.isEmpty {
-                let addresses = tracker.listeningOn
-                LabeledContent(
-                    "Answering on",
-                    value: addresses.isEmpty ? "No tailnet address" : addresses.joined(separator: ", ")
-                )
+                // Read again every few seconds: the core binds in the background,
+                // and finds a tailnet address that appears later on its own.
+                TimelineView(.periodic(from: .now, by: 5)) { _ in
+                    let addresses = tracker.listeningOn
+                    LabeledContent(
+                        "Answering on",
+                        value: addresses.isEmpty ? "No tailnet address" : addresses.joined(separator: ", ")
+                    )
+                }
             }
         } header: {
             Text("Peers")

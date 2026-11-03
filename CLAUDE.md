@@ -81,6 +81,9 @@ nothing. They are listed with their symptom, because that is how you will meet t
 
 - **`xcodegen generate` after adding a file.** XcodeGen enumerates at generation
   time, so a new test file is silently absent from the target.
+- **Entitlements live in `project.yml`.** `xcodegen generate` rewrites
+  `Apps/Mac/Resources/Sheaves.entitlements` from it, so an edit made to that file
+  vanishes at the next generation, and the build still succeeds.
 - **"Executed 0 tests" with `TEST SUCCEEDED` is a failure.** It means nothing ran.
 - **System Events' `keystroke`/`key code` does not trigger a Carbon global hotkey.**
   Post a real `CGEvent` to `.cghidEventTap` instead. A synthetic click also trips
