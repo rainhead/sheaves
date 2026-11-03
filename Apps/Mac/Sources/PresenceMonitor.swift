@@ -108,7 +108,9 @@ struct SystemPresenceSensor: PresenceSensor {
 }
 
 /// Reads the system's presence signals and hands them to the core, which decides
-/// what they mean (`PresenceMonitor::poll` in `crates/sheaves-core/src/absence.rs`).
+/// what they mean (`PresenceMonitor::poll` in `crates/sheaves-core/src/absence.rs`)
+/// and asks this Mac's peers whether they saw the user meanwhile
+/// (`crates/sheaves-core/src/peers.rs`).
 @MainActor
 final class PresenceMonitor {
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
@@ -125,19 +127,23 @@ final class PresenceMonitor {
     private var workspaceObservers: [any NSObjectProtocol] = []
     private var distributedObservers: [any NSObjectProtocol] = []
 
+    /// With `tracker`, absences are checked with its peers before they are
+    /// reported; without one, this Mac decides alone.
     init(
         sensor: any PresenceSensor = SystemPresenceSensor(),
         threshold: TimeInterval = defaultAbsenceThreshold(),
-        now: Date = Date()
+        now: Date = Date(),
+        tracker: TimeTracker? = nil
     ) {
         self.sensor = sensor
-        self.fold = PresenceFold(threshold: threshold, now: now)
+        self.fold = tracker?.presenceFold(threshold: threshold, now: now)
+            ?? PresenceFold(threshold: threshold, now: now)
     }
 
     func start() {
         guard timer == nil else { return }
         let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { _ in
-            Task { @MainActor [weak self] in self?.poll() }
+            Task { @MainActor [weak self] in await self?.poll() }
         }
         // The panel and the menu run in tracking modes; without this the poll stops
         // while a menu is open.
@@ -151,14 +157,14 @@ final class PresenceMonitor {
         let workspace = NSWorkspace.shared.notificationCenter
         workspaceObservers = [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification].map { name in
             workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                Task { @MainActor [weak self] in self?.poll() }
+                Task { @MainActor [weak self] in await self?.poll() }
             }
         }
         distributedObservers = [
             DistributedNotificationCenter.default().addObserver(
                 forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main
             ) { _ in
-                Task { @MainActor [weak self] in self?.poll() }
+                Task { @MainActor [weak self] in await self?.poll() }
             }
         ]
     }
@@ -179,15 +185,17 @@ final class PresenceMonitor {
     /// Hands one reading of the machine to the core.
     ///
     /// The core is where the rules are: a locked screen outranks everything, the
-    /// microphone counts as presence and is dated to the previous poll, and the idle
-    /// clock is read as how long *since* the last input.
-    func poll(now: Date = Date()) {
+    /// microphone counts as presence and is dated to the previous poll, the idle
+    /// clock is read as how long *since* the last input, and an absence one of the
+    /// peers saw the user through is no absence. Asking the peers takes up to two
+    /// seconds, and only when there is an absence to ask about.
+    func poll(now: Date = Date()) async {
         let reading = PresenceReading(
             secondsSinceInput: sensor.secondsSinceInput,
             microphoneInUse: sensor.isMicrophoneInUse,
             screenLocked: sensor.isScreenLocked
         )
-        for absence in fold.poll(reading: reading, now: now) {
+        for absence in await fold.poll(reading: reading, now: now) {
             report(absence)
         }
     }

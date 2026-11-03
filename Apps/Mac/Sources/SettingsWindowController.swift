@@ -14,12 +14,19 @@ final class SettingsWindowController {
     private let tracker: TimeTracker
     private let hotKeys: HotKeyPreference
     private let loginItem: LoginItemPreference
+    private let peers: PeerPreference
     private var window: NSWindow?
 
-    init(tracker: TimeTracker, hotKeys: HotKeyPreference, loginItem: LoginItemPreference) {
+    init(
+        tracker: TimeTracker,
+        hotKeys: HotKeyPreference,
+        loginItem: LoginItemPreference,
+        peers: PeerPreference
+    ) {
         self.tracker = tracker
         self.hotKeys = hotKeys
         self.loginItem = loginItem
+        self.peers = peers
     }
 
     func show() {
@@ -42,6 +49,7 @@ final class SettingsWindowController {
                 .environment(tracker)
                 .environment(hotKeys)
                 .environment(loginItem)
+                .environment(peers)
         )
         let window = NSWindow(contentViewController: hosting)
         window.title = "Sheaves Settings"

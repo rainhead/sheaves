@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SheavesCore
 import SwiftUI
 
@@ -9,6 +10,8 @@ import SwiftUI
 /// the answer is the user's.
 @MainActor
 final class AbsencePromptController {
+    private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
+
     private let tracker: TimeTracker
     private var panel: NSPanel?
 
@@ -65,6 +68,27 @@ final class AbsencePromptController {
         panel.centreOnScreenUnderPointer()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        withdrawWhenAnsweredElsewhere(absence)
+    }
+
+    /// Takes the question down once it no longer applies: another machine trimmed
+    /// the timer, which its peers hear about at once, or the timer was stopped
+    /// somewhere. Asking anyway would trim the same absence twice.
+    private func withdrawWhenAnsweredElsewhere(_ absence: Absence) {
+        withObservationTracking {
+            _ = tracker.snapshot
+        } onChange: {
+            Task { @MainActor [weak self] in
+                guard let self, self.pending == absence else { return }
+                if self.tracker.stillAsks(about: absence) {
+                    self.withdrawWhenAnsweredElsewhere(absence)
+                } else {
+                    Self.log.info("absence prompt withdrawn: the timer no longer ran through it")
+                    self.dismiss()
+                    self.onFinished?()
+                }
+            }
+        }
     }
 
     func dismiss() {
