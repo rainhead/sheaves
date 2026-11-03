@@ -543,6 +543,37 @@ mod time_tracker {
         );
     }
 
+    /// Found by the timesheet model test. Starting a target whose entry was just
+    /// deleted must start a new entry, not resume the deleted one from the menu
+    /// bar's memory of today.
+    #[tokio::test]
+    async fn a_deleted_entry_is_not_resumed() {
+        let scratch = scratch();
+        let transport = with_entries(vec![existing_entry_for_the_target()]);
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        let existing = tracker.state().entries[0].clone();
+        assert_eq!(existing.target().id(), target.id());
+        transport.go_offline();
+
+        tracker.delete(&existing).await;
+        tracker.start(&target, None).await;
+
+        let pending = reopened_queue(&scratch).pending();
+        assert!(
+            pending
+                .iter()
+                .any(|change| matches!(change, Mutation::Create { .. })),
+            "expected a new entry, got {pending:?}"
+        );
+        assert!(
+            !pending
+                .iter()
+                .any(|change| matches!(change, Mutation::Restart { .. }))
+        );
+    }
+
     #[tokio::test]
     async fn stop_banks_elapsed_time() {
         let scratch = scratch();
