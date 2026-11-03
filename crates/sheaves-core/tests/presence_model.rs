@@ -287,3 +287,86 @@ proptest! {
         run(segments)?;
     }
 }
+
+// MARK: Peers
+
+/// The peer merge, against a plain scan of the timeline.
+///
+/// The property: whatever order peers' intervals arrive in, and however they
+/// overlap, the absences left are exactly the stretches of the original absence
+/// that no interval touches, kept when they are as long as the threshold. An
+/// interval that is a single moment still splits a gap: someone was seen then.
+///
+/// The model works in whole minutes and looks at every half minute: a gap from `a`
+/// to `b` is a run of moments, from `a` plus a half to `b` less a half, that no
+/// interval contains, bounded by moments that one does or by the absence's ends.
+mod merge {
+    use super::*;
+    use sheaves_core::peers::{Interval, unwitnessed};
+
+    const THRESHOLD_MINUTES: i64 = 15;
+
+    fn minute(m: i64) -> Timestamp {
+        origin() + SignedDuration::from_mins(m)
+    }
+
+    fn model(began: i64, ended: i64, seen: &[(i64, i64)]) -> Vec<(i64, i64)> {
+        let covered = |halves: i64| {
+            seen.iter()
+                .any(|&(start, end)| 2 * start <= halves && halves <= 2 * end)
+        };
+        let mut gaps = Vec::new();
+        let mut run_start: Option<i64> = None;
+        for halves in (2 * began + 1)..(2 * ended) {
+            match (covered(halves), run_start) {
+                (false, None) => run_start = Some(halves),
+                (true, Some(first)) => {
+                    gaps.push(((first - 1) / 2, halves / 2));
+                    run_start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(first) = run_start {
+            gaps.push(((first - 1) / 2, ended));
+        }
+        gaps.retain(|&(a, b)| b - a >= THRESHOLD_MINUTES);
+        gaps
+    }
+
+    fn case() -> impl Strategy<Value = (i64, i64, Vec<(i64, i64)>, Vec<usize>)> {
+        (0..120i64, 1..300i64).prop_flat_map(|(began, length)| {
+            let ended = began + length;
+            let interval = (began - 30..ended + 30, 0..90i64).prop_map(|(start, length)| (start, start + length));
+            prop::collection::vec(interval, 0..6).prop_flat_map(move |seen| {
+                let order = Just((0..seen.len()).collect::<Vec<_>>()).prop_shuffle();
+                (Just(began), Just(ended), Just(seen), order)
+            })
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 2000,
+            failure_persistence: Some(Box::new(proptest::test_runner::FileFailurePersistence::WithSource("regressions"))),
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn what_no_peer_saw_is_what_is_left((began, ended, seen, order) in case()) {
+            let absence = Absence { began: minute(began), ended: minute(ended) };
+            let intervals: Vec<Interval> = order
+                .iter()
+                .map(|&i| Interval { start: minute(seen[i].0), end: minute(seen[i].1) })
+                .collect();
+            let merged: Vec<(i64, i64)> = unwitnessed(absence, &intervals, THRESHOLD)
+                .iter()
+                .map(|gap| (
+                    (gap.began - origin()).get_seconds() / 60,
+                    (gap.ended - origin()).get_seconds() / 60,
+                ))
+                .collect();
+            prop_assert_eq!(merged, model(began, ended, &seen));
+        }
+    }
+}
