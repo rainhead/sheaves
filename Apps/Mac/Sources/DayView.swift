@@ -62,6 +62,9 @@ struct DayView: View {
                 if case .offline(let reason) = tracker.connection {
                     FailureBanner(reason: reason)
                 }
+                if let notice = tracker.notice {
+                    FailureBanner(reason: notice)
+                }
                 // Anchored to what is on the clock rather than to the visible day:
                 // a budget is not a property of a day, and the question it answers
                 // is about the thing being worked on now.

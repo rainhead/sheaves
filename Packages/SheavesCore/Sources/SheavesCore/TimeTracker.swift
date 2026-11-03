@@ -93,6 +93,9 @@ public final class TimeTracker {
     public var totalHours: Double { snapshot.totalHours }
     public var isToday: Bool { snapshot.isToday }
     public var orderedProjects: [ProjectTargets] { snapshot.orderedProjects }
+    /// Something to tell the user that is not a failed sync, such as changes an
+    /// earlier version left unsent.
+    public var notice: String? { snapshot.notice }
 
     public func budget(for entry: TrackedEntry) -> ProjectBudget? {
         budget(forProject: entry.project.id)
