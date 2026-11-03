@@ -359,6 +359,40 @@ when every target above has a property test that a deliberately introduced defec
 makes fail, and each failure the tests found is fixed or written up as an open
 question.
 
+**Found in phase 4.** The property tests are on the branch `gnome-4-property-tests`,
+in `crates/sheaves-core/tests`, and stay unmerged. There are three:
+
+- **`timesheet_model.rs`** runs the tracker and its queue against a simulated
+  Harvest through random user actions, interleaved with a network that drops
+  requests, fails, or saves a request and loses the reply, with relaunches of
+  the app from its files, and with edits made elsewhere (hours, notes, deletes,
+  timers started on the web). Once the network recovers, the queue must drain,
+  Harvest must hold what the user did, and the app must show what a fresh launch
+  reading Harvest alone shows. It covers the queue and tracker targets except a
+  token for another account, which it does not generate; the tracker's unit tests
+  for connecting cover that.
+- **`presence_model.rs`** lays out a day at the desk (typing, reading, calls, a
+  locked screen, sleep), polls it as the Mac app does, and checks the absences
+  reported against the gaps in the evidence a poll could see. The order in which
+  evidence arrives only varies once peers exist, so phase 5 extends this test.
+- **`round_trips.rs`** covers `CalendarDate` text, durations as the shells display
+  them, and the queue and cache files.
+
+Each was checked against planted defects, among them a queue file that forgets a
+create was attempted, a queue that retries a change to an entry deleted
+elsewhere, a halved absence threshold, an ignored microphone, and a field the
+cache file drops. Each planted defect made its test fail.
+
+Two bugs were found and fixed: a deleted entry could be resumed
+([#18](https://github.com/rainhead/sheaves/pull/18)), and four hundred digits
+typed as a duration read as infinite hours, which made the queue file unreadable
+([#22](https://github.com/rainhead/sheaves/pull/22)). Three questions about when
+an absence begins are open in [#23](https://github.com/rainhead/sheaves/issues/23).
+One finding was written up and not changed: serde_json reads a float back up to one
+unit in the last place away from what it wrote, because its `float_roundtrip`
+feature is off. That is harmless here, because every hours figure is rounded to
+two decimals before it is sent.
+
 ### Phase 5: peers (core and Mac, a few days; Opus)
 
 Implement the presence log, the two requests, the merge before reporting, the
