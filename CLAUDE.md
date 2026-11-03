@@ -85,6 +85,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
   tailnet address, and nothing is logged. A built-in such as `nc` on the same address
   answers. Allow the app under System Settings › Network › Firewall › Options.
   Symptom: peers time out against the Mac while the reverse direction works.
+- **GNOME turns the tray off while the screen is locked.** Ubuntu's AppIndicator
+  extension does not run on the lock screen, so `org.kde.StatusNotifierWatcher`
+  leaves the session bus at every lock and every item with it. An item that
+  registers once and never again disappears for good after the first lock.
+  Symptom over SSH: "The name org.kde.StatusNotifierWatcher was not provided".
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 

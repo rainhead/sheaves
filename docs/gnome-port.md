@@ -487,7 +487,9 @@ it on Ubuntu 26.04, the release Hostess runs.
   part of `com.canonical.dbusmenu` a flat menu needs. Checked at the desk on
   2026-11-03: Ubuntu's extension draws the label. A click opens the window, a
   middle click stops or resumes, and the right-click menu offers Stop or Resume,
-  Open Sheaves and Quit. The item registers again when GNOME Shell restarts.
+  Open Sheaves and Quit. The item registers again whenever the tray comes back:
+  GNOME Shell turns the extension off on the lock screen, so the tray vanishes at
+  every lock and returns at unlock, as well as after a shell restart.
 - **The token is in the keyring through oo7,** stored with its user id as JSON. The
   core asks for credentials synchronously from inside its own runtime, so each
   keyring call runs on a thread of its own.
