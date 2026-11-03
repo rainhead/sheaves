@@ -414,6 +414,10 @@ impl TimeTracker {
             if stranded > 0 && !discarding_unsent_changes {
                 return Err(ConnectError::UnsentChangesBelongElsewhere { count: stranded });
             }
+            // The cache describes whoever was connected before. Gone before the new
+            // credentials are saved, a crash between the two cannot leave the next
+            // launch restoring the old user beside the new token.
+            inner.snapshots.clear();
             inner.credentials.write(&credentials)?;
             inner.queue.claim(owner);
             Ok(user)
@@ -537,18 +541,18 @@ impl TimeTracker {
         for (mutation, error) in &report.discarded {
             log::error!("dropped refused mutation {mutation:?}: {error}");
         }
-        if let Some((_, error)) = report.discarded.last() {
-            // A refused change is dropped rather than retried forever; say so, but
-            // carry on: the refresh below will show what Harvest actually holds.
-            inner.update(|state| {
-                state.connection = Connection::Offline {
-                    reason: error.to_string(),
-                }
-            });
-        }
+        // A refused change is dropped rather than retried forever; say so, but carry
+        // on: the refresh below will show what Harvest actually holds. Said after the
+        // refresh, which would otherwise mark the connection online over it.
+        let refused = report.discarded.last().map(|(_, error)| error.to_string());
 
-        if let Err(error) = self.refresh().await {
-            inner.note_sync_failure(&error);
+        match self.refresh().await {
+            Err(error) => inner.note_sync_failure(&error),
+            Ok(()) => {
+                if let Some(reason) = refused {
+                    inner.update(|state| state.connection = Connection::Offline { reason });
+                }
+            }
         }
     }
 

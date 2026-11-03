@@ -738,6 +738,56 @@ mod rejected_token {
     }
 }
 
+mod refused_changes {
+    use super::*;
+
+    /// Harvest refused the change and it was dropped, so the user must be told,
+    /// even though the refresh after it succeeded.
+    #[tokio::test]
+    async fn the_refusal_outlasts_the_refresh() {
+        let scratch = scratch();
+        let transport = RoutingTransport::new(vec![
+            Route::new(
+                Method::Delete,
+                "time_entries",
+                r#"{"message": "Time entry is locked."}"#,
+            )
+            .status(422),
+            Route::new(
+                Method::Get,
+                "reports/project_budget",
+                fixture::PROJECT_BUDGET_PAGE,
+            ),
+            Route::new(
+                Method::Get,
+                "users/me/project_assignments",
+                fixture::PROJECT_ASSIGNMENTS_PAGE,
+            ),
+            Route::new(Method::Get, "users/me", fixture::CURRENT_USER),
+            Route::new(Method::Get, "company", fixture::COMPANY),
+            Route::new(Method::Get, "is_running=true", &fixture::entries_page(&[])),
+            Route::new(
+                Method::Get,
+                "time_entries",
+                &fixture::entries_page(&[fixture::time_entry()]),
+            ),
+        ]);
+        let tracker = tracker(transport, &scratch);
+        tracker.sync().await;
+        let entry = tracker.state().entries[0].clone();
+
+        tracker.delete(&entry).await;
+
+        assert_eq!(
+            tracker.state().connection,
+            Connection::Offline {
+                reason: "Time entry is locked.".to_string()
+            }
+        );
+        assert_eq!(tracker.state().pending_count, 0);
+    }
+}
+
 mod budget_currencies {
     use super::*;
 
