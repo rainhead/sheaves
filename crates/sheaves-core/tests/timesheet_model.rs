@@ -289,6 +289,54 @@ impl FakeHarvest {
     }
 }
 
+impl FakeHarvest {
+    /// A change made through another client, applied straight to the timesheet.
+    fn edit(&self, change: Remote) {
+        let now = self.clock.now();
+        let mut entries = self.entries.lock().unwrap();
+        match change {
+            Remote::SetHours { entry, quarter_hours } => {
+                if let Some(entry) = entries.get_mut(entry) {
+                    entry.banked = f64::from(quarter_hours) / 4.0;
+                    if entry.running_since.is_some() {
+                        entry.running_since = Some(now);
+                    }
+                    entry.updated_at = now;
+                }
+            }
+            Remote::SetNotes { entry } => {
+                if let Some(entry) = entries.get_mut(entry) {
+                    entry.notes = Some(format!("edited at {now}"));
+                    entry.updated_at = now;
+                }
+            }
+            Remote::Delete(entry) => {
+                if entry < entries.len() {
+                    entries.remove(entry);
+                }
+            }
+            Remote::Start(index) => {
+                Self::stop_running(&mut entries, now);
+                let (project_id, _, task_id, _) = TARGETS[index];
+                let mut next = self.next_id.lock().unwrap();
+                *next += 1;
+                entries.push(ServerEntry {
+                    id: *next,
+                    project_id,
+                    task_id,
+                    spent_date: CalendarDate::of(now, &TimeZone::UTC).to_string(),
+                    notes: None,
+                    banked: 0.0,
+                    running_since: Some(now),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            Remote::Stop => Self::stop_running(&mut entries, now),
+        }
+    }
+}
+
 #[async_trait]
 impl Transport for FakeHarvest {
     async fn send(&self, request: Request) -> Result<Response, HarvestError> {
@@ -388,6 +436,28 @@ enum Action {
     /// The app quits and is launched again, keeping only what it wrote to disk
     /// and the stored login.
     Relaunch,
+    /// Someone changes the timesheet elsewhere: on the web, the phone, another
+    /// machine.
+    Elsewhere(Remote),
+}
+
+#[derive(Clone, Debug)]
+enum Remote {
+    SetHours { entry: usize, quarter_hours: u8 },
+    SetNotes { entry: usize },
+    Delete(usize),
+    Start(usize),
+    Stop,
+}
+
+fn remote() -> impl Strategy<Value = Remote> {
+    prop_oneof![
+        (0..3usize, 1..16u8).prop_map(|(entry, quarter_hours)| Remote::SetHours { entry, quarter_hours }),
+        (0..3usize).prop_map(|entry| Remote::SetNotes { entry }),
+        (0..3usize).prop_map(Remote::Delete),
+        (0..TARGETS.len()).prop_map(Remote::Start),
+        Just(Remote::Stop),
+    ]
 }
 
 #[derive(Clone, Debug)]
@@ -428,6 +498,7 @@ fn action() -> impl Strategy<Value = Action> {
         ].prop_map(|fates| Action::Network(Network::Flaky(fates))),
         1 => Just(Action::Sync),
         2 => Just(Action::Relaunch),
+        2 => remote().prop_map(Action::Elsewhere),
     ]
 }
 
@@ -486,6 +557,9 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
         let mut tracker = launch(&harvest, &clock, directory.path(), &credentials).await;
         let today = CalendarDate::of(start, &TimeZone::UTC);
         let mut model = Model::default();
+        // The model knows only what this user did here; once the timesheet is
+        // changed elsewhere, only the comparison with a fresh launch holds.
+        let mut edited_elsewhere = false;
 
         for action in actions {
             // The day stays the same: past four in the afternoon, only waits that
@@ -554,6 +628,10 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
                     tracker.sync().await;
                     harvest.fates.lock().unwrap().clear();
                 }
+                Action::Elsewhere(change) => {
+                    edited_elsewhere = true;
+                    harvest.edit(change);
+                }
                 Action::Relaunch => {
                     // The old process is gone before the new one reads its files.
                     drop(tracker);
@@ -573,7 +651,35 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
         }
         prop_assert_eq!(tracker.state().pending_count, 0, "the queue drains once the network is back");
 
+        // Whatever happened, the app now shows what a fresh launch, reading Harvest
+        // alone, would show.
+        let shown = tracker.state();
+        let fresh_directory = tempfile::tempdir().unwrap();
+        let fresh = launch(&harvest, &clock, fresh_directory.path(), &credentials).await.state();
         let now = clock.now();
+        let describe = |entries: &[sheaves_core::tracked_entry::TrackedEntry]| {
+            let mut described: Vec<(String, i64, i64, Option<String>, i64, bool)> = entries
+                .iter()
+                .filter(|entry| entry.spent_date == today)
+                .map(|entry| {
+                    (
+                        format!("{:?}", entry.id),
+                        entry.project.id,
+                        entry.task.id,
+                        entry.notes.clone().filter(|notes| !notes.is_empty()),
+                        (entry.hours(now) * 100.0).round() as i64,
+                        entry.is_running,
+                    )
+                })
+                .collect();
+            described.sort();
+            described
+        };
+        prop_assert_eq!(describe(&shown.entries), describe(&fresh.entries), "the app and a fresh launch disagree");
+        if edited_elsewhere {
+            return Ok(());
+        }
+
         let server = harvest.entries.lock().unwrap().clone();
         let today = today.to_string();
         for (index, _) in TARGETS.iter().enumerate() {
