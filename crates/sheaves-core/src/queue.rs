@@ -154,9 +154,31 @@ impl Queued {
     }
 }
 
+/// A queued change as some build wrote it: with an id, or, from the phase 2 build
+/// that came before ids, the bare change, which is given one on reading.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredChange {
+    Queued(Queued),
+    Bare(Mutation),
+}
+
+fn read_pending<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Queued>, D::Error> {
+    let changes = Vec::<StoredChange>::deserialize(deserializer)?;
+    Ok(changes
+        .into_iter()
+        .map(|change| match change {
+            StoredChange::Queued(queued) => queued,
+            StoredChange::Bare(mutation) => Queued::new(mutation),
+        })
+        .collect())
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Stored {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "read_pending")]
     pending: Vec<Queued>,
     /// Local ids that have earned a Harvest id, newest last: the one place a change
     /// queued against a local id learns which entry it means. A change can be queued
@@ -1054,6 +1076,27 @@ mod tests {
                 hours: None,
             };
             assert_eq!(update.summary(), "update of entry 42");
+        }
+
+        /// The build before ids wrote bare changes; they are read, not set aside.
+        #[test]
+        fn reads_a_queue_written_before_ids() {
+            let scratch = scratch();
+            std::fs::write(
+                &scratch.path,
+                r#"{"pending":[{"kind":"stop","id":{"server":636709355},"hours":1.0}],"resolved":[],"owner":null}"#,
+            )
+            .unwrap();
+
+            let queue = open(&scratch);
+
+            assert_eq!(
+                queue.pending(),
+                [Mutation::Stop {
+                    id: EntryId::Server(636709355),
+                    hours: 1.0
+                }]
+            );
         }
 
         #[test]
