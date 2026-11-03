@@ -30,8 +30,8 @@ session can pick one up without the conversation that produced this file.
   Hostess; the sensor stays optional so it can be added.
 - **No packaging.** Build from the checkout and run. Flatpak would sandbox the idle
   monitor and PipeWire for no gain while one person uses it.
-- **Order: the Rust core and the Mac switch first, on the Mac; then GNOME, on
-  Hostess.** Switching the Mac app to the Rust core first proves the port against
+- **Order: the Rust core and the Mac switch first, on the Mac; then the core's
+  design pass and its property tests; then peers, and GNOME on Hostess.** Switching the Mac app to the Rust core first proves the port against
   a working, tested interface before any GNOME code depends on it.
 
 ## What Hostess has
@@ -157,7 +157,7 @@ hour banked plus two and a half elapsed since twelve.
 ## Phases
 
 Each phase is one pull request, reviewed with the CodeRabbit CLI before pushing
-(phase 9 opens one for each bug it finds), and each updates `CLAUDE.md` and the README where it changes a command or a
+(phase 4 opens one for each bug it finds), and each updates `CLAUDE.md` and the README where it changes a command or a
 concept. The suggested model is a guess at where judgment is needed most: the
 queue, the tracker and the peer rules carry the subtle semantics; the GTK phases
 are mostly plumbing.
@@ -200,6 +200,40 @@ each ticked. Keep the Swift package building until phase 2, so both suites run.
 Done when `cargo test` has a counterpart for every Swift test and the testing
 traps in `CLAUDE.md` hold: assert the request body, never the request count.
 
+**Decided in phase 1.** The port keeps the Swift design and changes only what Rust
+or testing asked for:
+
+- **Time comes from a `Clock`.** The queue and the tracker read the time and the
+  time zone from a `Clock` trait, with `SystemClock` for the apps and `ManualClock`
+  for tests that need time to stand still. Instants are `jiff::Timestamp`; days are
+  `CalendarDate`, worked out in the clock's zone.
+- **Parsing a duration is in the core; formatting one is not.** `parse_hours` takes
+  the locale's decimal separator and reads the common decimal scripts, Arabic-Indic
+  among them, so a shell's own formatted text reads back. Budgets hand the shell a
+  `BudgetFigure`, hours or money with its currency, rather than a string. The Swift
+  tests that check formatted strings stay in the Swift suite until phase 2 moves
+  them to the Mac app.
+- **The shells keep the credentials.** The core asks a `CredentialStore`; the
+  Keychain tests stay with the Keychain code in Swift.
+- **Concurrency follows the Swift actors.** The tracker's state sits behind one lock
+  that is never held across a request. Syncs run one at a time, in the order they
+  were asked for. The queue can be changed while a drain waits on the network, as
+  the Swift actor allowed, and a second drain started meanwhile returns at once.
+- **A shell observes the state as a whole.** `TimeTracker::observe` delivers a
+  `TrackerState` value after every change; the helpers the views used, such as
+  `activity()` and `ordered_projects()`, are methods on that value.
+- **The presence fold is in the core.** `PresenceMonitor::poll` takes a
+  `PresenceReading` (seconds since input, microphone, screen lock) and returns the
+  absences it ended. The Mac's eight presence tests are ported with it.
+- **Files are the core's own.** The snapshot and the queue are snake_case JSON
+  written through a temporary file and a rename, in the folder
+  `persistence::data_directory()` names.
+
+One finding for phases 3 and 4: the queue rewrites a later mutation's local id when its
+create lands, and also remembers which Harvest id each local id earned. Either alone
+delivers the stop, so no test fails when the rewrite is removed, in Swift or in
+Rust.
+
 ### Phase 2: the Mac app on the Rust core (Mac, a few days; Opus)
 
 Generate the bindings, write the `@Observable` wrapper, implement the credential,
@@ -208,68 +242,40 @@ target green. The release script builds the framework before packaging. Done whe
 the app suite passes, a full working day shows no regression, and
 `Scripts/package-release.sh` produces an app that runs on a clean account.
 
-### Phase 3: peers (core and Mac, a few days; Opus)
+### Phase 3: one record of the connection, and ids for queued changes (core; Opus)
 
-Implement the presence log, the two requests, the merge before reporting, the
-`touched` announcement after each delivered mutation, the prompt re-evaluation and
-the stop re-read, all as specified above. Core tests drive two trackers against a
-stub peer transport through three scenarios: the nine, ten, twelve case prompts on
-neither; a shared lunch prompts on both and the second prompt withdraws when the
-first is answered; a stop after a remote trim sends the recomputed hours. A fourth
-test sends a request from an address outside the tailnet ranges and checks that it
-is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
-the `com.apple.security.network.server` entitlement to listen. Done when the
-scenarios pass and the Mac serves and answers the requests on the tailnet.
+Phase 1's eight review rounds kept finding bugs, most of them in the Swift core
+too, and nearly all came from two design weaknesses. Each fix there closed one
+case; this phase removes the causes. Nothing here changes what a user sees.
 
-### Phase 4: the GNOME app (Hostess, a few days)
+- **Who is connected is kept in three places,** written at different moments: the
+  stored credentials, the queue's owner, and the cached user in the snapshot. Four
+  findings were crash windows between those writes, such as a launch after dying
+  between saving a colleague's token and claiming the queue. Keep one durable
+  record of the account and user, written once a connect is verified, and check
+  the queue and the cache against it. See [#14](https://github.com/rainhead/sheaves/issues/14).
+- **The queue recognises the change it sent by comparing whole values,** so
+  anything that amends a queued change breaks "is the head still the one I sent".
+  The in-flight amend, the reopened create, and the queue's two ways of mapping a
+  local id to Harvest's (rewriting later changes, and remembering the mapping) all
+  come from this. Give each queued change an id when it is enqueued, and compare
+  ids. Two gaps then become fixable: a create retried after a 5xx or a timeout,
+  which Harvest may already have saved, and a stop or restart whose request landed
+  but whose reply did not decode. Harvest has no idempotency key; its
+  `external_reference` field on a time entry might carry the change's id, so a
+  retry could find its entry exactly. Check whether a personal token may set it.
+  See [#15](https://github.com/rainhead/sheaves/issues/15).
 
-`crates/sheaves-gnome`: a single instance `adw::Application`; an app indicator
-with the running timer as its label and a menu to stop or resume; a window with
-the day view, start and stop, the ranked target picker and day navigation;
-settings with the token stored through `oo7`; an autostart toggle that writes
-`~/.config/autostart/sheaves.desktop`. Presence is not wired yet. Done when a
-timer started on Hostess appears on the Mac within a minute and the reverse, and
-the label in the top bar shows the running timer. Verify in the first hour that
-Ubuntu's extension renders the indicator label at all; if it does not, the icon
-alone must carry the state, as the Mac's does.
+Done when each finding listed in the two issues has a test that fails without the
+fix, and the property tests of phase 4 have the ids to work with.
 
-### Phase 5: presence on GNOME (Hostess, a few days; Opus)
-
-Implement `PresenceSensor` from `org.gnome.Mutter.IdleMonitor.GetIdletime` and
-`org.gnome.ScreenSaver.GetActive`, polling every thirty seconds and again on
-logind's `PrepareForSleep` resume and on the screensaver deactivating. Add the
-absence prompt as an `adw::AlertDialog` with the four resolutions. Join the peers.
-Done when the nine, ten, twelve scenario, done for real across both machines,
-prompts on neither, and a real lunch prompts on both with one answer clearing the
-other.
-
-### Phase 6: day editing (core, then GNOME, then Mac)
-
-What the roadmap cut from the first version: change an entry's project and task,
-edit a stopped entry's duration in place, and add an entry to any day without
-running a timer. Each is a mutation with the same offline rules as the rest. The
-week view waits. Done when the three edits work on GNOME and the core tests cover
-their queue behaviour; the Mac views follow in their own PR.
-
-### Phase 7: quick entry and the shortcut (Hostess, a day)
-
-A quick entry window that `sheaves-gnome --quick-entry` raises in the running
-instance through GApplication's command line handling, bound to a key in GNOME's
-custom shortcuts. The GlobalShortcuts portal is available if a binding inside the
-app turns out to be wanted. Done when the key opens the window from any app and
-starts a timer.
-
-### Phase 8: documents and cleanup
-
-The README's layout table and "How it works", `ROADMAP.md`, this file, and
-`docs/presence.md`, which gains the GNOME signals and the peer merge. Done when a
-newcomer can build both apps from the README alone.
-
-### Phase 9: a property-testing pass over the core (either machine; Opus)
+### Phase 4: a property-testing pass over the core (either machine; Opus)
 
 Search the Rust core for correctness bugs with `proptest`, following the
 [proptest-praxis skill](https://github.com/inanna-malick/agent-skills/blob/main/skills/proptest-praxis/SKILL.md).
-The ported tests check the cases someone thought of. This pass generates long,
+It runs before peers, because peers add ordering of their own on top of the
+queue and the tracker, and phase 1's reviews showed those two are where the subtle
+bugs are. The ported tests check the cases someone thought of. This pass generates long,
 random sequences of operations and compares the core with a simple model of what
 it should do, which finds the cases nobody thought of. The core is a good subject:
 its implementation is involved, but most of what it promises can be stated simply.
@@ -284,10 +290,10 @@ Candidate targets, each with the simple statement that serves as the model:
   a sync shows the same entries as rebuilding from Harvest alone, except for
   changes still in the queue. An entry started offline keeps one identity when its
   Harvest id arrives.
-- **The absence detector and the peer merge.** The absence reported is the same
-  whatever order the machines' evidence arrives in, and is the gap a plain sorted
-  list of every presence interval shows. A stop after a trim on the other machine
-  sends the hours the server's own entry implies.
+- **The absence detector.** The absence reported is the gap a plain sorted list of
+  every presence interval shows, whatever order the evidence arrives in. Phase 5
+  adds the peer merge to this target, and a stop after a trim on the other machine
+  sending the hours the server's own entry implies.
 - **Formats that must survive a round trip.** `CalendarDate` through its wire
   format, the snapshot and the queue through their JSON files, and `HoursEdit`
   between typed text and hours.
@@ -298,6 +304,63 @@ from `main`, holding a deterministic regression test and the smallest fix. Done
 when every target above has a property test that a deliberately introduced defect
 makes fail, and each failure the tests found is fixed or written up as an open
 question.
+
+### Phase 5: peers (core and Mac, a few days; Opus)
+
+Implement the presence log, the two requests, the merge before reporting, the
+`touched` announcement after each delivered mutation, the prompt re-evaluation and
+the stop re-read, all as specified above. Core tests drive two trackers against a
+stub peer transport through three scenarios: the nine, ten, twelve case prompts on
+neither; a shared lunch prompts on both and the second prompt withdraws when the
+first is answered; a stop after a remote trim sends the recomputed hours. A fourth
+test sends a request from an address outside the tailnet ranges and checks that it
+is refused. The Mac gains a peers field in Settings, and the sandboxed app needs
+the `com.apple.security.network.server` entitlement to listen. Done when the
+scenarios pass and the Mac serves and answers the requests on the tailnet.
+
+### Phase 6: the GNOME app (Hostess, a few days)
+
+`crates/sheaves-gnome`: a single instance `adw::Application`; an app indicator
+with the running timer as its label and a menu to stop or resume; a window with
+the day view, start and stop, the ranked target picker and day navigation;
+settings with the token stored through `oo7`; an autostart toggle that writes
+`~/.config/autostart/sheaves.desktop`. Presence is not wired yet. Done when a
+timer started on Hostess appears on the Mac within a minute and the reverse, and
+the label in the top bar shows the running timer. Verify in the first hour that
+Ubuntu's extension renders the indicator label at all; if it does not, the icon
+alone must carry the state, as the Mac's does.
+
+### Phase 7: presence on GNOME (Hostess, a few days; Opus)
+
+Implement `PresenceSensor` from `org.gnome.Mutter.IdleMonitor.GetIdletime` and
+`org.gnome.ScreenSaver.GetActive`, polling every thirty seconds and again on
+logind's `PrepareForSleep` resume and on the screensaver deactivating. Add the
+absence prompt as an `adw::AlertDialog` with the four resolutions. Join the peers.
+Done when the nine, ten, twelve scenario, done for real across both machines,
+prompts on neither, and a real lunch prompts on both with one answer clearing the
+other.
+
+### Phase 8: day editing (core, then GNOME, then Mac)
+
+What the roadmap cut from the first version: change an entry's project and task,
+edit a stopped entry's duration in place, and add an entry to any day without
+running a timer. Each is a mutation with the same offline rules as the rest. The
+week view waits. Done when the three edits work on GNOME and the core tests cover
+their queue behaviour; the Mac views follow in their own PR.
+
+### Phase 9: quick entry and the shortcut (Hostess, a day)
+
+A quick entry window that `sheaves-gnome --quick-entry` raises in the running
+instance through GApplication's command line handling, bound to a key in GNOME's
+custom shortcuts. The GlobalShortcuts portal is available if a binding inside the
+app turns out to be wanted. Done when the key opens the window from any app and
+starts a timer.
+
+### Phase 10: documents and cleanup
+
+The README's layout table and "How it works", `ROADMAP.md`, this file, and
+`docs/presence.md`, which gains the GNOME signals and the peer merge. Done when a
+newcomer can build both apps from the README alone.
 
 ## Working practice
 
