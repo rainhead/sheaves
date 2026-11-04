@@ -230,9 +230,13 @@ fn peers_group(
         .build();
     // Read as typed, so a separator typed last is not taken away mid-word.
     names.connect_changed(move |row| set_peers(crate::config::names_in(&row.text())));
-    let answering = adw::ActionRow::builder().title("Answering on").build();
-    let addresses = dim("");
-    answering.add_suffix(&addresses);
+    // The addresses go under the title, one to a line, not beside it: a suffix
+    // does not wrap, and an IPv6 address beside the title squeezed it into a
+    // column one letter wide.
+    let answering = adw::ActionRow::builder()
+        .title("Answering on")
+        .subtitle_selectable(true)
+        .build();
     group.add(&names);
     group.add(&answering);
 
@@ -240,10 +244,10 @@ fn peers_group(
     // minute, so this is read again while Settings is open.
     let refresh = move || {
         let listening = tracker.listening_on();
-        addresses.set_label(&if listening.is_empty() {
+        answering.set_subtitle(&if listening.is_empty() {
             "Nowhere: name a peer, and check Tailscale is running".to_string()
         } else {
-            listening.join(", ")
+            glib::markup_escape_text(&listening.join("\n")).to_string()
         });
     };
     refresh();
