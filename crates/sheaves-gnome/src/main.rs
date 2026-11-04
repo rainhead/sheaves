@@ -6,12 +6,15 @@
 
 mod app;
 mod autostart;
+mod config;
 #[cfg(debug_assertions)]
 mod documentation;
 mod format;
 mod indicator;
 mod keyring;
 mod launcher;
+mod presence;
+mod prompt;
 mod settings;
 mod window;
 

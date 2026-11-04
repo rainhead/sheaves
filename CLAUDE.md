@@ -80,12 +80,12 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **`onKeyPress(.delete)` never fires for ⌫.** SwiftUI's `.delete` is U+0008; the
   Mac's backspace key sends U+007F. Use `onDeleteCommand`, which both delete keys
   raise. Symptom: it builds, and pressing ⌫ does nothing.
-- **The application firewall drops connections to programs it does not know,
-  silently.** With the firewall on, a listener in an unsigned or ad-hoc signed
-  program binds without error and never answers, not even from this Mac to its own
-  tailnet address, and nothing is logged. A built-in such as `nc` on the same address
-  answers. Allow the app under System Settings › Network › Firewall › Options.
-  Symptom: peers time out against the Mac while the reverse direction works.
+- **The application firewall drops connections to a bare program, silently.** With
+  the firewall on, a listener in an unsigned command-line program (a `cargo run`
+  example) binds without error and never answers, not even from this Mac to its
+  own tailnet address, and nothing is logged. The sandboxed app with its
+  `network.server` entitlement answers without prompting or being listed, and so
+  does a built-in such as `nc`. Test peers through the app, not a scratch binary.
 - **GNOME turns the tray off while the screen is locked.** Ubuntu's AppIndicator
   extension does not run on the lock screen, so `org.kde.StatusNotifierWatcher`
   leaves the session bus at every lock and every item with it. An item that

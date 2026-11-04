@@ -3,14 +3,19 @@
 //! wants its main thread; the tracker and the D-Bus item run on Tokio.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
+use sheaves_core::absence::{Absence, AbsenceDetector};
 use sheaves_core::ffi::{Tracker, TrackerObserver, TrackerSnapshot};
 use sheaves_core::persistence;
 use sheaves_core::tracker::{Activity, Connection};
+
+use crate::config::{self, Config};
+use crate::prompt::{self, Outcome, Wording};
 
 use crate::indicator::{self, Command, Indicator, Look};
 use crate::keyring::Keyring;
@@ -35,6 +40,22 @@ struct Shell {
     window: Rc<Window>,
     latest: RefCell<TrackerSnapshot>,
     looks: tokio::sync::watch::Sender<Look>,
+    config: RefCell<Config>,
+    /// Absences waiting their turn to be asked about, oldest first. Each describes
+    /// a different stretch, and answering only the latest would bill every stretch
+    /// before it, since a trim keeps everything earlier than where it starts.
+    absences: RefCell<VecDeque<Absence>>,
+    prompt: RefCell<Prompt>,
+}
+
+/// The absence prompt's state.
+enum Prompt {
+    Idle,
+    /// On screen, asking about this absence.
+    Asking(Absence, adw::AlertDialog),
+    /// Answered, and the answer still being applied. The next question waits, so
+    /// it is asked against the entry this one leaves behind.
+    Applying,
 }
 
 pub fn run() -> glib::ExitCode {
@@ -98,14 +119,37 @@ fn start(app: &adw::Application) -> Rc<Shell> {
     let (looks, look_rx) = tokio::sync::watch::channel(Look::default());
     start_indicator(commands, look_rx);
 
+    let config = Config::read(&config::path());
+    tracker.set_peers(config.peers.clone());
+
+    // Absences are noticed on a thread of their own and asked about here.
+    let (absences, absence_rx) = async_channel::unbounded();
+    crate::presence::watch(
+        tracker.presence(absence_threshold(), jiff::Timestamp::now()),
+        absences,
+    );
+
     let shell = Rc::new(Shell {
         app: app.clone(),
         tracker: tracker.clone(),
         window,
         latest: RefCell::new(initial),
         looks,
+        config: RefCell::new(config),
+        absences: RefCell::default(),
+        prompt: RefCell::new(Prompt::Idle),
     });
     shell.show_look();
+
+    glib::spawn_future_local({
+        let shell = shell.clone();
+        async move {
+            while let Ok(absence) = absence_rx.recv().await {
+                shell.absences.borrow_mut().push_back(absence);
+                shell.ask_about_next_absence();
+            }
+        }
+    });
 
     glib::spawn_future_local({
         let shell = shell.clone();
@@ -144,6 +188,22 @@ fn start(app: &adw::Application) -> Rc<Shell> {
         }
     });
     shell
+}
+
+/// How long with nobody here counts as away. A debug build takes
+/// `SHEAVES_ABSENCE_THRESHOLD`, in seconds, so the prompt can be tried at the desk
+/// without a quarter of an hour's wait.
+fn absence_threshold() -> f64 {
+    #[cfg(debug_assertions)]
+    if let Some(seconds) = std::env::var("SHEAVES_ABSENCE_THRESHOLD")
+        .ok()
+        .and_then(|text| text.parse::<f64>().ok())
+        .filter(|seconds| *seconds > 0.0)
+    {
+        log::warn!("absences are {seconds} seconds long in this build");
+        return seconds;
+    }
+    AbsenceDetector::DEFAULT_THRESHOLD
 }
 
 /// Runs the top bar item on a runtime of its own, showing each look sent on
@@ -193,8 +253,104 @@ impl Shell {
             return;
         }
         self.window.render(&snapshot);
+        // Takes the question down once it no longer applies: another machine
+        // trimmed the timer, which a peer announces at once, or it was stopped
+        // somewhere. Asking anyway would trim the same absence twice.
+        let withdrawn = match &*self.prompt.borrow() {
+            Prompt::Asking(absence, dialog) if !snapshot.state.absence_applies(absence) => {
+                Some(dialog.clone())
+            }
+            _ => None,
+        };
         *self.latest.borrow_mut() = snapshot;
+        if let Some(dialog) = withdrawn {
+            log::info!("absence prompt withdrawn: the timer no longer ran through it");
+            // Closing reports a dismissal, which asks about the next absence.
+            dialog.force_close();
+        }
         self.show_look();
+    }
+
+    /// Asks about the oldest absence still waiting, if a timer of ours ran through
+    /// it and nothing is being asked already.
+    fn ask_about_next_absence(self: &Rc<Self>) {
+        if !matches!(*self.prompt.borrow(), Prompt::Idle) {
+            return;
+        }
+        loop {
+            let Some(absence) = self.absences.borrow_mut().pop_front() else {
+                return;
+            };
+            let latest = self.latest.borrow().clone();
+            let Some(entry) = latest.running_entry.clone() else {
+                log::info!("absence ignored: no timer of ours is running");
+                continue;
+            };
+            if !latest.state.absence_applies(&absence) {
+                log::info!("absence ignored: no timer of ours was running through it");
+                continue;
+            }
+            let wording = Wording::of(
+                &absence,
+                &entry,
+                latest.state.today,
+                window::hours_format(&latest),
+                prompt::twelve_hour_clock(),
+            );
+            let parent = self
+                .window
+                .window
+                .is_visible()
+                .then(|| self.window.window.clone().upcast());
+            let shell = self.clone();
+            let asked = absence;
+            let dialog = prompt::present(
+                parent.as_ref(),
+                &wording,
+                latest.state.ordered_targets(),
+                move |outcome| shell.answered(asked, entry.clone(), outcome),
+            );
+            *self.prompt.borrow_mut() = Prompt::Asking(absence, dialog);
+            return;
+        }
+    }
+
+    fn answered(
+        self: &Rc<Self>,
+        absence: Absence,
+        entry: sheaves_core::tracked_entry::TrackedEntry,
+        outcome: Outcome,
+    ) {
+        match outcome {
+            Outcome::Dismissed => {
+                *self.prompt.borrow_mut() = Prompt::Idle;
+                self.ask_about_next_absence();
+            }
+            Outcome::Resolved(resolution) => {
+                *self.prompt.borrow_mut() = Prompt::Applying;
+                let shell = self.clone();
+                glib::spawn_future_local(async move {
+                    shell.tracker.resolve(absence, entry, resolution).await;
+                    // The state the answer left, before the next question is
+                    // checked against it: its report may not have arrived yet.
+                    shell.receive(shell.tracker.snapshot());
+                    *shell.prompt.borrow_mut() = Prompt::Idle;
+                    shell.ask_about_next_absence();
+                });
+            }
+        }
+    }
+
+    fn set_peers(&self, peers: Vec<String>) {
+        let mut config = self.config.borrow_mut();
+        if config.peers == peers {
+            return;
+        }
+        config.peers = peers;
+        self.tracker.set_peers(config.peers.clone());
+        if let Err(error) = config.write(&config::path()) {
+            log::error!("could not save the peers: {error}");
+        }
     }
 
     fn show_look(&self) {
@@ -215,7 +371,14 @@ impl Shell {
         let tracker = self.tracker.clone();
         match action {
             Action::OpenSettings => {
-                settings::present(&self.window.window, tracker, &self.latest.borrow());
+                let shell = self.clone();
+                settings::present(
+                    &self.window.window,
+                    tracker,
+                    &self.latest.borrow(),
+                    self.config.borrow().peers.clone(),
+                    Rc::new(move |peers| shell.set_peers(peers)),
+                );
             }
             Action::Start(target) => {
                 glib::spawn_future_local(async move { tracker.start(target, None).await });

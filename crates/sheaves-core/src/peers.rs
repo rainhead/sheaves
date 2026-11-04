@@ -224,6 +224,10 @@ impl HttpPeerTransport {
             client: reqwest::Client::builder()
                 // A proxy would carry the request off the tailnet.
                 .no_proxy()
+                // Peers are asked a few times a day. A connection kept open between
+                // times only waits for the peer to close it, which the peer logs as
+                // a client that never sent its next request.
+                .pool_max_idle_per_host(0)
                 .timeout(ANSWER_WITHIN)
                 .build()
                 .expect("an HTTP client with no TLS settings builds"),
