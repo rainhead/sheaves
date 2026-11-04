@@ -563,6 +563,11 @@ on Hostess brought up the prompt on return, worded as on the Mac. Hostess and th
 Mac each answered the other's presence request over the tailnet, the Mac with its
 firewall on.
 
+Done criterion met at the desk, 2026-11-04, with the real threshold. A lunch away
+from both machines prompted on both, for the same 22.6 minutes, and answering on
+Hostess withdrew the Mac's prompt about ten seconds later, after the change notice
+reached it. Working at Hostess with a timer running on the Mac prompted on neither.
+
 ### Phase 8: day editing (core, then GNOME, then Mac)
 
 What the roadmap cut from the first version: change an entry's project and task,
