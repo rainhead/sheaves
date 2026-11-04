@@ -83,6 +83,71 @@ mod presence_log {
     }
 }
 
+/// The log outlives the app. Kept only in memory, it was wiped by each relaunch,
+/// and a peer asking about the hour before one was told nobody had been here: the
+/// Mac then asked about time spent working at Hostess.
+mod kept_on_disk {
+    use super::*;
+
+    fn peers(path: &std::path::Path, now: Timestamp) -> Peers {
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.set_user(Some(USER));
+        peers.keep_log_in(path.to_path_buf(), now);
+        peers
+    }
+
+    #[test]
+    fn survives_a_relaunch() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let before = peers(&path, at(0.0));
+        for minute in (0..=60).step_by(5) {
+            before.note_presence(at(f64::from(minute)));
+        }
+        drop(before);
+
+        let after = peers(&path, at(90.0));
+        after.note_presence(at(90.0));
+        assert_eq!(
+            after.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 60.0), span(90.0, 90.0)]
+        );
+    }
+
+    /// Written at most once a minute while evidence streams in, but at once when a
+    /// new interval opens, since that is what a peer's question turns on.
+    #[test]
+    fn writes_a_new_interval_at_once_and_the_rest_each_minute() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let saved = || crate::persistence::read_json::<Vec<Interval>>(&path).unwrap();
+        let peers = peers(&path, at(0.0));
+
+        peers.note_presence(at(0.0));
+        assert_eq!(saved(), [span(0.0, 0.0)]);
+        peers.note_presence(at(0.5));
+        assert_eq!(saved(), [span(0.0, 0.0)], "not yet a minute");
+        peers.note_presence(at(1.0));
+        assert_eq!(saved(), [span(0.0, 1.0)]);
+        peers.note_presence(at(30.0));
+        assert_eq!(saved(), [span(0.0, 1.0), span(30.0, 30.0)], "a new interval");
+    }
+
+    #[test]
+    fn reads_back_only_the_last_day_and_only_sound_intervals() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        let backwards = Interval {
+            start: at(50.0),
+            end: at(40.0),
+        };
+        log.restore(
+            vec![span(60.0, 70.0), span(0.0, 10.0), backwards, span(-2000.0, -1990.0)],
+            at(80.0),
+        );
+        assert_eq!(log.intervals(), [span(0.0, 10.0), span(60.0, 70.0)]);
+    }
+}
+
 mod merge {
     use super::*;
 

@@ -470,6 +470,7 @@ impl Tracker {
         ));
         // The demo account is nobody's, and must not speak to real machines.
         if !demo {
+            peers.keep_log_in(directory.join("presence.json"), Timestamp::now());
             tracker.join(peers.clone());
         }
         Arc::new(Self {

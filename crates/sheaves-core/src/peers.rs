@@ -14,6 +14,7 @@
 pub mod server;
 
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -89,6 +90,20 @@ impl PresenceLog {
         let newest = self.intervals.last().map_or(when, |last| last.end);
         let horizon = offset_by(newest, -LOG_SPAN);
         self.intervals.retain(|interval| interval.end >= horizon);
+    }
+
+    /// The intervals held, oldest first.
+    pub fn intervals(&self) -> &[Interval] {
+        &self.intervals
+    }
+
+    /// Takes `intervals` as the log, as read back from its file: in order, with
+    /// any that are not, or end more than a day before `now`, dropped.
+    pub fn restore(&mut self, mut intervals: Vec<Interval>, now: Timestamp) {
+        let horizon = offset_by(now, -LOG_SPAN);
+        intervals.retain(|interval| interval.start <= interval.end && interval.end >= horizon);
+        intervals.sort_by_key(|interval| interval.start);
+        self.intervals = intervals;
     }
 
     /// The intervals that reach `since` or later.
@@ -342,7 +357,13 @@ pub struct Peers {
     log: Mutex<PresenceLog>,
     user_id: Mutex<Option<i64>>,
     on_touched: Mutex<Option<TouchedHandler>>,
+    /// Where the log is kept between launches, and when it was last written.
+    log_file: Mutex<Option<(PathBuf, Option<Timestamp>)>>,
 }
+
+/// How often the log is written while the user is present: a machine that stops
+/// abruptly forgets at most this much of when it saw them.
+const SAVE_EVERY: f64 = 60.0;
 
 impl Peers {
     pub fn new(threshold: f64, transport: Arc<dyn PeerTransport>) -> Self {
@@ -352,6 +373,7 @@ impl Peers {
             log: Mutex::new(PresenceLog::new(threshold)),
             user_id: Mutex::new(None),
             on_touched: Mutex::new(None),
+            log_file: Mutex::new(None),
         }
     }
 
@@ -381,8 +403,52 @@ impl Peers {
         *lock(&self.on_touched) = Some(Arc::new(handler));
     }
 
+    /// Keeps the log in `path` from now on, starting from what is there.
+    ///
+    /// A log kept only in memory was wiped by every relaunch or reboot, and a peer
+    /// asking about the hour before one was then told nobody had been here. The
+    /// relaunch itself counts as presence, but only from that moment.
+    pub fn keep_log_in(&self, path: PathBuf, now: Timestamp) {
+        if let Some(intervals) = crate::persistence::read_json::<Vec<Interval>>(&path) {
+            let mut log = lock(&self.log);
+            let ahead = std::mem::take(&mut log.intervals);
+            log.restore(intervals, now);
+            // Anything noted before this was called, such as the launch, joins in.
+            for interval in ahead {
+                log.note(interval.start);
+                log.note(interval.end);
+            }
+        }
+        *lock(&self.log_file) = Some((path, None));
+        self.save(now, true);
+    }
+
     pub fn note_presence(&self, when: Timestamp) {
-        lock(&self.log).note(when);
+        let opened = {
+            let mut log = lock(&self.log);
+            let before = log.intervals.len();
+            log.note(when);
+            log.intervals.len() != before
+        };
+        self.save(when, opened);
+    }
+
+    /// Writes the log if it has a file, and either `now_please` or a minute has
+    /// passed since the last write.
+    fn save(&self, now: Timestamp, now_please: bool) {
+        let mut file = lock(&self.log_file);
+        let Some((path, last)) = file.as_mut() else {
+            return;
+        };
+        let due = now_please || last.is_none_or(|last| seconds_between(last, now) >= SAVE_EVERY);
+        if !due {
+            return;
+        }
+        let intervals = lock(&self.log).intervals.clone();
+        match crate::persistence::write_json(path, &intervals) {
+            Ok(()) => *last = Some(now),
+            Err(error) => log::error!("could not save when the user was seen: {error}"),
+        }
     }
 
     // MARK: Asking

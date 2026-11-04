@@ -422,8 +422,12 @@ GNOME app gets them whole:
   covered stretch from the absence and keeps what is left over the threshold, so
   half an hour seen at Hostess in the middle of a morning leaves two absences, each
   asked about in turn.
-- **The log is in memory.** A relaunch counts as presence anyway, so there is
-  nothing to lose. It reaches back a day.
+- **The log is kept on disk,** in `presence.json` beside the cache, written when
+  a new interval opens and otherwise at most once a minute. It was first kept in
+  memory, on the reasoning that a relaunch counts as presence anyway; but that
+  covers only the moment of launching, and on 2026-11-04 the Mac asked about half
+  an hour Peter had spent at Hostess, because Hostess had been relaunched in that
+  half hour and remembered nothing before it.
 - **Port 47147, HTTP/1.1 through hyper.** reqwest already brings hyper, so the
   server adds little. The listener looks for this machine's tailnet addresses once a
   minute, so Tailscale started after the app is found. It listens only while at
