@@ -121,8 +121,7 @@ mod kept_on_disk {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("presence.json");
         let saved = || {
-            crate::persistence::read_json::<serde_json::Value>(&path).unwrap()["intervals"]
-                .clone()
+            crate::persistence::read_json::<serde_json::Value>(&path).unwrap()["intervals"].clone()
         };
         let saved = || serde_json::from_value::<Vec<Interval>>(saved()).unwrap();
         let peers = peers(&path, at(0.0));
@@ -134,7 +133,11 @@ mod kept_on_disk {
         peers.note_presence(at(1.0));
         assert_eq!(saved(), [span(0.0, 1.0)]);
         peers.note_presence(at(30.0));
-        assert_eq!(saved(), [span(0.0, 1.0), span(30.0, 30.0)], "a new interval");
+        assert_eq!(
+            saved(),
+            [span(0.0, 1.0), span(30.0, 30.0)],
+            "a new interval"
+        );
     }
 
     /// Presence is answered for one Harvest user, so a log kept for someone else
@@ -151,7 +154,10 @@ mod kept_on_disk {
         let other = Peers::new(THRESHOLD, Arc::new(Silent));
         other.set_user(Some(USER + 1));
         other.keep_log_in(path.clone(), at(40.0));
-        assert_eq!(other.answer_presence(USER + 1, at(0.0)).unwrap().intervals, []);
+        assert_eq!(
+            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
     }
 
     #[test]
@@ -161,7 +167,10 @@ mod kept_on_disk {
         let peers = peers(&path, at(0.0));
         peers.note_presence(at(0.0));
         peers.set_user(Some(USER + 1));
-        assert_eq!(peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals, []);
+        assert_eq!(
+            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
         peers.note_presence(at(5.0));
         assert_eq!(
             peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
@@ -176,7 +185,10 @@ mod kept_on_disk {
         let peers = Peers::new(THRESHOLD, Arc::new(Silent));
         peers.note_presence(at(0.0));
         peers.set_user(Some(USER));
-        assert_eq!(peers.answer_presence(USER, at(0.0)).unwrap().intervals, [span(0.0, 0.0)]);
+        assert_eq!(
+            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 0.0)]
+        );
     }
 
     /// A new interval is reported as one even when the same note drops a day-old
@@ -198,7 +210,12 @@ mod kept_on_disk {
             end: at(40.0),
         };
         log.restore(
-            vec![span(60.0, 70.0), span(0.0, 10.0), backwards, span(-2000.0, -1990.0)],
+            vec![
+                span(60.0, 70.0),
+                span(0.0, 10.0),
+                backwards,
+                span(-2000.0, -1990.0),
+            ],
             at(80.0),
         );
         assert_eq!(log.intervals(), [span(0.0, 10.0), span(60.0, 70.0)]);

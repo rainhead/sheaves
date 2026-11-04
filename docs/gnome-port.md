@@ -600,7 +600,39 @@ views of them.
 
 Checked at the desk, 2026-11-04: an edit made on Hostess reached the Mac.
 
-### Phase 9: quick entry and the shortcut (Hostess, a day)
+### Phase 9: presence through Harvest, replacing the tailnet (core; Opus)
+
+Decided with Peter on 2026-11-04, after phase 7 was working: the machines share
+presence through Harvest itself instead of talking to each other. The tailnet was
+always meant to be temporary, and it brought a listener, a firewall question and a
+setting naming each machine.
+
+The question is only ever about the running timer, since a trim needs a timer that
+ran through the absence, so the data lives on the running entry, in its
+`external_reference`. Each machine writes the stretches in which it saw the user
+since the timer started, under its own name, and rewrites them about once a minute
+while the user is there, reading the entry first so as to keep the other machines'
+parts. Before asking about an absence, a machine reads the entry fresh and removes
+the stretches the others saw, exactly as the peer merge does now. A stop removes
+the reference, so finished entries carry nothing.
+
+What a real account showed, on 2026-11-04 (see
+[#21](https://github.com/rainhead/sheaves/issues/21)): a personal token may set
+`external_reference`; it must carry an http(s) permalink, or Harvest stores
+nothing; the web timesheet shows an icon for the permalink's host and not the
+data; about 255 characters fit. One stretch per machine is not enough: seen at
+Hostess from nine to ten and eleven to twelve, a single latest stretch would let
+the Mac count nine to eleven as away. Four or five stretches per machine fit; the
+oldest are dropped first.
+
+Check first, before building on it: what writing a reference does to a running
+timer's hours and start time. Then replace the tailnet transport, the listener,
+the Peers setting and the change notices; the presence log, the merge, the prompt
+and the stop's re-read stay. Done when the scenarios of phase 7 pass again with
+no tailnet, and the tests cover the reference's encoding, its overflow and its
+removal on stop.
+
+### Phase 10: quick entry and the shortcut (Hostess, a day)
 
 A quick entry window that `sheaves-gnome --quick-entry` raises in the running
 instance through GApplication's command line handling, bound to a key in GNOME's
@@ -608,7 +640,7 @@ custom shortcuts. The GlobalShortcuts portal is available if a binding inside th
 app turns out to be wanted. Done when the key opens the window from any app and
 starts a timer.
 
-### Phase 10: documents and cleanup
+### Phase 11: documents and cleanup
 
 The README's layout table and "How it works", `ROADMAP.md`, this file, and
 `docs/presence.md`, which gains the GNOME signals and the peer merge. Done when a
