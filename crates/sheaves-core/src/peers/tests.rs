@@ -202,6 +202,24 @@ mod kept_on_disk {
         assert_eq!(log.intervals(), [span(25.0 * 60.0, 25.0 * 60.0)]);
     }
 
+    /// A long stretch noted before the log was loaded stays one stretch, rather
+    /// than its two ends standing apart with an absence between them.
+    #[test]
+    fn evidence_noted_before_loading_stays_whole() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.set_user(Some(USER));
+        for minute in [0.0, 10.0, 20.0] {
+            peers.note_presence(at(minute));
+        }
+        peers.keep_log_in(path, at(20.0));
+        assert_eq!(
+            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 20.0)]
+        );
+    }
+
     #[test]
     fn reads_back_only_the_last_day_and_only_sound_intervals() {
         let mut log = PresenceLog::new(THRESHOLD);
@@ -219,6 +237,9 @@ mod kept_on_disk {
             at(80.0),
         );
         assert_eq!(log.intervals(), [span(0.0, 10.0), span(60.0, 70.0)]);
+        // And joined where a damaged file left them closer than the threshold.
+        log.restore(vec![span(0.0, 10.0), span(14.0, 20.0)], at(30.0));
+        assert_eq!(log.intervals(), [span(0.0, 20.0)]);
     }
 }
 

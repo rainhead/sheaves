@@ -103,13 +103,24 @@ impl PresenceLog {
         &self.intervals
     }
 
-    /// Takes `intervals` as the log, as read back from its file: in order, with
-    /// any that are not, or end more than a day before `now`, dropped.
+    /// Takes `intervals` as the log, as read back from its file and with anything
+    /// noted before: in order, with any that are not, or end more than a day before
+    /// `now`, dropped, and any closer than the threshold joined, as `note` keeps
+    /// them. Joining by whole interval keeps a long stretch whole.
     pub fn restore(&mut self, mut intervals: Vec<Interval>, now: Timestamp) {
         let horizon = offset_by(now, -LOG_SPAN);
         intervals.retain(|interval| interval.start <= interval.end && interval.end >= horizon);
         intervals.sort_by_key(|interval| interval.start);
-        self.intervals = intervals;
+        let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
+        for interval in intervals {
+            match merged.last_mut() {
+                Some(last) if seconds_between(last.end, interval.start) < self.threshold => {
+                    last.end = last.end.max(interval.end);
+                }
+                _ => merged.push(interval),
+            }
+        }
+        self.intervals = merged;
     }
 
     /// The intervals that reach `since` or later.
@@ -448,14 +459,10 @@ impl Peers {
             if current.is_none() || current == saved.user_id {
                 *lock(&self.log_owner) = saved.user_id;
                 let mut log = lock(&self.log);
-                let ahead = std::mem::take(&mut log.intervals);
-                log.restore(saved.intervals, now);
-                // Anything noted before this was called, such as the launch,
-                // joins in.
-                for interval in ahead {
-                    log.note(interval.start);
-                    log.note(interval.end);
-                }
+                // Anything noted before this was called joins in.
+                let mut intervals = saved.intervals;
+                intervals.append(&mut log.intervals);
+                log.restore(intervals, now);
             }
         }
         *lock(&self.log_file) = Some((path, None));
