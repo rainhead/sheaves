@@ -9,6 +9,7 @@ mod autostart;
 mod config;
 #[cfg(debug_assertions)]
 mod documentation;
+mod edit;
 mod format;
 mod indicator;
 mod keyring;

@@ -49,6 +49,11 @@ fn decimal(value: f64) -> String {
         .unwrap_or_else(|_| format!("{value:.2}"))
 }
 
+/// The locale's decimal separator, for reading a typed duration back.
+pub fn decimal_separator() -> char {
+    decimal(1.5).chars().nth(1).unwrap_or('.')
+}
+
 /// A day as a heading: "Thursday 29 August", in the locale's words.
 pub fn day(day: CalendarDate) -> String {
     let date = gtk::glib::DateTime::from_local(
@@ -87,5 +92,6 @@ mod tests {
     #[test]
     fn decimal_has_two_places() {
         assert_eq!(hours(1.5, HoursFormat::Decimal), "1.50");
+        assert_eq!(decimal_separator(), '.');
     }
 }
