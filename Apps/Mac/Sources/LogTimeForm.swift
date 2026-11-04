@@ -33,20 +33,32 @@ struct LogTimeForm: View {
 
     private var projects: [ProjectTargets] { tracker.orderedProjects }
 
-    /// The project chosen, or the best-ranked one before anything is. A chosen
-    /// project that a sync has since taken away is nothing, not the next one down,
-    /// so Log waits for another choice instead of landing somewhere unseen.
+    /// The project chosen, looked up by id and never by position: the list
+    /// re-ranks under the open form whenever a timer starts or a sync lands, and
+    /// the time must go where the form showed it would. One a sync has since taken
+    /// away is nothing, so Log waits for another choice.
     private var project: ProjectTargets? {
-        guard let projectID else { return projects.first }
-        return projects.first { $0.id == projectID }
+        projectID.flatMap { id in projects.first { $0.id == id } }
     }
 
-    /// The task chosen, on the same terms. Choosing a project chooses its best task
-    /// at that moment, so a sync that re-ranks the tasks does not move it.
+    /// The task chosen, on the same terms.
     private var task: Reference? {
-        guard let project else { return nil }
-        guard let taskID else { return project.tasks.first }
+        guard let project, let taskID else { return nil }
         return project.tasks.first { $0.id == taskID }
+    }
+
+    /// Chooses the best-ranked project and its best task, once: when the form
+    /// opens, or when the projects first arrive if it opened before they had.
+    private func chooseDefault() {
+        guard projectID == nil, let first = projects.first else { return }
+        choose(first)
+    }
+
+    /// Choosing a project chooses its best task at that moment, for the same
+    /// reason the project is held by id.
+    private func choose(_ project: ProjectTargets) {
+        projectID = project.id
+        taskID = project.tasks.first?.id
     }
 
     private var hours: Double? {
@@ -110,14 +122,9 @@ struct LogTimeForm: View {
         // when a menu or nothing at all has the focus; otherwise it reaches the
         // panel, which hides itself with the form still open inside it.
         .onExitCommand(perform: onClose)
+        .onChange(of: projects) { chooseDefault() }
         .onAppear {
-            // Fixed now rather than read from the head of the list each time: a
-            // timer started below while this is open moves its project to the top,
-            // and the time would quietly land there instead of where it showed.
-            if projectID == nil, let first = projects.first {
-                projectID = first.id
-                taskID = first.tasks.first?.id
-            }
+            chooseDefault()
             focus = .hours
         }
     }
@@ -130,8 +137,7 @@ struct LogTimeForm: View {
             Menu {
                 ForEach(projects) { option in
                     Button {
-                        projectID = option.id
-                        taskID = option.tasks.first?.id
+                        choose(option)
                     } label: {
                         if option.id == project?.id {
                             Label(option.label, systemImage: "checkmark")
