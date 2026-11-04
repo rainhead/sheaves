@@ -1568,7 +1568,10 @@ impl Inner {
     fn changed(&self) {
         let peers = self.peers.lock().unwrap().clone();
         if let Some(peers) = peers {
-            peers.set_user(self.state.lock().unwrap().user.as_ref().map(|user| user.id));
+            // Read first: saving the log under the state's lock would hold every
+            // other caller up for a disk write.
+            let user = self.state.lock().unwrap().user.as_ref().map(|user| user.id);
+            peers.set_user(user);
         }
         let observer = self.observer.lock().unwrap().clone();
         if let Some(observer) = observer {

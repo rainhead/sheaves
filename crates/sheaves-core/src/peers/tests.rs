@@ -202,22 +202,68 @@ mod kept_on_disk {
         assert_eq!(log.intervals(), [span(25.0 * 60.0, 25.0 * 60.0)]);
     }
 
-    /// A long stretch noted before the log was loaded stays one stretch, rather
-    /// than its two ends standing apart with an absence between them.
+    /// A long stretch noted before the log was loaded joins what the file held,
+    /// whole, rather than its two ends standing apart with an absence between.
     #[test]
-    fn evidence_noted_before_loading_stays_whole() {
+    fn evidence_noted_before_loading_joins_the_file() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("presence.json");
+        let first = peers(&path, at(0.0));
+        first.note_presence(at(0.0));
+        first.note_presence(at(10.0));
+        drop(first);
+
         let peers = Peers::new(THRESHOLD, Arc::new(Silent));
         peers.set_user(Some(USER));
-        for minute in [0.0, 10.0, 20.0] {
+        for minute in [12.0, 20.0, 30.0] {
             peers.note_presence(at(minute));
         }
-        peers.keep_log_in(path, at(20.0));
+        peers.keep_log_in(path, at(30.0));
         assert_eq!(
             peers.answer_presence(USER, at(0.0)).unwrap().intervals,
-            [span(0.0, 20.0)]
+            [span(0.0, 30.0)]
         );
+    }
+
+    /// The order the apps use: the log is loaded before anyone is signed in, and
+    /// the tracker names the user afterwards.
+    #[test]
+    fn loaded_before_signing_in_as_the_apps_do() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let first = peers(&path, at(0.0));
+        first.note_presence(at(0.0));
+        first.note_presence(at(10.0));
+        drop(first);
+
+        let same = Peers::new(THRESHOLD, Arc::new(Silent));
+        same.keep_log_in(path.clone(), at(20.0));
+        same.set_user(Some(USER));
+        assert_eq!(
+            same.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 10.0)]
+        );
+        drop(same);
+
+        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        other.keep_log_in(path, at(20.0));
+        other.set_user(Some(USER + 1));
+        assert_eq!(
+            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
+    }
+
+    /// A stretch from a clock that ran ahead is not restored: it would never
+    /// expire, and would vouch for the user over any absence.
+    #[test]
+    fn a_stretch_from_the_future_is_not_restored() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        log.restore(
+            vec![span(0.0, 10.0), span(5.0, 40.0), span(500.0, 600.0)],
+            at(20.0),
+        );
+        assert_eq!(log.intervals(), [span(0.0, 20.0)]);
     }
 
     #[test]

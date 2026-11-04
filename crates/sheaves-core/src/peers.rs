@@ -107,9 +107,19 @@ impl PresenceLog {
     /// noted before: in order, with any that are not, or end more than a day before
     /// `now`, dropped, and any closer than the threshold joined, as `note` keeps
     /// them. Joining by whole interval keeps a long stretch whole.
+    ///
+    /// Anything starting after `now` is dropped too, as from a clock that ran
+    /// ahead. Kept, it would never expire, since `note` measures a day back from
+    /// the newest evidence, and it would vouch for the user over any absence a
+    /// peer asked about.
     pub fn restore(&mut self, mut intervals: Vec<Interval>, now: Timestamp) {
         let horizon = offset_by(now, -LOG_SPAN);
-        intervals.retain(|interval| interval.start <= interval.end && interval.end >= horizon);
+        intervals.retain(|interval| {
+            interval.start <= interval.end && interval.end >= horizon && interval.start <= now
+        });
+        for interval in &mut intervals {
+            interval.end = interval.end.min(now);
+        }
         intervals.sort_by_key(|interval| interval.start);
         let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
         for interval in intervals {
@@ -661,14 +671,15 @@ impl Presence {
         } else {
             0.0
         };
-        let candidates = {
+        let (candidates, evidence) = {
             let mut monitor = lock(&self.monitor);
             let candidates = monitor.poll(reading, now);
-            for when in monitor.take_evidence() {
-                self.peers.note_presence(when);
-            }
-            candidates
+            (candidates, monitor.take_evidence())
         };
+        // Outside the monitor's lock: noting can write the log to disk.
+        for when in evidence {
+            self.peers.note_presence(when);
+        }
         let mut absences = Vec::new();
         for candidate in candidates {
             absences.extend(self.peers.confirm(candidate, self.threshold).await);
