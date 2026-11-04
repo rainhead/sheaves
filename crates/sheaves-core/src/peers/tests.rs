@@ -418,9 +418,15 @@ mod sharing {
         assert!(mac.post_due(at(10.0)));
     }
 
+    /// Relaunched while the timer runs, the entry already holds this machine's
+    /// part; a write before the user is known would erase it.
     #[tokio::test]
     async fn shares_nothing_before_it_knows_whose_machine_it_is() {
         let entry = Entry::new();
+        let earlier = Board {
+            parts: [("mac".to_string(), vec![span(1.0, 5.0)])].into(),
+        };
+        *entry.reference.lock().unwrap() = Some(earlier.reference());
         let mac = Arc::new(Peers::new(THRESHOLD, "mac"));
         mac.share_on(entry.clone());
         mac.note_presence(at(10.0));

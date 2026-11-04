@@ -1853,14 +1853,17 @@ struct RunningEntry {
 impl Noticeboard for RunningEntry {
     async fn running(&self) -> Result<Option<Posted>, String> {
         let inner = self.inner.upgrade().ok_or("the tracker has gone")?;
-        let user_id = inner
-            .state
-            .lock()
-            .unwrap()
-            .user
-            .as_ref()
-            .map(|user| user.id);
-        let Some(user_id) = user_id else {
+        let (user_id, is_running) = {
+            let state = inner.state.lock().unwrap();
+            (
+                state.user.as_ref().map(|user| user.id),
+                state.entries.iter().any(|entry| entry.is_running),
+            )
+        };
+        // Nothing running as far as this machine knows: no request. A timer
+        // started elsewhere shows up at the next probe, within a minute or five,
+        // and is shared from then on.
+        let Some(user_id) = user_id.filter(|_| is_running) else {
             return Ok(None);
         };
         let entry = inner

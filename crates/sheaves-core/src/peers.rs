@@ -451,6 +451,12 @@ impl Peers {
         let Some(board) = self.board() else {
             return;
         };
+        // Not yet known to be the signed-in user's, the log has nothing to say,
+        // and writing that would erase this machine's part.
+        let user = *lock(&self.user_id);
+        if user.is_none() || *lock(&self.log_owner) != user {
+            return;
+        }
         *lock(&self.posted_at) = Some(now);
         let posted = match board.running().await {
             Ok(Some(posted)) => posted,

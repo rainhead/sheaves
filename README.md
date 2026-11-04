@@ -192,7 +192,8 @@ the part since the timer started onto the running entry in Harvest, and before
 asking about an absence reads what the other machines wrote there. Nothing needs
 setting up: every machine signed in to the same Harvest account takes part. A
 question answered on one machine goes away on the other when that one next looks
-at Harvest, within a minute while a timer runs. A stop reads the entry back before
+at Harvest: within a minute plugged in, five on battery, and at its next sync in
+Low Power Mode, which stops the regular checks. A stop reads the entry back before
 sending its hours, so a trim made on the other machine is not overwritten. What is
 written, and why on the entry, is in [How Sheaves decides you are
 here](docs/presence.md#other-machines).

@@ -358,3 +358,13 @@ async fn writes_about_once_a_minute_while_it_sees_the_user() {
     let idle = desk.harvest.reference_writes() - before;
     assert!(idle <= 1, "{idle} writes with nobody there");
 }
+
+/// With no timer running, there is nothing to share, and no reason to ask
+/// Harvest once a minute whether there is.
+#[tokio::test]
+async fn asks_nothing_while_no_timer_runs() {
+    let mut desk = Desk::new().await;
+    let before = desk.harvest.running_reads();
+    desk.spend(At::Mac, "08:30").await;
+    assert_eq!(desk.harvest.running_reads(), before);
+}

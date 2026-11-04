@@ -82,6 +82,8 @@ pub struct FakeHarvest {
     next_id: Mutex<i64>,
     /// How many writes of an external reference have arrived.
     reference_writes: Mutex<usize>,
+    /// How many times the running timer was asked for.
+    running_reads: Mutex<usize>,
 }
 
 impl FakeHarvest {
@@ -91,6 +93,7 @@ impl FakeHarvest {
             entries: Mutex::new(Vec::new()),
             next_id: Mutex::new(5000),
             reference_writes: Mutex::new(0),
+            running_reads: Mutex::new(0),
         })
     }
 
@@ -103,6 +106,10 @@ impl FakeHarvest {
 
     pub fn reference_writes(&self) -> usize {
         *self.reference_writes.lock().unwrap()
+    }
+
+    pub fn running_reads(&self) -> usize {
+        *self.running_reads.lock().unwrap()
     }
 
     pub fn only_entry(&self) -> ServerEntry {
@@ -158,6 +165,9 @@ impl FakeHarvest {
                 let query: HashMap<String, String> =
                     request.url.query_pairs().into_owned().collect();
                 let running_only = query.get("is_running").is_some_and(|value| value == "true");
+                if running_only {
+                    *self.running_reads.lock().unwrap() += 1;
+                }
                 let from = query.get("from").cloned().unwrap_or_default();
                 let to = query
                     .get("to")
