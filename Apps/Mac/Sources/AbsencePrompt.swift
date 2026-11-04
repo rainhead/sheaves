@@ -72,8 +72,8 @@ final class AbsencePromptController {
     }
 
     /// Takes the question down once it no longer applies: another machine trimmed
-    /// the timer, which its peers hear about at once, or the timer was stopped
-    /// somewhere. Asking anyway would trim the same absence twice.
+    /// the timer, which this Mac sees at its next look at Harvest, or the timer
+    /// was stopped somewhere. Asking anyway would trim the same absence twice.
     private func withdrawWhenAnsweredElsewhere(_ absence: Absence) {
         withObservationTracking {
             _ = tracker.snapshot

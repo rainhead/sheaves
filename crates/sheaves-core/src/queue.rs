@@ -13,6 +13,7 @@ use crate::calendar_date::CalendarDate;
 use crate::client::{EntryUpdate, HarvestClient, HarvestError};
 use crate::clock::Clock;
 use crate::models::{TimeEntry, hours_between};
+use crate::peers::board;
 use crate::persistence;
 use crate::tracked_entry::{EntryId, TimerTarget};
 
@@ -797,11 +798,21 @@ impl MutationQueue {
                     Ok(()) | Err(HarvestError::Rejected { .. }) => {}
                     Err(error) => return Err(error),
                 }
-                landed(
-                    client
-                        .update_time_entry(server_id, hours_only(Self::storable_hours(*hours)))
-                        .await,
-                )?;
+                let stopped = client
+                    .update_time_entry(server_id, hours_only(Self::storable_hours(*hours)))
+                    .await;
+                let shared = matches!(
+                    &stopped,
+                    Ok(TimeEntry { external_reference: Some(reference), .. })
+                        if reference.group_id.as_deref() == Some(board::GROUP)
+                );
+                landed(stopped)?;
+                // A finished entry carries nothing of presence: the stretches were
+                // only ever about the timer while it ran. The stop has landed, so
+                // a failure here costs only a stale icon on the entry.
+                if shared && let Err(error) = client.remove_external_reference(server_id).await {
+                    log::info!("could not clear what was shared on entry {server_id}: {error}");
+                }
             }
             Mutation::Restart {
                 resumed_at,

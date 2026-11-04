@@ -15,7 +15,6 @@ use sheaves_core::persistence;
 use sheaves_core::tracked_entry::TrackedEntry;
 use sheaves_core::tracker::{Activity, Connection};
 
-use crate::config::{self, Config};
 use crate::prompt::{self, Outcome, Wording};
 
 use crate::indicator::{self, Command, Indicator, Look};
@@ -41,7 +40,6 @@ struct Shell {
     window: Rc<Window>,
     latest: RefCell<TrackerSnapshot>,
     looks: tokio::sync::watch::Sender<Look>,
-    config: RefCell<Config>,
     /// Absences waiting their turn to be asked about, oldest first. Each describes
     /// a different stretch, and answering only the latest would bill every stretch
     /// before it, since a trim keeps everything earlier than where it starts.
@@ -120,9 +118,6 @@ fn start(app: &adw::Application) -> Rc<Shell> {
     let (looks, look_rx) = tokio::sync::watch::channel(Look::default());
     start_indicator(commands, look_rx);
 
-    let config = Config::read(&config::path());
-    tracker.set_peers(config.peers.clone());
-
     // Absences are noticed on a thread of their own and asked about here.
     let (absences, absence_rx) = async_channel::unbounded();
     crate::presence::watch(
@@ -136,7 +131,6 @@ fn start(app: &adw::Application) -> Rc<Shell> {
         window,
         latest: RefCell::new(initial),
         looks,
-        config: RefCell::new(config),
         absences: RefCell::default(),
         prompt: RefCell::new(Prompt::Idle),
     });
@@ -255,8 +249,9 @@ impl Shell {
         }
         self.window.render(&snapshot);
         // Takes the question down once it no longer applies: another machine
-        // trimmed the timer, which a peer announces at once, or it was stopped
-        // somewhere. Asking anyway would trim the same absence twice.
+        // trimmed the timer, which this one sees at its next look at Harvest, or
+        // it was stopped somewhere. Asking anyway would trim the same absence
+        // twice.
         let withdrawn = match &*self.prompt.borrow() {
             Prompt::Asking(absence, dialog) if !snapshot.state.absence_applies(absence) => {
                 Some(dialog.clone())
@@ -342,18 +337,6 @@ impl Shell {
         }
     }
 
-    fn set_peers(&self, peers: Vec<String>) {
-        let mut config = self.config.borrow_mut();
-        if config.peers == peers {
-            return;
-        }
-        config.peers = peers;
-        self.tracker.set_peers(config.peers.clone());
-        if let Err(error) = config.write(&config::path()) {
-            log::error!("could not save the peers: {error}");
-        }
-    }
-
     fn show_look(&self) {
         let latest = self.latest.borrow();
         let look = Look::of(
@@ -372,14 +355,7 @@ impl Shell {
         let tracker = self.tracker.clone();
         match action {
             Action::OpenSettings => {
-                let shell = self.clone();
-                settings::present(
-                    &self.window.window,
-                    tracker,
-                    &self.latest.borrow(),
-                    self.config.borrow().peers.clone(),
-                    Rc::new(move |peers| shell.set_peers(peers)),
-                );
+                settings::present(&self.window.window, tracker, &self.latest.borrow());
             }
             Action::Start(target) => {
                 glib::spawn_future_local(async move { tracker.start(target, None).await });

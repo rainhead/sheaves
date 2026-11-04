@@ -13,12 +13,7 @@ name = "sheaves_core"
 
 [dependencies]
 async-trait = "0.1.92"
-bytes = "1.12.1"
 directories = "6.0.0"
-http-body-util = "0.1.5"
-hyper = { version = "1.12.0", features = ["server", "http1"] }
-hyper-util = { version = "0.1.21", features = ["tokio", "server"] }
-if-addrs = "0.15.0"
 jiff = { version = "0.2.39", features = ["serde"] }
 log = { version = "0.4.35", features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -26,7 +21,7 @@ serde_json = "1.0.154"
 serde_path_to_error = "0.1.20"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "time", "sync", "macros", "net"] }
+tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "time", "sync", "macros"] }
 uniffi.workspace = true
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["v4", "serde"] }

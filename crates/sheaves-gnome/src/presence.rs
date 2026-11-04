@@ -2,8 +2,8 @@
 //! half minute and again the moment the screen unlocks or the machine wakes.
 //!
 //! What the readings mean is decided in the core (`PresenceMonitor::poll` in
-//! `crates/sheaves-core/src/absence.rs`), which also asks the peers before
-//! reporting an absence. This only reads the signals. There is no microphone
+//! `crates/sheaves-core/src/absence.rs`), which also reads what the other
+//! machines saw, from the running entry, before reporting an absence. This only reads the signals. There is no microphone
 //! signal: nobody takes calls on this machine.
 
 use std::sync::Arc;

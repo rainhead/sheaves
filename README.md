@@ -120,11 +120,6 @@ Create a personal access token at
 with the account ID shown beside it, into Sheaves' settings. The token is stored in
 the Keychain and sent only to `api.harvestapp.com`.
 
-To share presence with another machine running Sheaves, name it under Peers in
-Settings by its name on your tailnet. The Mac then answers on its tailnet addresses,
-port 47147. With the macOS firewall on, the app still answers without being added
-to its list.
-
 Settings has a switch to open Sheaves at login, which registers the bundle where it
 sits right now — move the app and the switch has to go off and on again to point at
 the new location.
@@ -192,13 +187,15 @@ limits.
 
 **Two machines agree about when you were away.** Start a timer on the Mac, work at
 another machine for two hours, come back, and the Mac alone would offer to trim two
-hours of real work. So each instance keeps a day's log of when it saw you, and before
-asking about an absence it asks its peers whether they saw you meanwhile. When it
-changes a timer it tells them, so they look at Harvest at once, and an open question
-the change answered goes away. A stop reads the entry back before sending its hours,
-so a trim made on the other machine is not overwritten. Peers talk only over the
-tailnet, which is what authenticates and encrypts them; the rules are in
-[`peers.rs`](crates/sheaves-core/src/peers.rs).
+hours of real work. So each instance keeps a day's log of when it saw you, writes
+the part since the timer started onto the running entry in Harvest, and before
+asking about an absence reads what the other machines wrote there. Nothing needs
+setting up: every machine signed in to the same Harvest account takes part. A
+question answered on one machine goes away on the other when that one next looks
+at Harvest, within a minute while a timer runs. A stop reads the entry back before
+sending its hours, so a trim made on the other machine is not overwritten. What is
+written, and why on the entry, is in [How Sheaves decides you are
+here](docs/presence.md#other-machines).
 
 <img src="docs/images/absence-prompt.png" width="440"
   alt="The Sheaves absence prompt: a timer that ran while nobody was here, with
@@ -237,7 +234,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 
 | Path | What lives there |
 | --- | --- |
-| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and the peers it is shared with. Rust, so a GNOME app can share it. |
+| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and how it is shared between machines. Rust, so a GNOME app can share it. |
 | [`Packages/SheavesCore`](Packages/SheavesCore) | The core as Swift sees it: the [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings, an `@Observable` wrapper, the Keychain, and formatting. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
 | [`crates/sheaves-gnome`](crates/sheaves-gnome) | The GNOME app: the running timer in the top bar, the day in a libadwaita window. |

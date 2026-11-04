@@ -1,9 +1,4 @@
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use super::*;
-use hyper::{Method, StatusCode};
 
 const THRESHOLD: f64 = 15.0 * 60.0;
 const USER: i64 = 1782959;
@@ -90,7 +85,7 @@ mod kept_on_disk {
     use super::*;
 
     fn peers(path: &std::path::Path, now: Timestamp) -> Peers {
-        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        let peers = Peers::new(THRESHOLD, "k3x9");
         peers.set_user(Some(USER));
         peers.keep_log_in(path.to_path_buf(), now);
         peers
@@ -109,7 +104,7 @@ mod kept_on_disk {
         let after = peers(&path, at(90.0));
         after.note_presence(at(90.0));
         assert_eq!(
-            after.answer_presence(USER, at(0.0)).unwrap().intervals,
+            after.own_since(at(0.0)),
             [span(0.0, 60.0), span(90.0, 90.0)]
         );
     }
@@ -151,13 +146,10 @@ mod kept_on_disk {
         before.note_presence(at(30.0));
         drop(before);
 
-        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        let other = Peers::new(THRESHOLD, "k3x9");
         other.set_user(Some(USER + 1));
         other.keep_log_in(path.clone(), at(40.0));
-        assert_eq!(
-            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
-            []
-        );
+        assert_eq!(other.own_since(at(0.0)), []);
     }
 
     #[test]
@@ -167,28 +159,19 @@ mod kept_on_disk {
         let peers = peers(&path, at(0.0));
         peers.note_presence(at(0.0));
         peers.set_user(Some(USER + 1));
-        assert_eq!(
-            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
-            []
-        );
+        assert_eq!(peers.own_since(at(0.0)), []);
         peers.note_presence(at(5.0));
-        assert_eq!(
-            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
-            [span(5.0, 5.0)]
-        );
+        assert_eq!(peers.own_since(at(0.0)), [span(5.0, 5.0)]);
     }
 
     /// Evidence noted before anyone signed in, such as the launch, is kept for
     /// whoever then does.
     #[test]
     fn evidence_from_before_signing_in_is_kept() {
-        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        let peers = Peers::new(THRESHOLD, "k3x9");
         peers.note_presence(at(0.0));
         peers.set_user(Some(USER));
-        assert_eq!(
-            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
-            [span(0.0, 0.0)]
-        );
+        assert_eq!(peers.own_since(at(0.0)), [span(0.0, 0.0)]);
     }
 
     /// A new interval is reported as one even when the same note drops a day-old
@@ -213,16 +196,13 @@ mod kept_on_disk {
         first.note_presence(at(10.0));
         drop(first);
 
-        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        let peers = Peers::new(THRESHOLD, "k3x9");
         peers.set_user(Some(USER));
         for minute in [12.0, 20.0, 30.0] {
             peers.note_presence(at(minute));
         }
         peers.keep_log_in(path, at(30.0));
-        assert_eq!(
-            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
-            [span(0.0, 30.0)]
-        );
+        assert_eq!(peers.own_since(at(0.0)), [span(0.0, 30.0)]);
     }
 
     /// The order the apps use: the log is loaded before anyone is signed in, and
@@ -236,22 +216,16 @@ mod kept_on_disk {
         first.note_presence(at(10.0));
         drop(first);
 
-        let same = Peers::new(THRESHOLD, Arc::new(Silent));
+        let same = Peers::new(THRESHOLD, "k3x9");
         same.keep_log_in(path.clone(), at(20.0));
         same.set_user(Some(USER));
-        assert_eq!(
-            same.answer_presence(USER, at(0.0)).unwrap().intervals,
-            [span(0.0, 10.0)]
-        );
+        assert_eq!(same.own_since(at(0.0)), [span(0.0, 10.0)]);
         drop(same);
 
-        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        let other = Peers::new(THRESHOLD, "k3x9");
         other.keep_log_in(path, at(20.0));
         other.set_user(Some(USER + 1));
-        assert_eq!(
-            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
-            []
-        );
+        assert_eq!(other.own_since(at(0.0)), []);
     }
 
     /// A stretch from a clock that ran ahead is not restored: it would never
@@ -357,319 +331,124 @@ mod merge {
     }
 }
 
-#[test]
-fn knows_the_tailnet_ranges() {
-    for inside in [
-        "100.64.0.1",
-        "100.127.255.254",
-        "fd7a:115c:a1e0::1",
-        "::ffff:100.100.1.2",
-    ] {
-        assert!(is_tailnet(inside.parse().unwrap()), "{inside}");
-    }
-    for outside in [
-        "100.63.255.255",
-        "100.128.0.0",
-        "192.168.1.10",
-        "127.0.0.1",
-        "fd7a:115c:a1e1::1",
-        "::1",
-    ] {
-        assert!(!is_tailnet(outside.parse().unwrap()), "{outside}");
-    }
-}
+mod sharing {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-/// Joins `Peers` to one another in memory, by name.
-#[derive(Default)]
-struct Direct {
-    peers: Mutex<HashMap<String, Arc<Peers>>>,
-    asked: AtomicUsize,
-}
+    /// A running entry in memory, counting the writes it is sent.
+    struct Entry {
+        reference: Mutex<Option<ExternalReference>>,
+        posts: AtomicUsize,
+        low_power: AtomicBool,
+    }
 
-#[async_trait]
-impl PeerTransport for Direct {
-    async fn presence(
-        &self,
-        peer: &str,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, PeerError> {
-        self.asked.fetch_add(1, Ordering::SeqCst);
-        let target = self.peers.lock().unwrap().get(peer).cloned();
-        let target = target.ok_or_else(|| PeerError::Unreachable {
-            peer: peer.to_string(),
-            reason: "no such machine".to_string(),
-        })?;
-        target
-            .answer_presence(user_id, since)
-            .map_err(|_| PeerError::Refused {
-                peer: peer.to_string(),
-                status: 403,
+    impl Entry {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                reference: Mutex::new(None),
+                posts: AtomicUsize::new(0),
+                low_power: AtomicBool::new(false),
             })
-    }
-
-    async fn touched(&self, peer: &str, touched: &Touched) -> Result<(), PeerError> {
-        let target = self.peers.lock().unwrap().get(peer).cloned();
-        if let Some(target) = target {
-            let _ = target.receive_touched(touched.clone());
         }
-        Ok(())
-    }
-}
-
-/// Answers every question about a different user than the one asked about.
-struct Impostor;
-
-#[async_trait]
-impl PeerTransport for Impostor {
-    async fn presence(
-        &self,
-        _: &str,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, PeerError> {
-        Ok(PresenceAnswer {
-            user_id: user_id + 1,
-            intervals: vec![Interval {
-                start: since,
-                end: offset_by(since, 86_400.0),
-            }],
-        })
     }
 
-    async fn touched(&self, _: &str, _: &Touched) -> Result<(), PeerError> {
-        Ok(())
-    }
-}
-
-/// Never answers.
-struct Silent;
-
-#[async_trait]
-impl PeerTransport for Silent {
-    async fn presence(&self, _: &str, _: i64, _: Timestamp) -> Result<PresenceAnswer, PeerError> {
-        std::future::pending().await
-    }
-
-    async fn touched(&self, _: &str, _: &Touched) -> Result<(), PeerError> {
-        std::future::pending().await
-    }
-}
-
-fn signed_in(transport: Arc<dyn PeerTransport>, names: &[&str]) -> Arc<Peers> {
-    let peers = Arc::new(Peers::new(THRESHOLD, transport));
-    peers.set_user(Some(USER));
-    peers.set_names(names.iter().map(ToString::to_string).collect());
-    peers
-}
-
-mod asking {
-    use super::*;
-
-    #[tokio::test]
-    async fn with_no_peers_the_absence_stands_and_nobody_is_asked() {
-        let direct = Arc::new(Direct::default());
-        let mac = signed_in(direct.clone(), &[]);
-        assert_eq!(
-            mac.confirm(absence(120.0, 245.0), THRESHOLD).await,
-            [absence(120.0, 245.0)]
-        );
-        assert_eq!(direct.asked.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn a_peer_that_saw_the_user_answers_the_question() {
-        let direct = Arc::new(Direct::default());
-        let mac = signed_in(direct.clone(), &["hostess"]);
-        let hostess = signed_in(direct.clone(), &["mac"]);
-        direct
-            .peers
-            .lock()
-            .unwrap()
-            .insert("hostess".into(), hostess.clone());
-        for minute in (120..=240).step_by(5) {
-            hostess.note_presence(at(f64::from(minute)));
+    #[async_trait]
+    impl Noticeboard for Entry {
+        async fn running(&self) -> Result<Option<Posted>, String> {
+            Ok(Some(Posted {
+                entry_id: 1,
+                timer_started_at: at(0.0),
+                reference: self.reference.lock().unwrap().clone(),
+            }))
         }
-        assert_eq!(mac.confirm(absence(120.0, 245.0), THRESHOLD).await, []);
+
+        async fn post(&self, _: i64, reference: &ExternalReference) -> Result<(), String> {
+            self.posts.fetch_add(1, Ordering::SeqCst);
+            *self.reference.lock().unwrap() = Some(reference.clone());
+            Ok(())
+        }
+
+        fn may_post(&self) -> bool {
+            !self.low_power.load(Ordering::SeqCst)
+        }
     }
 
-    /// The user id is not secret, so this is no defence against an attacker, but it
-    /// keeps two people's machines on one tailnet from vouching for each other.
-    #[tokio::test]
-    async fn ignores_an_answer_about_someone_else() {
-        let mac = signed_in(Arc::new(Impostor), &["hostess"]);
-        assert_eq!(
-            mac.confirm(absence(120.0, 245.0), THRESHOLD).await,
-            [absence(120.0, 245.0)]
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn decides_alone_when_a_peer_is_silent() {
-        let mac = signed_in(Arc::new(Silent), &["hostess"]);
-        assert_eq!(
-            mac.confirm(absence(120.0, 245.0), THRESHOLD).await,
-            [absence(120.0, 245.0)]
-        );
-    }
-
-    #[tokio::test]
-    async fn asks_nobody_before_it_knows_whose_machine_it_is() {
-        let direct = Arc::new(Direct::default());
-        let mac = Arc::new(Peers::new(THRESHOLD, direct.clone()));
-        mac.set_names(vec!["hostess".into()]);
-        assert_eq!(
-            mac.confirm(absence(120.0, 245.0), THRESHOLD).await,
-            [absence(120.0, 245.0)]
-        );
-        assert_eq!(direct.asked.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn cleans_up_the_names_it_is_given() {
-        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
-        peers.set_names(vec![
-            " hostess ".into(),
-            "".into(),
-            "hostess".into(),
-            "air".into(),
-        ]);
-        assert_eq!(peers.names(), ["hostess", "air"]);
-    }
-}
-
-mod answering {
-    use super::*;
-
-    #[test]
-    fn refuses_before_it_knows_whose_machine_it_is() {
-        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
-        assert_eq!(
-            peers.answer_presence(USER, at(0.0)),
-            Err(Refusal::NotSignedIn)
-        );
-    }
-
-    #[test]
-    fn refuses_a_question_about_someone_else() {
-        let peers = signed_in(Arc::new(Silent), &[]);
-        assert_eq!(
-            peers.answer_presence(USER + 1, at(0.0)),
-            Err(Refusal::OtherUser)
-        );
-        assert_eq!(
-            peers.receive_touched(Touched {
-                user_id: USER + 1,
-                entry_ids: vec![1]
-            }),
-            Err(Refusal::OtherUser)
-        );
-    }
-
-    #[test]
-    fn hands_a_notice_to_whoever_probes_harvest() {
-        let peers = signed_in(Arc::new(Silent), &[]);
-        let heard = Arc::new(Mutex::new(Vec::new()));
-        let record = heard.clone();
-        peers.on_touched(move |ids| record.lock().unwrap().extend(ids));
+    fn sharing(entry: &Arc<Entry>, machine: &str) -> Arc<Peers> {
+        let peers = Arc::new(Peers::new(THRESHOLD, machine));
+        peers.set_user(Some(USER));
+        peers.share_on(entry.clone());
         peers
-            .receive_touched(Touched {
-                user_id: USER,
-                entry_ids: vec![636708906],
-            })
-            .unwrap();
-        assert_eq!(*heard.lock().unwrap(), [636708906]);
     }
 
-    /// A request is refused unless it comes from the tailnet, whatever the body.
-    #[test]
-    fn refuses_a_request_from_outside_the_tailnet() {
-        let peers = signed_in(Arc::new(Silent), &[]);
-        peers.note_presence(at(0.0));
-        let query = format!("since={}&user_id={USER}", at(0.0));
-        let (status, _) = server::respond(
-            &peers,
-            &Method::GET,
-            "/presence",
-            Some(&query),
-            b"",
-            "192.168.1.20".parse().unwrap(),
-        );
-        assert_eq!(status, StatusCode::FORBIDDEN);
-
-        let (status, body) = server::respond(
-            &peers,
-            &Method::GET,
-            "/presence",
-            Some(&query),
-            b"",
-            "100.101.102.103".parse().unwrap(),
-        );
-        assert_eq!(status, StatusCode::OK);
-        let answer: PresenceAnswer = serde_json::from_str(&body).unwrap();
-        assert_eq!(
-            answer,
-            PresenceAnswer {
-                user_id: USER,
-                intervals: vec![span(0.0, 0.0)]
-            }
-        );
-    }
-
-    #[test]
-    fn says_what_is_wrong_with_a_malformed_request() {
-        let peers = signed_in(Arc::new(Silent), &[]);
-        let tailnet: IpAddr = "100.101.102.103".parse().unwrap();
-        let ask = |method: &Method, path: &str, query: Option<&str>, body: &[u8]| {
-            server::respond(&peers, method, path, query, body, tailnet).0
-        };
-        assert_eq!(
-            ask(&Method::GET, "/presence", Some("since=yesterday"), b""),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            ask(&Method::POST, "/touched", None, b"{"),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            ask(&Method::GET, "/entries", None, b""),
-            StatusCode::NOT_FOUND
-        );
-    }
-
-    /// Over a real connection: the listener refuses a machine that is not on the
-    /// tailnet, here this machine itself over loopback.
     #[tokio::test]
-    async fn refuses_a_connection_from_outside_the_tailnet() {
-        let peers = signed_in(Arc::new(Silent), &[]);
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
-        let address = listener.local_addr().unwrap();
-        let serving = tokio::spawn(server::serve(listener, peers));
-        let response = reqwest::Client::builder()
-            .no_proxy()
-            .build()
-            .unwrap()
-            .get(format!(
-                "http://{address}/presence?since={}&user_id={USER}",
-                at(0.0)
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status().as_u16(), 403);
-        serving.abort();
+    async fn reads_what_the_other_machine_wrote_and_not_its_own() {
+        let entry = Entry::new();
+        let mac = sharing(&entry, "mac");
+        let hostess = sharing(&entry, "host");
+        mac.note_presence(at(10.0));
+        mac.post(at(10.0)).await;
+        for minute in (60..=120).step_by(10) {
+            hostess.note_presence(at(minute as f64));
+        }
+        hostess.post(at(120.0)).await;
+
+        assert_eq!(mac.seen_since(at(0.0)).await, [span(60.0, 120.0)]);
+        assert_eq!(hostess.seen_since(at(0.0)).await, [span(10.0, 10.0)]);
     }
 
-    /// A name that does not resolve into the tailnet is not asked at all.
     #[tokio::test]
-    async fn will_not_ask_a_machine_off_the_tailnet() {
-        let transport = HttpPeerTransport::new(PEER_PORT);
-        let refused = transport.presence("localhost", USER, at(0.0)).await;
-        assert!(
-            matches!(refused, Err(PeerError::NotOnTailnet { .. })),
-            "{refused:?}"
-        );
+    async fn an_unchanged_part_is_not_written_again() {
+        let entry = Entry::new();
+        let mac = sharing(&entry, "mac");
+        mac.note_presence(at(10.0));
+        mac.post(at(10.0)).await;
+        mac.post(at(11.0)).await;
+        assert_eq!(entry.posts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn writes_nothing_in_low_power_mode() {
+        let entry = Entry::new();
+        entry.low_power.store(true, Ordering::SeqCst);
+        let mac = sharing(&entry, "mac");
+        mac.note_presence(at(10.0));
+        assert!(!mac.post_due(at(10.0)));
+        // Reading for a question still happens.
+        entry.low_power.store(false, Ordering::SeqCst);
+        assert!(mac.post_due(at(10.0)));
+    }
+
+    #[tokio::test]
+    async fn shares_nothing_before_it_knows_whose_machine_it_is() {
+        let entry = Entry::new();
+        let mac = Arc::new(Peers::new(THRESHOLD, "mac"));
+        mac.share_on(entry.clone());
+        mac.note_presence(at(10.0));
+        mac.post(at(10.0)).await;
+        assert_eq!(entry.posts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn is_due_a_minute_after_the_last_write_and_only_with_news() {
+        let entry = Entry::new();
+        let mac = sharing(&entry, "mac");
+        mac.note_presence(at(10.0));
+        assert!(mac.post_due(at(10.0)));
+        *lock(&mac.posted_at) = Some(at(10.0));
+        mac.note_presence(at(10.5));
+        assert!(!mac.post_due(at(10.5)));
+        assert!(mac.post_due(at(11.0)));
+        // Nobody seen since the last write: nothing to say.
+        *lock(&mac.posted_at) = Some(at(11.0));
+        assert!(!mac.post_due(at(20.0)));
+    }
+
+    #[test]
+    fn keeps_its_machine_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("machine.json");
+        let first = machine_id_in(&path);
+        assert!(board::is_machine_id(&first), "{first:?}");
+        assert_eq!(machine_id_in(&path), first);
     }
 }

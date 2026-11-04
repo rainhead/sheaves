@@ -13,8 +13,8 @@ use url::Url;
 use crate::budget::ProjectBudget;
 use crate::calendar_date::CalendarDate;
 use crate::models::{
-    ClientRecord, HarvestCompany, HarvestUser, Page, PaginatedItem, ProjectAssignment, TimeEntry,
-    decode_described,
+    ClientRecord, ExternalReference, HarvestCompany, HarvestUser, Page, PaginatedItem,
+    ProjectAssignment, TimeEntry, decode_described,
 };
 
 pub const BASE_URL: &str = "https://api.harvestapp.com/v2/";
@@ -427,6 +427,34 @@ impl HarvestClient {
     ) -> Result<TimeEntry, HarvestError> {
         self.send(&format!("time_entries/{id}"), Method::Patch, &update)
             .await
+    }
+
+    /// Writes `reference` onto entry `id`, replacing any it had. A running timer
+    /// goes on running.
+    pub async fn set_external_reference(
+        &self,
+        id: i64,
+        reference: &ExternalReference,
+    ) -> Result<TimeEntry, HarvestError> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            external_reference: &'a ExternalReference,
+        }
+        self.send(
+            &format!("time_entries/{id}"),
+            Method::Patch,
+            &Body {
+                external_reference: reference,
+            },
+        )
+        .await
+    }
+
+    /// Takes entry `id`'s external reference off it.
+    pub async fn remove_external_reference(&self, id: i64) -> Result<(), HarvestError> {
+        let url = Self::url(&format!("time_entries/{id}/external_reference"), &[]);
+        self.perform(self.request(url, Method::Delete)?).await?;
+        Ok(())
     }
 
     pub async fn delete_time_entry(&self, id: i64) -> Result<(), HarvestError> {

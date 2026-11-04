@@ -1,21 +1,21 @@
-//! Two machines sharing presence and timer changes, against one simulated Harvest:
-//! the scenarios `docs/gnome-port.md` gives for phase 5.
+//! Two machines sharing presence through the running entry, against one simulated
+//! Harvest: the scenarios `docs/gnome-port.md` gives for phase 5, which phase 9
+//! moved off the tailnet.
 
 mod support;
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use serde_json::json;
 
 use sheaves_core::absence::{Absence, AbsenceResolution, PresenceReading};
 use sheaves_core::client::{Credentials, HarvestClient};
 use sheaves_core::clock::{Clock, ManualClock};
 use sheaves_core::credentials::{CredentialStore, Login, MemoryCredentialStore};
-use sheaves_core::peers::{PeerError, PeerTransport, Peers, Presence, PresenceAnswer, Touched};
+use sheaves_core::peers::board::{Board, GROUP};
+use sheaves_core::peers::{Peers, Presence};
 use sheaves_core::queue::MutationQueue;
 use sheaves_core::snapshot::SnapshotStore;
 use sheaves_core::tracker::TimeTracker;
@@ -25,65 +25,13 @@ use support::{FakeHarvest, USER_ID, target};
 const THRESHOLD: f64 = 15.0 * 60.0;
 const POLL: f64 = 30.0;
 
-/// The tailnet, in memory: each machine reaches the others by name, unless it is
-/// asleep.
-#[derive(Default)]
-struct Tailnet {
-    machines: Mutex<HashMap<String, Arc<Peers>>>,
-    asleep: Mutex<HashSet<String>>,
-}
-
-impl Tailnet {
-    fn reach(&self, peer: &str) -> Result<Arc<Peers>, PeerError> {
-        let unreachable = || PeerError::Unreachable {
-            peer: peer.to_string(),
-            reason: "asleep".to_string(),
-        };
-        if self.asleep.lock().unwrap().contains(peer) {
-            return Err(unreachable());
-        }
-        self.machines
-            .lock()
-            .unwrap()
-            .get(peer)
-            .cloned()
-            .ok_or_else(unreachable)
-    }
-}
-
-#[async_trait]
-impl PeerTransport for Tailnet {
-    async fn presence(
-        &self,
-        peer: &str,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, PeerError> {
-        self.reach(peer)?
-            .answer_presence(user_id, since)
-            .map_err(|_| PeerError::Refused {
-                peer: peer.to_string(),
-                status: 403,
-            })
-    }
-
-    async fn touched(&self, peer: &str, touched: &Touched) -> Result<(), PeerError> {
-        self.reach(peer)?
-            .receive_touched(touched.clone())
-            .map_err(|_| PeerError::Refused {
-                peer: peer.to_string(),
-                status: 403,
-            })
-    }
-}
-
-/// One of the user's machines: a tracker, and presence that asks the other.
+/// One of the user's machines: a tracker, and presence that shares through it.
 struct Machine {
     tracker: TimeTracker,
     presence: Presence,
     /// When the user last touched this machine's keyboard or mouse.
     last_input: Timestamp,
-    /// Every absence this machine reported, peers consulted.
+    /// Every absence this machine reported, the other machine's part consulted.
     absences: Vec<Absence>,
     _directory: tempfile::TempDir,
 }
@@ -91,11 +39,10 @@ struct Machine {
 struct Desk {
     clock: Arc<ManualClock>,
     harvest: Arc<FakeHarvest>,
-    tailnet: Arc<Tailnet>,
     mac: Machine,
     hostess: Machine,
-    /// The Mac's presence as it was before peers: given the Mac's readings, asking
-    /// nobody, for comparison.
+    /// The Mac's presence as it was before sharing: given the Mac's readings,
+    /// reading nothing, for comparison.
     mac_alone: Presence,
     mac_alone_absences: Vec<Absence>,
 }
@@ -113,22 +60,20 @@ fn clock_at(text: &str) -> Timestamp {
 }
 
 impl Desk {
-    /// Both machines launched at eight, each naming the other as its peer.
+    /// Both machines launched at eight, on the same account.
     async fn new() -> Self {
         let clock = Arc::new(ManualClock::new(clock_at("08:00"), TimeZone::UTC));
         let harvest = FakeHarvest::new(clock.clone());
-        let tailnet = Arc::new(Tailnet::default());
-        let mac = Self::launch("mac", "hostess", &clock, &harvest, &tailnet).await;
-        let hostess = Self::launch("hostess", "mac", &clock, &harvest, &tailnet).await;
+        let mac = Self::launch("mac", &clock, &harvest).await;
+        let hostess = Self::launch("host", &clock, &harvest).await;
         let mac_alone = Presence::new(
             THRESHOLD,
             clock.now(),
-            Arc::new(Peers::new(THRESHOLD, tailnet.clone())),
+            Arc::new(Peers::new(THRESHOLD, "alone")),
         );
         Self {
             clock,
             harvest,
-            tailnet,
             mac,
             hostess,
             mac_alone,
@@ -137,11 +82,9 @@ impl Desk {
     }
 
     async fn launch(
-        name: &str,
-        peer: &str,
+        machine: &str,
         clock: &Arc<ManualClock>,
         harvest: &Arc<FakeHarvest>,
-        tailnet: &Arc<Tailnet>,
     ) -> Machine {
         let directory = tempfile::tempdir().unwrap();
         let credentials = Arc::new(MemoryCredentialStore::new(Some(Login {
@@ -155,13 +98,7 @@ impl Desk {
             MutationQueue::open(directory.path().join("queue.json"), clock.clone()),
             clock.clone(),
         );
-        let peers = Arc::new(Peers::new(THRESHOLD, tailnet.clone()));
-        peers.set_names(vec![peer.to_string()]);
-        tailnet
-            .machines
-            .lock()
-            .unwrap()
-            .insert(name.to_string(), peers.clone());
+        let peers = Arc::new(Peers::new(THRESHOLD, machine));
         tracker.join(peers.clone());
         tracker.bootstrap().await;
         Machine {
@@ -194,6 +131,9 @@ impl Desk {
             for machine in [&mut self.mac, &mut self.hostess] {
                 let absences = machine.presence.poll(reading(machine, now), now).await;
                 machine.absences.extend(absences);
+                // Each machine writes its part in the background, as the apps do;
+                // this lets that run before the next poll.
+                settle().await;
             }
             let alone = self.mac_alone.poll(reading(&self.mac, now), now).await;
             self.mac_alone_absences.extend(alone);
@@ -221,15 +161,18 @@ fn prompts(machine: &Machine) -> Vec<Absence> {
         .collect()
 }
 
-/// Waits for work the trackers spawned, such as a sync on hearing from a peer.
-async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
-    for _ in 0..300 {
-        if done() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+/// Lets work the machines spawned, such as writing their part, run to the end.
+async fn settle() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
     }
-    panic!("{what} never happened");
+}
+
+/// The stretches written on the running entry, by machine.
+fn shared(desk: &Desk) -> Option<Board> {
+    let reference = desk.harvest.only_entry().external_reference?;
+    assert_eq!(reference["group_id"], GROUP);
+    Board::decode(reference["id"].as_str()?)
 }
 
 /// Start a timer on the Mac at nine, work at Hostess from ten to twelve, come back
@@ -250,7 +193,10 @@ async fn work_at_the_other_machine_prompts_on_neither() {
 
     assert_eq!(prompts(&desk.mac), []);
     assert_eq!(prompts(&desk.hostess), []);
-    // Without its peer, the Mac would have asked about ten until five past twelve.
+    // What Hostess wrote is what kept the Mac quiet: ten to twelve.
+    let board = shared(&desk).expect("both machines wrote their parts");
+    assert_eq!(board.parts["host"].last().unwrap().end, clock_at("12:00"));
+    // Alone, the Mac would have asked about ten until five past twelve.
     let state = desk.mac.tracker.state();
     let alone_prompts: Vec<_> = desk
         .mac_alone_absences
@@ -299,11 +245,11 @@ async fn a_shared_lunch_prompts_on_both_and_one_answer_clears_the_other() {
         )
         .await;
 
-    let mac = &desk.mac;
-    eventually("the Mac withdrawing its question", || {
-        prompts(mac).is_empty()
-    })
-    .await;
+    // No word passes between the machines: the Mac learns of the trim at its
+    // next look at Harvest, which is within a minute while a timer runs.
+    assert_eq!(prompts(&desk.mac).len(), 1);
+    desk.mac.tracker.sync().await;
+    assert_eq!(prompts(&desk.mac), []);
     // Three hours from nine to twelve, and running again from when the user came
     // back, a minute and a half before the restart reached Harvest.
     let entry = desk.harvest.only_entry();
@@ -321,11 +267,6 @@ async fn a_stop_after_a_trim_elsewhere_sends_what_harvest_implies() {
     desk.spend(At::Mac, "09:00").await;
     desk.mac.tracker.start(&target(), None).await;
     desk.hostess.tracker.sync().await;
-    desk.tailnet
-        .asleep
-        .lock()
-        .unwrap()
-        .insert("mac".to_string());
 
     desk.clock.set(clock_at("14:00"));
     let running = desk
@@ -353,4 +294,67 @@ async fn a_stop_after_a_trim_elsewhere_sends_what_harvest_implies() {
     let entry = desk.harvest.only_entry();
     assert!(entry.running_since.is_none());
     assert!((entry.banked - 3.5).abs() < 0.02, "{entry:?}");
+}
+
+/// A stop removes what was shared: the stretches were about the timer while it
+/// ran, and a finished entry carries nothing.
+#[tokio::test]
+async fn a_stop_removes_what_was_shared() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    desk.spend(At::Hostess, "10:00").await;
+    let board = shared(&desk).expect("Hostess wrote its part");
+    // Only since the timer started at nine: the launch at eight is about no
+    // question this timer could raise.
+    let hostess = &board.parts["host"];
+    assert!(hostess[0].start >= clock_at("09:00"), "{hostess:?}");
+
+    desk.mac.tracker.stop_running().await;
+    assert_eq!(desk.harvest.only_entry().external_reference, None);
+}
+
+/// An entry linked elsewhere, to an issue tracker say, is left as it is, and the
+/// machines decide alone, as they did before sharing.
+#[tokio::test]
+async fn someone_elses_reference_is_left_alone() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    let theirs = json!({
+        "id": "PROJ-12", "group_id": "PROJ",
+        "permalink": "https://tracker.example/PROJ-12",
+    });
+    desk.harvest.set_reference(theirs.clone());
+
+    desk.spend(At::Mac, "10:00").await;
+    desk.spend(At::Hostess, "12:00").await;
+    desk.spend(At::Mac, "12:10").await;
+
+    assert_eq!(desk.harvest.only_entry().external_reference, Some(theirs));
+    assert_eq!(prompts(&desk.mac).len(), 1, "{:?}", desk.mac.absences);
+
+    // And the stop leaves it too.
+    desk.mac.tracker.stop_running().await;
+    assert!(desk.harvest.only_entry().external_reference.is_some());
+}
+
+/// A minute between writes, and none while nobody is at the machine.
+#[tokio::test]
+async fn writes_about_once_a_minute_while_it_sees_the_user() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    let before = desk.harvest.reference_writes();
+    desk.spend(At::Mac, "09:10").await;
+    let busy = desk.harvest.reference_writes() - before;
+    assert!((9..=11).contains(&busy), "{busy} writes in ten minutes");
+
+    let before = desk.harvest.reference_writes();
+    desk.spend(At::Away, "09:20").await;
+    let idle = desk.harvest.reference_writes() - before;
+    assert!(idle <= 1, "{idle} writes with nobody there");
 }

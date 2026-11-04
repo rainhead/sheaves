@@ -1,35 +1,28 @@
-//! Sharing presence between one person's machines, over the tailnet.
+//! Sharing presence between one person's machines, through Harvest.
 //!
 //! Start a timer on the Mac at nine, work at Hostess from ten to twelve, come back
 //! to the Mac: alone, the Mac sees two hours with nobody at it and offers to trim
 //! them. It lacks only Hostess's evidence. So each machine keeps a log of when it
-//! saw the user, answers its peers' questions about that log, and asks them before
-//! it reports an absence. Each machine also tells the others when it has changed a
-//! timer, so they look at Harvest at once instead of at their next probe.
+//! saw the user, writes the part of it since the timer started onto the running
+//! entry, and reads the other machines' parts there before it reports an absence.
 //!
-//! The tailnet is what authenticates and encrypts this: every device on it is the
-//! user's, and WireGuard carries each request. See `docs/gnome-port.md` for why the
-//! local network is not used.
+//! The entry is the user's own, so whoever can write it is the user or an
+//! administrator of their account, and nothing needs a network of its own. See
+//! [`board`] for what is written, and `docs/gnome-port.md` (phase 9) for why.
 
-pub mod server;
+pub mod board;
 
-use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::absence::{Absence, PresenceMonitor, PresenceReading};
-use crate::models::{offset_by, seconds_between};
-
-/// The port every instance listens on and asks on.
-pub const PEER_PORT: u16 = 47147;
-
-/// How long a peer has to answer before this machine decides alone.
-pub const ANSWER_WITHIN: Duration = Duration::from_secs(2);
+use crate::models::{ExternalReference, offset_by, seconds_between};
+use board::Board;
 
 /// How far back the presence log reaches. A day covers any absence worth asking
 /// about; a timer left running longer than that is a different problem.
@@ -178,218 +171,87 @@ pub fn unwitnessed(absence: Absence, seen: &[Interval], threshold: f64) -> Vec<A
     gaps
 }
 
-// MARK: Messages
+// MARK: The running entry
 
-/// A peer's answer to "when did you see the user since this moment?".
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PresenceAnswer {
-    /// Whose presence this is. An answer about anyone else is ignored.
-    pub user_id: i64,
-    pub intervals: Vec<Interval>,
+/// The running timer as Harvest holds it, for what is written on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Posted {
+    pub entry_id: i64,
+    /// When the timer last started: stretches before it are about another run.
+    pub timer_started_at: Timestamp,
+    pub reference: Option<ExternalReference>,
 }
 
-/// "I just changed these entries in Harvest."
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Touched {
-    pub user_id: i64,
-    pub entry_ids: Vec<i64>,
-}
-
-#[derive(Clone, Debug, PartialEq, thiserror::Error)]
-pub enum PeerError {
-    #[error("{peer} is not on the tailnet: its name resolves to {addresses}")]
-    NotOnTailnet { peer: String, addresses: String },
-    #[error("could not reach {peer}: {reason}")]
-    Unreachable { peer: String, reason: String },
-    #[error("{peer} refused: {status}")]
-    Refused { peer: String, status: u16 },
-    #[error("{peer} answered with something unreadable: {detail}")]
-    Unreadable { peer: String, detail: String },
-}
-
-/// How this machine reaches its peers. HTTP in the apps; tests join two instances
-/// directly.
+/// Where the machines' stretches are kept. Harvest's running entry in the apps;
+/// tests share one in memory between two instances.
 #[async_trait]
-pub trait PeerTransport: Send + Sync {
-    async fn presence(
-        &self,
-        peer: &str,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, PeerError>;
+pub trait Noticeboard: Send + Sync {
+    /// The user's running timer as it is now, or `None` when none is running.
+    async fn running(&self) -> Result<Option<Posted>, String>;
 
-    async fn touched(&self, peer: &str, touched: &Touched) -> Result<(), PeerError>;
-}
+    /// Writes `reference` onto entry `entry_id`.
+    async fn post(&self, entry_id: i64, reference: &ExternalReference) -> Result<(), String>;
 
-// MARK: The tailnet
-
-/// Whether `address` is one Tailscale hands out: `100.64.0.0/10` or
-/// `fd7a:115c:a1e0::/48`.
-pub fn is_tailnet(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            a == 100 && (64..128).contains(&b)
-        }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_tailnet(IpAddr::V4(v4)),
-            None => {
-                let s = v6.segments();
-                s[0] == 0xfd7a && s[1] == 0x115c && s[2] == 0xa1e0
-            }
-        },
-    }
-}
-
-/// This machine's own tailnet addresses, empty when Tailscale is not running.
-pub fn tailnet_addresses() -> Vec<IpAddr> {
-    let mut addresses: Vec<IpAddr> = if_addrs::get_if_addrs()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|interface| interface.ip())
-        .filter(|address| is_tailnet(*address))
-        .collect();
-    addresses.sort();
-    addresses.dedup();
-    addresses
-}
-
-/// Peers over plain HTTP, reached only at tailnet addresses.
-pub struct HttpPeerTransport {
-    client: reqwest::Client,
-    port: u16,
-}
-
-impl HttpPeerTransport {
-    pub fn new(port: u16) -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                // A proxy would carry the request off the tailnet.
-                .no_proxy()
-                // Peers are asked a few times a day. A connection kept open between
-                // times only waits for the peer to close it, which the peer logs as
-                // a client that never sent its next request.
-                .pool_max_idle_per_host(0)
-                .timeout(ANSWER_WITHIN)
-                .build()
-                .expect("an HTTP client with no TLS settings builds"),
-            port,
-        }
-    }
-
-    /// Where `peer` is on the tailnet. A name that resolves anywhere else is not
-    /// asked at all: the answer would cross a network nothing authenticates.
-    async fn address(&self, peer: &str) -> Result<SocketAddr, PeerError> {
-        let resolved: Vec<SocketAddr> = tokio::net::lookup_host((peer, self.port))
-            .await
-            .map_err(|error| PeerError::Unreachable {
-                peer: peer.to_string(),
-                reason: error.to_string(),
-            })?
-            .collect();
-        resolved
-            .iter()
-            .find(|address| is_tailnet(address.ip()))
-            .copied()
-            .ok_or_else(|| PeerError::NotOnTailnet {
-                peer: peer.to_string(),
-                addresses: resolved
-                    .iter()
-                    .map(|address| address.ip().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            })
-    }
-
-    async fn read(
-        &self,
-        peer: &str,
-        request: reqwest::RequestBuilder,
-    ) -> Result<Vec<u8>, PeerError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|error| PeerError::Unreachable {
-                peer: peer.to_string(),
-                reason: error.to_string(),
-            })?;
-        let status = response.status().as_u16();
-        if !(200..300).contains(&status) {
-            return Err(PeerError::Refused {
-                peer: peer.to_string(),
-                status,
-            });
-        }
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| PeerError::Unreachable {
-                peer: peer.to_string(),
-                reason: error.to_string(),
-            })?;
-        Ok(body.to_vec())
-    }
-}
-
-#[async_trait]
-impl PeerTransport for HttpPeerTransport {
-    async fn presence(
-        &self,
-        peer: &str,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, PeerError> {
-        let address = self.address(peer).await?;
-        let mut url = url::Url::parse(&format!("http://{address}/presence"))
-            .expect("a socket address makes a URL");
-        url.query_pairs_mut()
-            .append_pair("since", &since.to_string())
-            .append_pair("user_id", &user_id.to_string());
-        let body = self.read(peer, self.client.get(url)).await?;
-        serde_json::from_slice(&body).map_err(|error| PeerError::Unreadable {
-            peer: peer.to_string(),
-            detail: error.to_string(),
-        })
-    }
-
-    async fn touched(&self, peer: &str, touched: &Touched) -> Result<(), PeerError> {
-        let address = self.address(peer).await?;
-        let request = self
-            .client
-            .post(format!("http://{address}/touched"))
-            .header("content-type", "application/json")
-            .body(serde_json::to_vec(touched).expect("a notice encodes"));
-        self.read(peer, request).await.map(|_| ())
+    /// Whether writing is wanted at all just now. Reading for a question is
+    /// always wanted; writing once a minute is not, in Low Power Mode.
+    fn may_post(&self) -> bool {
+        true
     }
 }
 
 // MARK: Peers
 
-/// Why this machine will not answer a peer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Refusal {
-    /// It does not know whose machine it is yet, so it cannot check.
-    NotSignedIn,
-    /// The question is about someone else.
-    OtherUser,
+/// This machine's id on the board, made the first time and kept in `path`.
+///
+/// Random rather than the host name, which would be written to Harvest, and is
+/// often too long to leave room for the stretches. Four characters give over a
+/// million ids, for the few machines one person has.
+pub fn machine_id_in(path: &std::path::Path) -> String {
+    #[derive(Serialize, Deserialize)]
+    struct Saved {
+        id: String,
+    }
+    if let Some(saved) = crate::persistence::read_json::<Saved>(path)
+        && board::is_machine_id(&saved.id)
+    {
+        return saved.id;
+    }
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let random = uuid::Uuid::new_v4().as_u128();
+    let id: String = (0..4)
+        .map(|place| DIGITS[((random >> (place * 8)) % 36) as usize] as char)
+        .collect();
+    if let Err(error) = crate::persistence::write_json(path, &Saved { id: id.clone() }) {
+        log::error!("could not keep this machine's id, so it will have another next time: {error}");
+    }
+    id
 }
 
-type TouchedHandler = Arc<dyn Fn(Vec<i64>) + Send + Sync>;
+/// How often a machine rewrites its part while it sees the user.
+pub const POST_EVERY: f64 = 60.0;
 
-/// This machine's side of the conversation: the log it answers from, the peers
-/// it asks, and what it does when told a timer changed.
+/// How long a question waits to read the running entry before this machine
+/// decides alone. A request to Harvest may take half a minute to fail, and polls
+/// wait their turn behind the one asking.
+pub const READ_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// This machine's side of the sharing: the log it writes from, and where it reads
+/// the others'.
 pub struct Peers {
-    names: Mutex<Vec<String>>,
-    transport: Arc<dyn PeerTransport>,
+    /// This machine's id on the board; see [`board::is_machine_id`].
+    machine: String,
+    board: Mutex<Option<Arc<dyn Noticeboard>>>,
     log: Mutex<PresenceLog>,
     user_id: Mutex<Option<i64>>,
-    on_touched: Mutex<Option<TouchedHandler>>,
     /// Where the log is kept between launches, and when it was last written.
     log_file: Mutex<Option<(PathBuf, Option<Timestamp>)>>,
     /// Whose presence the log records. Evidence is of whoever is at the machine,
-    /// but the log is answered for one Harvest user, so a different user signing in
+    /// but the log is shared for one Harvest user, so a different user signing in
     /// starts it afresh.
     log_owner: Mutex<Option<i64>>,
+    /// When this machine last wrote its part, or tried to.
+    posted_at: Mutex<Option<Timestamp>>,
+    posting: AtomicBool,
 }
 
 /// The log as kept on disk, with whose it is.
@@ -399,37 +261,37 @@ struct SavedLog {
     intervals: Vec<Interval>,
 }
 
-/// How often the log is written while the user is present: a machine that stops
-/// abruptly forgets at most this much of when it saw them.
+/// How often the log is written to disk while the user is present: a machine
+/// that stops abruptly forgets at most this much of when it saw them.
 const SAVE_EVERY: f64 = 60.0;
 
 impl Peers {
-    pub fn new(threshold: f64, transport: Arc<dyn PeerTransport>) -> Self {
+    /// Peers for the machine `machine`, which shares nothing until it is given a
+    /// board with [`Peers::share_on`].
+    pub fn new(threshold: f64, machine: impl Into<String>) -> Self {
         Self {
-            names: Mutex::new(Vec::new()),
-            transport,
+            machine: machine.into(),
+            board: Mutex::new(None),
             log: Mutex::new(PresenceLog::new(threshold)),
             user_id: Mutex::new(None),
-            on_touched: Mutex::new(None),
             log_file: Mutex::new(None),
             log_owner: Mutex::new(None),
+            posted_at: Mutex::new(None),
+            posting: AtomicBool::new(false),
         }
     }
 
-    /// The machines to ask, by their names on the tailnet, such as `hostess`.
-    pub fn set_names(&self, names: Vec<String>) {
-        let mut cleaned: Vec<String> = Vec::new();
-        for name in names {
-            let name = name.trim().to_string();
-            if !name.is_empty() && !cleaned.contains(&name) {
-                cleaned.push(name);
-            }
-        }
-        *lock(&self.names) = cleaned;
+    pub fn machine(&self) -> &str {
+        &self.machine
     }
 
-    pub fn names(&self) -> Vec<String> {
-        lock(&self.names).clone()
+    /// Shares presence on `board` from now on.
+    pub fn share_on(&self, board: Arc<dyn Noticeboard>) {
+        *lock(&self.board) = Some(board);
+    }
+
+    fn board(&self) -> Option<Arc<dyn Noticeboard>> {
+        lock(&self.board).clone()
     }
 
     /// The Harvest user this machine works for, or `None` before one is known.
@@ -451,15 +313,10 @@ impl Peers {
         }
     }
 
-    /// What to do when a peer says it changed entries: probe Harvest.
-    pub fn on_touched(&self, handler: impl Fn(Vec<i64>) + Send + Sync + 'static) {
-        *lock(&self.on_touched) = Some(Arc::new(handler));
-    }
-
     /// Keeps the log in `path` from now on, starting from what is there.
     ///
-    /// A log kept only in memory was wiped by every relaunch or reboot, and a peer
-    /// asking about the hour before one was then told nobody had been here. The
+    /// A log kept only in memory was wiped by every relaunch or reboot, and the
+    /// next write then told the other machines nobody had been here. The
     /// relaunch itself counts as presence, but only from that moment.
     pub fn keep_log_in(&self, path: PathBuf, now: Timestamp) {
         if let Some(saved) = crate::persistence::read_json::<SavedLog>(&path) {
@@ -512,135 +369,150 @@ impl Peers {
         }
     }
 
-    // MARK: Asking
-
-    /// When the peers saw the user since `since`, from every peer that answered in
-    /// time about this user. Empty when there are no peers or none answered.
-    pub async fn seen_since(&self, since: Timestamp) -> Vec<Interval> {
-        let names = self.names();
-        let Some(user_id) = *lock(&self.user_id) else {
-            if !names.is_empty() {
-                log::info!("asked no peers: not signed in, so their answers could not be checked");
-            }
+    /// This machine's stretches that reach `since` or later, as it would share
+    /// them. A log not yet known to be the signed-in user's says nothing about
+    /// them, so it shares nothing.
+    pub fn own_since(&self, since: Timestamp) -> Vec<Interval> {
+        let user = *lock(&self.user_id);
+        if user.is_none() || *lock(&self.log_owner) != user {
             return Vec::new();
-        };
-        let mut asking = tokio::task::JoinSet::new();
-        for name in names {
-            let transport = self.transport.clone();
-            asking.spawn(async move {
-                let answer =
-                    tokio::time::timeout(ANSWER_WITHIN, transport.presence(&name, user_id, since))
-                        .await;
-                (name, answer)
-            });
         }
-        let mut seen = Vec::new();
-        while let Some(joined) = asking.join_next().await {
-            let Ok((name, answer)) = joined else { continue };
-            match answer {
-                Err(_) => {
-                    log::info!("{name} did not answer within two seconds; deciding without it")
-                }
-                Ok(Err(error)) => log::info!("deciding without {name}: {error}"),
-                Ok(Ok(answer)) if answer.user_id != user_id => {
-                    log::warn!("ignored {name}: it reported presence for another Harvest user")
-                }
-                Ok(Ok(answer)) => seen.extend(answer.intervals),
-            }
-        }
-        seen
+        lock(&self.log).since(since)
     }
 
-    /// The parts of `absence` that no peer saw the user in. With no peers, or none
-    /// answering, that is the whole absence, as it was before peers existed.
+    // MARK: Reading
+
+    /// When the other machines saw the user since `since`, as written on the
+    /// running entry. Empty with no board, no running timer, or a reference that
+    /// is not Sheaves'.
+    pub async fn seen_since(&self, since: Timestamp) -> Vec<Interval> {
+        let Some(board) = self.board() else {
+            return Vec::new();
+        };
+        let Ok(read) = tokio::time::timeout(READ_WITHIN, board.running()).await else {
+            log::info!("Harvest did not answer within five seconds; deciding alone");
+            return Vec::new();
+        };
+        match read {
+            Ok(Some(posted)) => match Board::of(posted.reference.as_ref()) {
+                Some(read) => read
+                    .others(&self.machine)
+                    .into_iter()
+                    .filter(|stretch| stretch.end >= since)
+                    .collect(),
+                None => {
+                    log::info!("the running entry links elsewhere, so nothing is shared on it");
+                    Vec::new()
+                }
+            },
+            Ok(None) => Vec::new(),
+            Err(error) => {
+                log::info!("deciding without the other machines: {error}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// The parts of `absence` that no other machine saw the user in. With no
+    /// board, or nothing on it, that is the whole absence.
     pub async fn confirm(&self, absence: Absence, threshold: f64) -> Vec<Absence> {
-        if self.names().is_empty() {
+        if self.board().is_none() {
             return vec![absence];
         }
         let seen = self.seen_since(absence.began).await;
         unwitnessed(absence, &seen, threshold)
     }
 
-    /// Tells every peer that this machine changed `entry_ids` in Harvest.
-    pub async fn announce(&self, entry_ids: Vec<i64>) {
-        let Some(user_id) = *lock(&self.user_id) else {
+    // MARK: Writing
+
+    /// Whether this machine's part is due to be written at `now`: a board to write
+    /// on, the user seen since the last write, and a minute gone since it.
+    fn post_due(&self, now: Timestamp) -> bool {
+        let Some(board) = self.board() else {
+            return false;
+        };
+        if !board.may_post() {
+            return false;
+        }
+        let Some(newest) = lock(&self.log).intervals.last().map(|last| last.end) else {
+            return false;
+        };
+        match *lock(&self.posted_at) {
+            None => true,
+            Some(posted) => newest > posted && seconds_between(posted, now) >= POST_EVERY,
+        }
+    }
+
+    /// Writes this machine's part onto the running entry, keeping the others':
+    /// its stretches since the timer started, read first so as not to undo what
+    /// another machine wrote since. Does nothing when no timer runs or the entry
+    /// links elsewhere.
+    pub async fn post(&self, now: Timestamp) {
+        let Some(board) = self.board() else {
             return;
         };
-        let touched = Touched { user_id, entry_ids };
-        let mut telling = tokio::task::JoinSet::new();
-        for name in self.names() {
-            let transport = self.transport.clone();
-            let touched = touched.clone();
-            telling.spawn(async move {
-                let told =
-                    tokio::time::timeout(ANSWER_WITHIN, transport.touched(&name, &touched)).await;
-                (name, told)
-            });
-        }
-        while let Some(joined) = telling.join_next().await {
-            match joined {
-                Ok((name, Ok(Err(error)))) => log::info!("could not tell {name}: {error}"),
-                Ok((name, Err(_))) => log::info!("could not tell {name}: no answer in time"),
-                _ => {}
+        *lock(&self.posted_at) = Some(now);
+        let posted = match board.running().await {
+            Ok(Some(posted)) => posted,
+            Ok(None) => return,
+            Err(error) => {
+                log::info!("could not read the running entry to share presence: {error}");
+                return;
             }
-        }
-    }
-
-    // MARK: Answering
-
-    /// This machine's log since `since`, for the peer asking on behalf of
-    /// `user_id`.
-    pub fn answer_presence(
-        &self,
-        user_id: i64,
-        since: Timestamp,
-    ) -> Result<PresenceAnswer, Refusal> {
-        let own = self.check_user(user_id)?;
-        // A log not yet known to be this user's says nothing about them.
-        let intervals = if *lock(&self.log_owner) == Some(own) {
-            lock(&self.log).since(since)
-        } else {
-            Vec::new()
         };
-        Ok(PresenceAnswer {
-            user_id: own,
-            intervals,
-        })
+        let Some(mut shared) = Board::of(posted.reference.as_ref()) else {
+            return;
+        };
+        let started = posted.timer_started_at;
+        let own: Vec<Interval> = self
+            .own_since(started)
+            .into_iter()
+            .map(|stretch| Interval {
+                start: stretch.start.max(started),
+                end: stretch.end,
+            })
+            .collect();
+        if own.is_empty() && !shared.parts.contains_key(&self.machine) {
+            return;
+        }
+        shared.parts.insert(self.machine.clone(), own);
+        let reference = shared.reference();
+        if posted.reference.as_ref() == Some(&reference) {
+            return;
+        }
+        if let Err(error) = board.post(posted.entry_id, &reference).await {
+            log::info!("could not share presence on the running entry: {error}");
+        }
     }
 
-    /// A peer changed entries in Harvest.
-    pub fn receive_touched(&self, touched: Touched) -> Result<(), Refusal> {
-        self.check_user(touched.user_id)?;
-        log::info!(
-            "a peer changed entries {:?}; probing Harvest",
-            touched.entry_ids
-        );
-        let handler = lock(&self.on_touched).clone();
-        if let Some(handler) = handler {
-            handler(touched.entry_ids);
+    /// [`Peers::post`], started in the background when due, and never twice at
+    /// once: a poll must not wait on Harvest.
+    pub fn post_soon(self: &Arc<Self>, now: Timestamp) {
+        if !self.post_due(now) || tokio::runtime::Handle::try_current().is_err() {
+            return;
         }
-        Ok(())
-    }
-
-    fn check_user(&self, user_id: i64) -> Result<i64, Refusal> {
-        match *lock(&self.user_id) {
-            None => Err(Refusal::NotSignedIn),
-            Some(own) if own != user_id => Err(Refusal::OtherUser),
-            Some(own) => Ok(own),
+        if self.posting.swap(true, Ordering::SeqCst) {
+            return;
         }
+        let peers = self.clone();
+        tokio::spawn(async move {
+            peers.post(now).await;
+            peers.posting.store(false, Ordering::SeqCst);
+        });
     }
 }
 
 // MARK: Presence with peers
 
-/// A [`PresenceMonitor`] that logs what it sees for its peers, and asks them
-/// before reporting an absence. Each shell hands it a reading every poll.
+/// A [`PresenceMonitor`] that logs what it sees and shares it, and reads what the
+/// other machines saw before reporting an absence. Each shell hands it a reading
+/// every poll.
 pub struct Presence {
     monitor: Mutex<PresenceMonitor>,
     threshold: f64,
     peers: Arc<Peers>,
     /// Polls take turns, so the absences they report come out in order even
-    /// while one of them waits on a peer.
+    /// while one of them waits on Harvest.
     turn: tokio::sync::Mutex<()>,
 }
 
@@ -657,7 +529,7 @@ impl Presence {
     }
 
     /// Folds one reading taken at `now`, and returns the absences it ended that no
-    /// peer saw the user during.
+    /// other machine saw the user during.
     pub async fn poll(&self, mut reading: PresenceReading, now: Timestamp) -> Vec<Absence> {
         let _turn = self.turn.lock().await;
         // A sensor's number is not to be trusted with arithmetic on instants: an
@@ -680,6 +552,7 @@ impl Presence {
         for when in evidence {
             self.peers.note_presence(when);
         }
+        self.peers.post_soon(now);
         let mut absences = Vec::new();
         for candidate in candidates {
             absences.extend(self.peers.confirm(candidate, self.threshold).await);

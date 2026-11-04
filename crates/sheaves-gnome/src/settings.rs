@@ -11,21 +11,13 @@ use sheaves_core::tracker::Connection;
 
 use crate::autostart;
 
-/// Builds and shows Settings over `parent`, for the state in `snapshot`, with the
-/// peers named now and where to send them when they change.
-pub fn present(
-    parent: &adw::ApplicationWindow,
-    tracker: Arc<Tracker>,
-    snapshot: &TrackerSnapshot,
-    peers: Vec<String>,
-    set_peers: Rc<dyn Fn(Vec<String>)>,
-) {
+/// Builds and shows Settings over `parent`, for the state in `snapshot`.
+pub fn present(parent: &adw::ApplicationWindow, tracker: Arc<Tracker>, snapshot: &TrackerSnapshot) {
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title("Settings");
     let page = adw::PreferencesPage::new();
-    page.add(&harvest_group(&dialog, tracker.clone(), snapshot));
+    page.add(&harvest_group(&dialog, tracker, snapshot));
     page.add(&startup_group());
-    page.add(&peers_group(tracker, peers, set_peers));
     page.add(&about_group());
     dialog.add(&page);
     dialog.present(Some(parent));
@@ -211,54 +203,6 @@ fn startup_group() -> adw::PreferencesGroup {
     }
     group.add(&row);
     group.add(&error);
-    group
-}
-
-fn peers_group(
-    tracker: Arc<Tracker>,
-    peers: Vec<String>,
-    set_peers: Rc<dyn Fn(Vec<String>)>,
-) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::new();
-    group.set_title("Peers");
-    group.set_description(Some(
-        "Other machines running Sheaves, by their names on your tailnet. Before asking whether you were away, this machine asks them whether they saw you meanwhile, and it answers them in turn. Only machines on the tailnet are asked or answered.",
-    ));
-    let names = adw::EntryRow::builder()
-        .title("Peers")
-        .text(peers.join(", "))
-        .build();
-    // Read as typed, so a separator typed last is not taken away mid-word.
-    names.connect_changed(move |row| set_peers(crate::config::names_in(&row.text())));
-    // The addresses go under the title, one to a line, not beside it: a suffix
-    // does not wrap, and an IPv6 address beside the title squeezed it into a
-    // column one letter wide.
-    let answering = adw::ActionRow::builder()
-        .title("Answering on")
-        .subtitle_selectable(true)
-        .build();
-    group.add(&names);
-    group.add(&answering);
-
-    // The core binds in the background and looks for new tailnet addresses once a
-    // minute, so this is read again while Settings is open.
-    let refresh = move || {
-        let listening = tracker.listening_on();
-        answering.set_subtitle(&if listening.is_empty() {
-            "Nowhere: name a peer, and check Tailscale is running".to_string()
-        } else {
-            glib::markup_escape_text(&listening.join("\n")).to_string()
-        });
-    };
-    refresh();
-    let weak = group.downgrade();
-    glib::timeout_add_seconds_local(3, move || {
-        if weak.upgrade().is_none() {
-            return glib::ControlFlow::Break;
-        }
-        refresh();
-        glib::ControlFlow::Continue
-    });
     group
 }
 

@@ -93,6 +93,21 @@ pub struct TimeEntry {
     pub ended_time: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    /// A link to something outside Harvest that this entry belongs to. Sheaves
+    /// keeps when each machine saw the user here, on the running entry; see
+    /// [`crate::peers::board`].
+    #[serde(default)]
+    pub external_reference: Option<ExternalReference>,
+}
+
+/// Harvest's `external_reference`: meant for an integration's link to an issue or
+/// a card, and the only place on an entry that holds text other than its notes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalReference {
+    pub id: Option<String>,
+    pub group_id: Option<String>,
+    /// Must be an http(s) URL, or Harvest stores nothing.
+    pub permalink: Option<String>,
 }
 
 impl TimeEntry {

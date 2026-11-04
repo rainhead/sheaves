@@ -43,6 +43,8 @@ pub struct ServerEntry {
     pub running_since: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    /// The entry's `external_reference`, as written.
+    pub external_reference: Option<Value>,
 }
 
 impl ServerEntry {
@@ -69,6 +71,7 @@ impl ServerEntry {
             "started_time": null, "ended_time": null,
             "created_at": self.created_at.to_string(),
             "updated_at": self.updated_at.to_string(),
+            "external_reference": self.external_reference,
         })
     }
 }
@@ -77,6 +80,8 @@ pub struct FakeHarvest {
     clock: Arc<ManualClock>,
     pub entries: Mutex<Vec<ServerEntry>>,
     next_id: Mutex<i64>,
+    /// How many writes of an external reference have arrived.
+    reference_writes: Mutex<usize>,
 }
 
 impl FakeHarvest {
@@ -85,7 +90,19 @@ impl FakeHarvest {
             clock,
             entries: Mutex::new(Vec::new()),
             next_id: Mutex::new(5000),
+            reference_writes: Mutex::new(0),
         })
+    }
+
+    /// Links the only entry elsewhere, as another integration would.
+    pub fn set_reference(&self, reference: Value) {
+        let mut entries = self.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        entries[0].external_reference = Some(reference);
+    }
+
+    pub fn reference_writes(&self) -> usize {
+        *self.reference_writes.lock().unwrap()
     }
 
     pub fn only_entry(&self) -> ServerEntry {
@@ -184,6 +201,7 @@ impl FakeHarvest {
                     running_since: hours.is_none().then_some(now),
                     created_at: now,
                     updated_at: now,
+                    external_reference: None,
                 };
                 let reply = entry.json(now);
                 entries.push(entry);
@@ -236,8 +254,26 @@ impl FakeHarvest {
                 if let Some(notes) = body.get("notes").and_then(Value::as_str) {
                     entry.notes = Some(notes.to_string());
                 }
+                if let Some(reference) = body.get("external_reference") {
+                    *self.reference_writes.lock().unwrap() += 1;
+                    // As on a real account: without an http(s) permalink, nothing
+                    // is kept.
+                    let linked = reference
+                        .get("permalink")
+                        .and_then(Value::as_str)
+                        .is_some_and(|link| link.starts_with("https://"));
+                    entry.external_reference = linked.then(|| reference.clone());
+                }
                 entry.updated_at = now;
                 (200, entry.json(now))
+            }
+            (Method::Delete, ["time_entries", id, "external_reference"]) => {
+                let id: i64 = id.parse().unwrap();
+                let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else {
+                    return (404, json!({}));
+                };
+                entry.external_reference = None;
+                (200, json!({}))
             }
             (Method::Delete, ["time_entries", id]) => {
                 let id: i64 = id.parse().unwrap();
