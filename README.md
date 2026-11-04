@@ -22,8 +22,8 @@ local state immediately and reconciles with Harvest afterwards.
 Early. The macOS app tracks time, and a GNOME app is being built beside it on the
 same Rust core ([the plan](docs/gnome-port.md)): it starts and stops timers and
 shows the running one in the top bar, asks about time away as the Mac does, and
-edits an entry's notes and time; changing an entry's project or adding one without a
-timer is next.
+edits entries: their notes, time, project and task, and time logged without a
+timer.
 iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.

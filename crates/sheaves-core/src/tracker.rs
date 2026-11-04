@@ -1171,6 +1171,90 @@ impl TimeTracker {
             id: entry.id,
             notes: Some(notes.to_string()),
             hours: None,
+            target: None,
+        }])
+        .await;
+    }
+
+    /// Moves `entry` to another project and task, keeping its time and notes.
+    pub async fn retarget(&self, entry: &TrackedEntry, target: &TimerTarget) {
+        if entry.is_locked || entry.target().id() == target.id() {
+            return;
+        }
+        let now = self.inner.clock.now();
+        self.inner.update(|state| {
+            mutate_locally(state, entry.id, now, |entry| {
+                entry.project = target.project.clone();
+                entry.task = target.task.clone();
+                entry.client = target.client.clone();
+                entry.is_pending = true;
+            });
+            note_recent(state, target);
+        });
+        self.enqueue(vec![Mutation::Update {
+            id: entry.id,
+            notes: None,
+            hours: None,
+            target: Some(target.clone()),
+        }])
+        .await;
+    }
+
+    /// Records `hours` of work on `target` on `day`, with no timer: time done
+    /// away from the machine, or on a day already over.
+    ///
+    /// It is an ordinary create of a stopped entry, so it has the offline rules
+    /// every create has. A create carries its length as a start and an end, and
+    /// here those are the moment of logging and that many hours before; only their
+    /// difference is sent.
+    pub async fn log_time(
+        &self,
+        target: &TimerTarget,
+        day: CalendarDate,
+        hours: f64,
+        notes: Option<&str>,
+    ) {
+        let hours = if hours.is_finite() {
+            MutationQueue::storable_hours(hours)
+        } else {
+            0.0
+        };
+        if hours <= 0.0 {
+            return;
+        }
+        let local = Uuid::new_v4();
+        let now = self.inner.clock.now();
+        let notes = notes.map(str::trim).filter(|notes| !notes.is_empty());
+        self.inner.update(|state| {
+            if state.day == day {
+                state.entries.insert(
+                    0,
+                    TrackedEntry {
+                        id: EntryId::Local(local),
+                        project: target.project.clone(),
+                        task: target.task.clone(),
+                        client: target.client.clone(),
+                        notes: notes.map(str::to_string),
+                        spent_date: day,
+                        banked_hours: hours,
+                        is_running: false,
+                        timer_started_at: None,
+                        is_locked: false,
+                        is_billable: true,
+                        is_pending: true,
+                        updated_at: now,
+                    },
+                );
+            }
+            note_recent(state, target);
+        });
+        self.enqueue(vec![Mutation::Create {
+            local,
+            target: target.clone(),
+            spent_date: day,
+            notes: notes.map(str::to_string),
+            started_at: crate::models::offset_by(now, -hours * 3600.0),
+            ended_at: Some(now),
         }])
         .await;
     }
@@ -1217,6 +1301,7 @@ impl TimeTracker {
             id: entry.id,
             notes: None,
             hours: Some(hours),
+            target: None,
         }])
         .await;
     }
@@ -1339,6 +1424,7 @@ impl TimeTracker {
                 id: entry.id,
                 notes: None,
                 hours: Some(hours),
+                target: None,
             }
         } else {
             Mutation::Stop {

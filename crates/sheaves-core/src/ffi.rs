@@ -605,6 +605,26 @@ impl Tracker {
             .await
     }
 
+    pub async fn retarget(&self, entry: TrackedEntry, target: TimerTarget) {
+        self.run(move |tracker| async move { tracker.retarget(&entry, &target).await })
+            .await
+    }
+
+    pub async fn log_time(
+        &self,
+        target: TimerTarget,
+        day: CalendarDate,
+        hours: f64,
+        notes: Option<String>,
+    ) {
+        self.run(move |tracker| async move {
+            tracker
+                .log_time(&target, day, hours, notes.as_deref())
+                .await
+        })
+        .await
+    }
+
     pub async fn delete(&self, entry: TrackedEntry) {
         self.run(move |tracker| async move { tracker.delete(&entry).await })
             .await

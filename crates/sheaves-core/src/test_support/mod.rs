@@ -121,6 +121,7 @@ pub struct Call {
     pub path: String,
     pub hours: Option<f64>,
     pub project_id: Option<i64>,
+    pub task_id: Option<i64>,
     pub spent_date: Option<String>,
     /// The `Harvest-Account-Id` header: whose credentials carried the request.
     pub account_id: Option<String>,
@@ -276,6 +277,7 @@ impl Transport for RoutingTransport {
             path: request.url.path().to_string(),
             hours: body.get("hours").and_then(|hours| hours.as_f64()),
             project_id: body.get("project_id").and_then(|id| id.as_i64()),
+            task_id: body.get("task_id").and_then(|id| id.as_i64()),
             spent_date: body
                 .get("spent_date")
                 .and_then(|date| date.as_str())

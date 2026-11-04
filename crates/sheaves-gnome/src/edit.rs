@@ -1,5 +1,5 @@
-//! Changing an entry: its notes and its total, deleting it, and resuming one from
-//! a day that is over. The questions are the Mac's (`Apps/Mac/Sources/EntryRow.swift`),
+//! Changing an entry: its project and task, its notes and its total, deleting it,
+//! logging time without a timer, and resuming an entry from a day that is over. The questions are the Mac's (`Apps/Mac/Sources/EntryRow.swift`),
 //! in its words; the rules are the core's.
 
 use std::rc::Rc;
@@ -7,14 +7,16 @@ use std::rc::Rc;
 use adw::prelude::*;
 use jiff::Timestamp;
 use sheaves_core::hours::{HoursEdit, HoursFormat, parse_hours};
-use sheaves_core::tracked_entry::TrackedEntry;
+use sheaves_core::tracked_entry::{ProjectTargets, TimerTarget, TrackedEntry};
 
+use crate::chooser::Chooser;
 use crate::format;
 
 /// What the editor asks the tracker to change. Each is `None` when it was left as
 /// it was, or typed as something that is not a duration.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Changes {
+    pub target: Option<TimerTarget>,
     pub notes: Option<String>,
     pub hours: Option<f64>,
 }
@@ -26,6 +28,7 @@ impl Changes {
     /// rounded figure back would restart its measurement and lose the seconds.
     pub fn of(
         entry: &TrackedEntry,
+        target: Option<TimerTarget>,
         notes: &str,
         hours: &str,
         hours_as_opened: &str,
@@ -33,6 +36,7 @@ impl Changes {
     ) -> Self {
         let notes = notes.trim();
         Self {
+            target: target.filter(|target| target.id() != entry.target().id()),
             notes: (notes != entry.notes.as_deref().unwrap_or("").trim())
                 .then(|| notes.to_string()),
             hours: HoursEdit::commit(
@@ -51,6 +55,7 @@ impl Changes {
 pub fn present_editor(
     parent: &impl IsA<gtk::Widget>,
     entry: &TrackedEntry,
+    projects: Vec<ProjectTargets>,
     hours_format: HoursFormat,
     now: Timestamp,
     save: impl Fn(Changes) + 'static,
@@ -82,6 +87,9 @@ pub fn present_editor(
     let fields = gtk::ListBox::new();
     fields.add_css_class("boxed-list");
     fields.set_selection_mode(gtk::SelectionMode::None);
+    let chooser = Chooser::new(projects, Some(&entry.target()));
+    fields.append(&chooser.project);
+    fields.append(&chooser.task);
     fields.append(&notes);
     fields.append(&time);
 
@@ -136,6 +144,7 @@ pub fn present_editor(
         dialog.connect_response(Some("save"), move |_, _| {
             save(Changes::of(
                 &entry,
+                chooser.selected(),
                 &notes.text(),
                 &time.text(),
                 &opened,
@@ -144,6 +153,68 @@ pub fn present_editor(
         });
     }
     dialog.present(Some(parent));
+}
+
+/// Logs time on `day` without a timer: a project and task, a length and notes.
+/// `log` gets them once Log is pressed, which it can be only with a length.
+pub fn present_logger(
+    parent: &impl IsA<gtk::Widget>,
+    day_label: &str,
+    projects: Vec<ProjectTargets>,
+    log: impl Fn(TimerTarget, f64, Option<String>) + 'static,
+) {
+    let dialog = adw::AlertDialog::new(
+        Some("Log time"),
+        Some(&format!("{day_label}, with no timer")),
+    );
+    dialog.add_responses(&[("cancel", "Cancel"), ("log", "Log")]);
+    dialog.set_response_appearance("log", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("log"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_enabled("log", false);
+
+    let chooser = Chooser::new(projects, None);
+    let time = adw::EntryRow::builder()
+        .title("Time, such as 1:30 or 1.5")
+        .activates_default(true)
+        .build();
+    let notes = adw::EntryRow::builder().title("Notes").build();
+    let fields = gtk::ListBox::new();
+    fields.add_css_class("boxed-list");
+    fields.set_selection_mode(gtk::SelectionMode::None);
+    fields.append(&chooser.project);
+    fields.append(&chooser.task);
+    fields.append(&time);
+    fields.append(&notes);
+    dialog.set_extra_child(Some(&fields));
+
+    {
+        let dialog = dialog.downgrade();
+        let has_target = chooser.selected().is_some();
+        time.connect_changed(move |row| {
+            let loggable = logged_hours(&row.text()).is_some();
+            if loggable || row.text().is_empty() {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.set_response_enabled("log", loggable && has_target);
+            }
+        });
+    }
+    dialog.connect_response(Some("log"), move |_, _| {
+        if let (Some(target), Some(hours)) = (chooser.selected(), logged_hours(&time.text())) {
+            let notes = notes.text().trim().to_string();
+            log(target, hours, (!notes.is_empty()).then_some(notes));
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+/// The hours in `text`, if it is a length worth logging.
+fn logged_hours(text: &str) -> Option<f64> {
+    parse_hours(text, format::decimal_separator()).filter(|hours| *hours > 0.0)
 }
 
 /// Asks before deleting: Harvest has no undo.
@@ -227,6 +298,7 @@ mod tests {
     fn nothing_changed_asks_for_nothing() {
         let changes = Changes::of(
             &entry(Some("Checkout"), false),
+            None,
             " Checkout ",
             "1:30",
             "1:30",
@@ -237,10 +309,18 @@ mod tests {
 
     #[test]
     fn new_notes_and_a_new_total_are_sent() {
-        let changes = Changes::of(&entry(None, false), "Checkout flow", "2:15", "1:30", '.');
+        let changes = Changes::of(
+            &entry(None, false),
+            None,
+            "Checkout flow",
+            "2:15",
+            "1:30",
+            '.',
+        );
         assert_eq!(
             changes,
             Changes {
+                target: None,
                 notes: Some("Checkout flow".to_string()),
                 hours: Some(2.25),
             }
@@ -251,19 +331,45 @@ mod tests {
     /// or the seconds since the minute shown would be lost.
     #[test]
     fn a_running_total_left_alone_is_not_sent() {
-        let changes = Changes::of(&entry(None, true), "", "2:07", "2:07", '.');
+        let changes = Changes::of(&entry(None, true), None, "", "2:07", "2:07", '.');
         assert_eq!(changes.hours, None);
     }
 
     #[test]
     fn something_that_is_not_a_duration_changes_nothing() {
-        let changes = Changes::of(&entry(None, false), "", "soon", "1:30", '.');
+        let changes = Changes::of(&entry(None, false), None, "", "soon", "1:30", '.');
         assert_eq!(changes.hours, None);
+    }
+
+    /// Saving with the project and task it already has asks for no move.
+    #[test]
+    fn the_same_project_and_task_is_no_move() {
+        let entry = entry(None, false);
+        let same = Changes::of(&entry, Some(entry.target()), "", "1:30", "1:30", '.');
+        assert_eq!(same.target, None);
+        let mut other = entry.target();
+        other.task = Reference::new(3, "Design");
+        let moved = Changes::of(&entry, Some(other.clone()), "", "1:30", "1:30", '.');
+        assert_eq!(moved.target, Some(other));
+    }
+
+    #[test]
+    fn only_a_length_is_logged() {
+        assert_eq!(logged_hours("1:30"), Some(1.5));
+        assert_eq!(logged_hours("0"), None);
+        assert_eq!(logged_hours("soon"), None);
     }
 
     #[test]
     fn clearing_the_notes_is_a_change() {
-        let changes = Changes::of(&entry(Some("Checkout"), false), "", "1:30", "1:30", '.');
+        let changes = Changes::of(
+            &entry(Some("Checkout"), false),
+            None,
+            "",
+            "1:30",
+            "1:30",
+            '.',
+        );
         assert_eq!(changes.notes, Some(String::new()));
     }
 }
