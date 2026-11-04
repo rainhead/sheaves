@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use jiff::Timestamp;
-use sheaves_core::hours::{HoursEdit, HoursFormat};
+use sheaves_core::hours::{HoursEdit, HoursFormat, parse_hours};
 use sheaves_core::tracked_entry::TrackedEntry;
 
 use crate::format;
@@ -93,6 +93,26 @@ pub fn present_editor(
     column.append(&remove);
     dialog.set_extra_child(Some(&column));
 
+    // Save is unavailable while the time reads as no duration at all: closing
+    // would quietly keep the old total, and any notes change without it.
+    {
+        let dialog = dialog.downgrade();
+        let opened = opened.clone();
+        time.connect_changed(move |row| {
+            let text = row.text();
+            let readable =
+                text == opened || parse_hours(&text, format::decimal_separator()).is_some();
+            if readable {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.set_response_enabled("save", readable);
+            }
+        });
+    }
+
     let delete = Rc::new(delete);
     {
         let dialog = dialog.downgrade();
@@ -151,8 +171,8 @@ pub fn confirm_delete(
 
 /// Play on an entry from a day that is over usually means "do that work now",
 /// not "add to that day", so it asks, as the Mac and Harvest's own app do. Neither
-/// choice is a cancel: one starts a fresh timer today with the same project, task
-/// and notes; the other reopens the old day.
+/// choice is a cancel: one times the same project and task today, in today's
+/// entry for it if there is one; the other reopens the old day.
 pub fn confirm_resume(
     parent: &impl IsA<gtk::Widget>,
     entry: &TrackedEntry,

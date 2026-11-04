@@ -12,6 +12,7 @@ use gtk::{gio, glib};
 use sheaves_core::absence::{Absence, AbsenceDetector};
 use sheaves_core::ffi::{Tracker, TrackerObserver, TrackerSnapshot};
 use sheaves_core::persistence;
+use sheaves_core::tracked_entry::TrackedEntry;
 use sheaves_core::tracker::{Activity, Connection};
 
 use crate::config::{self, Config};
@@ -383,38 +384,10 @@ impl Shell {
             Action::Start(target) => {
                 glib::spawn_future_local(async move { tracker.start(target, None).await });
             }
-            Action::Toggle(entry) => {
-                let today = self.latest.borrow().state.today;
-                if !entry.is_running && entry.spent_date != today {
-                    let resumed = entry.clone();
-                    let reopened = entry.clone();
-                    let started = tracker.clone();
-                    let resuming = tracker.clone();
-                    crate::edit::confirm_resume(
-                        &self.window.window,
-                        &entry,
-                        move || {
-                            // To today first, then start: the core's check for an
-                            // entry to resume sees only the visible day, and the
-                            // new timer is where the eye can follow it.
-                            let tracker = started.clone();
-                            let target = resumed.target();
-                            let notes = resumed.notes.clone();
-                            glib::spawn_future_local(async move {
-                                tracker.go_to_today().await;
-                                tracker.start(target, notes).await;
-                            });
-                        },
-                        move || {
-                            let tracker = resuming.clone();
-                            let entry = reopened.clone();
-                            glib::spawn_future_local(async move { tracker.resume(entry).await });
-                        },
-                    );
-                } else {
-                    glib::spawn_future_local(async move { tracker.toggle(entry).await });
-                }
+            Action::Toggle(entry) if entry.is_running => {
+                glib::spawn_future_local(async move { tracker.toggle(entry).await });
             }
+            Action::Toggle(entry) => self.resume(entry),
             Action::Edit(entry) => {
                 let latest = self.latest.borrow();
                 let saving = tracker.clone();
@@ -457,6 +430,43 @@ impl Shell {
         };
     }
 
+    /// Resumes `entry`, asking first when it is from a day that is over: resuming
+    /// it would add today's work to that day. Both the window and the top bar come
+    /// here, since just after midnight the top bar can still offer yesterday's.
+    fn resume(self: &Rc<Self>, entry: TrackedEntry) {
+        let tracker = self.tracker.clone();
+        if entry.spent_date == self.latest.borrow().state.today {
+            glib::spawn_future_local(async move { tracker.resume(entry).await });
+            return;
+        }
+        self.window.window.present();
+        let starting = tracker.clone();
+        let target = entry.target();
+        let notes = entry.notes.clone();
+        let reopened = entry.clone();
+        crate::edit::confirm_resume(
+            &self.window.window,
+            &entry,
+            move || {
+                // To today first, then start: the core's check for an entry to
+                // continue sees only the visible day, and the timer is then where
+                // the eye can follow it.
+                let tracker = starting.clone();
+                let target = target.clone();
+                let notes = notes.clone();
+                glib::spawn_future_local(async move {
+                    tracker.go_to_today().await;
+                    tracker.start(target, notes).await;
+                });
+            },
+            move || {
+                let tracker = tracker.clone();
+                let entry = reopened.clone();
+                glib::spawn_future_local(async move { tracker.resume(entry).await });
+            },
+        );
+    }
+
     fn obey(self: &Rc<Self>, command: Command) {
         match command {
             Command::Open => self.window.window.present(),
@@ -468,9 +478,7 @@ impl Shell {
                     Activity::Running(entry) => {
                         glib::spawn_future_local(async move { tracker.stop(entry).await });
                     }
-                    Activity::Recent(entry) => {
-                        glib::spawn_future_local(async move { tracker.resume(entry).await });
-                    }
+                    Activity::Recent(entry) => self.resume(entry),
                     Activity::Idle => self.window.window.present(),
                 }
             }
