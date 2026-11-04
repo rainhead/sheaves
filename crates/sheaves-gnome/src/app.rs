@@ -388,6 +388,26 @@ impl Shell {
                 glib::spawn_future_local(async move { tracker.toggle(entry).await });
             }
             Action::Toggle(entry) => self.resume(entry),
+            Action::LogTime => {
+                let latest = self.latest.borrow();
+                let day = latest.state.day;
+                let label = if latest.is_today {
+                    "Today".to_string()
+                } else {
+                    crate::format::day(day)
+                };
+                crate::edit::present_logger(
+                    &self.window.window,
+                    &label,
+                    latest.ordered_projects.clone(),
+                    move |target, hours, notes| {
+                        let tracker = tracker.clone();
+                        glib::spawn_future_local(async move {
+                            tracker.log_time(target, day, hours, notes).await;
+                        });
+                    },
+                );
+            }
             Action::Edit(entry) => {
                 let latest = self.latest.borrow();
                 let saving = tracker.clone();
@@ -397,12 +417,16 @@ impl Shell {
                 crate::edit::present_editor(
                     &self.window.window,
                     &entry,
+                    latest.ordered_projects.clone(),
                     window::hours_format(&latest),
                     latest.state.now,
                     move |changes| {
                         let tracker = saving.clone();
                         let entry = saved.clone();
                         glib::spawn_future_local(async move {
+                            if let Some(target) = changes.target {
+                                tracker.retarget(entry.clone(), target).await;
+                            }
                             if let Some(notes) = changes.notes {
                                 tracker.update_notes(entry.clone(), notes).await;
                             }

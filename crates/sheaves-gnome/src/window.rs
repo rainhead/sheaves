@@ -23,6 +23,8 @@ pub enum Action {
     Toggle(TrackedEntry),
     /// Open the editor for an entry's notes and total.
     Edit(TrackedEntry),
+    /// Log time on the day on screen without a timer.
+    LogTime,
     ShiftDay(i32),
     Today,
     Sync,
@@ -56,6 +58,8 @@ impl Window {
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
         forward.set_tooltip_text(Some("Next day"));
         let today = gtk::Button::with_label("Today");
+        let log_time = gtk::Button::from_icon_name("list-add-symbolic");
+        log_time.set_tooltip_text(Some("Log time without a timer"));
         let settings = gtk::Button::from_icon_name("emblem-system-symbolic");
         settings.set_tooltip_text(Some("Settings"));
 
@@ -65,6 +69,7 @@ impl Window {
         header.pack_start(&forward);
         header.pack_start(&today);
         header.pack_end(&settings);
+        header.pack_end(&log_time);
 
         let banner = adw::Banner::new("");
 
@@ -158,6 +163,7 @@ impl Window {
         forward.connect_clicked(send(Action::ShiftDay(1)));
         today.connect_clicked(send(Action::Today));
         settings.connect_clicked(send(Action::OpenSettings));
+        log_time.connect_clicked(send(Action::LogTime));
         {
             let actions = actions.clone();
             banner.connect_button_clicked(move |banner| {

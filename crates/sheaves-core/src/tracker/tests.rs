@@ -619,6 +619,134 @@ mod time_tracker {
         );
     }
 
+    /// Moving an entry to another project and task sends both, and nothing else:
+    /// its time and notes stay as they are.
+    #[tokio::test]
+    async fn retarget_sends_the_new_project_and_task() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let entry = tracker.state().entries[0].clone();
+        let other = tracker
+            .state()
+            .targets
+            .into_iter()
+            .find(|target| target.id() != entry.target().id())
+            .unwrap();
+
+        tracker.retarget(&entry, &other).await;
+
+        let patch = transport
+            .calls_to(Method::Patch, "time_entries")
+            .into_iter()
+            .find(|call| call.project_id.is_some())
+            .expect("a patch with the new project");
+        assert_eq!(patch.project_id, Some(other.project.id));
+        assert_eq!(patch.task_id, Some(other.task.id));
+        assert_eq!(patch.hours, None);
+    }
+
+    /// Offline, the entry moves at once and the move waits in the queue.
+    #[tokio::test]
+    async fn retarget_moves_the_entry_at_once() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let entry = tracker.state().entries[0].clone();
+        let other = tracker
+            .state()
+            .targets
+            .into_iter()
+            .find(|target| target.id() != entry.target().id())
+            .unwrap();
+        transport.go_offline();
+
+        tracker.retarget(&entry, &other).await;
+
+        let moved = tracker
+            .state()
+            .entries
+            .into_iter()
+            .find(|candidate| candidate.id == entry.id)
+            .unwrap();
+        assert_eq!(moved.target().id(), other.id());
+        assert_eq!(moved.banked_hours, entry.banked_hours);
+        assert!(moved.is_pending);
+        assert!(matches!(
+            &reopened_queue(&scratch).pending()[..],
+            [Mutation::Update { target: Some(target), notes: None, hours: None, .. }]
+                if target.id() == other.id()
+        ));
+    }
+
+    /// Time logged without a timer is a stopped entry of exactly that length, on
+    /// the day it was logged to, even one that is not the day on screen.
+    #[tokio::test]
+    async fn log_time_creates_a_stopped_entry_of_that_length() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        let yesterday = fixture::today().adding_days(-1);
+
+        tracker
+            .log_time(&target, yesterday, 1.25, Some("  Planning  "))
+            .await;
+
+        let creates = transport.calls_to(Method::Post, "time_entries");
+        assert_eq!(creates.len(), 1);
+        assert_eq!(creates[0].hours, Some(1.25));
+        assert_eq!(creates[0].project_id, Some(target.project.id));
+        assert_eq!(creates[0].task_id, Some(target.task.id));
+        assert_eq!(
+            creates[0].spent_date.as_deref(),
+            Some(yesterday.to_string().as_str())
+        );
+        // Not the day on screen, so nothing new appears in the list.
+        assert!(
+            tracker
+                .state()
+                .entries
+                .iter()
+                .all(|entry| entry.spent_date != yesterday)
+        );
+    }
+
+    /// Logged on the day on screen, it appears there at once, before Harvest has
+    /// answered; and a time that is no time at all logs nothing.
+    #[tokio::test]
+    async fn log_time_shows_on_the_day_on_screen_and_refuses_nothing() {
+        let scratch = scratch();
+        let transport = RoutingTransport::standard_account();
+        let tracker = tracker(transport.clone(), &scratch);
+        tracker.sync().await;
+        let target = tracker.state().targets[0].clone();
+        transport.go_offline();
+        let before = tracker.state().entries.len();
+
+        tracker.log_time(&target, fixture::today(), 0.0, None).await;
+        tracker
+            .log_time(&target, fixture::today(), f64::NAN, None)
+            .await;
+        assert_eq!(tracker.state().entries.len(), before);
+        assert!(reopened_queue(&scratch).is_empty());
+
+        tracker.log_time(&target, fixture::today(), 0.5, None).await;
+        let logged = &tracker.state().entries[0];
+        assert!(logged.is_pending && !logged.is_running);
+        assert_eq!(logged.banked_hours, 0.5);
+        assert!(matches!(
+            reopened_queue(&scratch).pending()[..],
+            [Mutation::Create {
+                ended_at: Some(_),
+                ..
+            }]
+        ));
+    }
+
     #[tokio::test]
     async fn stop_banks_elapsed_time() {
         let scratch = scratch();
@@ -1878,6 +2006,7 @@ mod trimming_a_create_that_never_reached_harvest {
             id: EntryId::Local(local),
             notes: None,
             hours: Some(50.0 / 60.0),
+            target: None,
         });
 
         let report = queue.drain(&client).await;

@@ -598,7 +598,24 @@ views of them.
 - **Deleting asks first, and so does resuming a past day's entry,** in the Mac's
   words: "Start on Today" or "Resume on" that day.
 
-Checked at the desk, 2026-11-04: an edit made on Hostess reached the Mac.
+- **Moving an entry is an update with a target.** `Mutation::Update` gains an
+  optional project and task, sent as `project_id` and `task_id`; the tracker's
+  `retarget` moves the entry at once and queues the move. Changes queued before
+  this read back without a target.
+- **Time logged without a timer is an ordinary create of a stopped entry**
+  (`TimeTracker::log_time`), so it has every create's offline rules, including
+  the lookup a retried create makes. A create carries its length as a start and
+  an end, so these are the moment of logging and that many hours before; only the
+  difference is sent. It goes on any day, the one on screen by default, and
+  appears there at once when that day is showing.
+- **On GNOME, the editor gains Project and Task rows,** and a + button in the
+  window's header logs time on the day on screen. A project row shows the
+  project's name, with its client as the row's subtitle and beneath each name in
+  its list: "Client · Project" in the row's value was cut off before the project
+  began.
+
+Checked at the desk, 2026-11-04: an edit made on Hostess reached the Mac; moving
+an entry and logging time both worked.
 
 ### Phase 9: presence through Harvest, replacing the tailnet (core; Opus)
 

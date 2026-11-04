@@ -94,6 +94,7 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                 crate::edit::present_editor(
                     &window.window,
                     &entry,
+                    snapshot.ordered_projects.clone(),
                     crate::window::hours_format(&snapshot),
                     snapshot.state.now,
                     |_| {},
@@ -107,6 +108,28 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                 report(
                     editor.and_then(|editor| {
                         write(&editor, &window, &directory.join("gnome-editor.png"))
+                    }),
+                    &failed,
+                );
+                if let Some(editor) = window.window.visible_dialog() {
+                    editor.force_close();
+                }
+
+                // Logging time with no timer.
+                crate::edit::present_logger(
+                    &window.window,
+                    "Today",
+                    snapshot.ordered_projects.clone(),
+                    |_, _, _| {},
+                );
+                glib::timeout_future(Duration::from_millis(600)).await;
+                let logger = window
+                    .window
+                    .visible_dialog()
+                    .ok_or_else(|| "the logger did not appear".to_string());
+                report(
+                    logger.and_then(|logger| {
+                        write(&logger, &window, &directory.join("gnome-log-time.png"))
                     }),
                     &failed,
                 );

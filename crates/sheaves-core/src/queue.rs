@@ -61,6 +61,10 @@ pub enum Mutation {
         id: EntryId,
         notes: Option<String>,
         hours: Option<f64>,
+        /// A new project and task for the entry. Absent from changes queued
+        /// before entries could be moved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<TimerTarget>,
     },
     /// A new total typed onto a timer still running. Harvest sets the total and
     /// counts on from the moment the patch *arrives*, so `as_of`, when the user
@@ -819,7 +823,12 @@ impl MutationQueue {
                 }
                 landed(client.restart_time_entry(server_id).await)?;
             }
-            Mutation::Update { notes, hours, .. } => {
+            Mutation::Update {
+                notes,
+                hours,
+                target,
+                ..
+            } => {
                 landed(
                     client
                         .update_time_entry(
@@ -827,6 +836,8 @@ impl MutationQueue {
                             EntryUpdate {
                                 notes: notes.as_deref(),
                                 hours: hours.map(Self::storable_hours),
+                                project_id: target.as_ref().map(|target| target.project.id),
+                                task_id: target.as_ref().map(|target| target.task.id),
                                 ..EntryUpdate::default()
                             },
                         )
@@ -999,6 +1010,7 @@ mod tests {
                 id: EntryId::Server(636709355),
                 notes: Some("first".to_string()),
                 hours: None,
+                target: None,
             });
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(636709355),
@@ -1094,6 +1106,7 @@ mod tests {
                 id: EntryId::Server(1),
                 notes: Some("nope".to_string()),
                 hours: None,
+                target: None,
             });
             queue.enqueue(Mutation::Stop {
                 id: EntryId::Server(2),
@@ -1225,6 +1238,7 @@ mod tests {
                 id: EntryId::Server(42),
                 notes: Some("Client X merger talks".to_string()),
                 hours: None,
+                target: None,
             };
             assert_eq!(update.summary(), "update of entry 42");
         }
