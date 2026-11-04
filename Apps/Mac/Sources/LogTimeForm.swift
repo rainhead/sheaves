@@ -41,7 +41,8 @@ struct LogTimeForm: View {
         return projects.first { $0.id == projectID }
     }
 
-    /// The task chosen, on the same terms; a new project starts on its best one.
+    /// The task chosen, on the same terms. Choosing a project chooses its best task
+    /// at that moment, so a sync that re-ranks the tasks does not move it.
     private var task: Reference? {
         guard let project else { return nil }
         guard let taskID else { return project.tasks.first }
@@ -130,7 +131,7 @@ struct LogTimeForm: View {
                 ForEach(projects) { option in
                     Button {
                         projectID = option.id
-                        taskID = nil
+                        taskID = option.tasks.first?.id
                     } label: {
                         if option.id == project?.id {
                             Label(option.label, systemImage: "checkmark")
