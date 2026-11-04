@@ -83,6 +83,212 @@ mod presence_log {
     }
 }
 
+/// The log outlives the app. Kept only in memory, it was wiped by each relaunch,
+/// and a peer asking about the hour before one was told nobody had been here: the
+/// Mac then asked about time spent working at Hostess.
+mod kept_on_disk {
+    use super::*;
+
+    fn peers(path: &std::path::Path, now: Timestamp) -> Peers {
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.set_user(Some(USER));
+        peers.keep_log_in(path.to_path_buf(), now);
+        peers
+    }
+
+    #[test]
+    fn survives_a_relaunch() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let before = peers(&path, at(0.0));
+        for minute in (0..=60).step_by(5) {
+            before.note_presence(at(f64::from(minute)));
+        }
+        drop(before);
+
+        let after = peers(&path, at(90.0));
+        after.note_presence(at(90.0));
+        assert_eq!(
+            after.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 60.0), span(90.0, 90.0)]
+        );
+    }
+
+    /// Written at most once a minute while evidence streams in, but at once when a
+    /// new interval opens, since that is what a peer's question turns on.
+    #[test]
+    fn writes_a_new_interval_at_once_and_the_rest_each_minute() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let saved = || {
+            crate::persistence::read_json::<serde_json::Value>(&path).unwrap()["intervals"].clone()
+        };
+        let saved = || serde_json::from_value::<Vec<Interval>>(saved()).unwrap();
+        let peers = peers(&path, at(0.0));
+
+        peers.note_presence(at(0.0));
+        assert_eq!(saved(), [span(0.0, 0.0)]);
+        peers.note_presence(at(0.5));
+        assert_eq!(saved(), [span(0.0, 0.0)], "not yet a minute");
+        peers.note_presence(at(1.0));
+        assert_eq!(saved(), [span(0.0, 1.0)]);
+        peers.note_presence(at(30.0));
+        assert_eq!(
+            saved(),
+            [span(0.0, 1.0), span(30.0, 30.0)],
+            "a new interval"
+        );
+    }
+
+    /// Presence is answered for one Harvest user, so a log kept for someone else
+    /// is neither restored nor served.
+    #[test]
+    fn another_users_log_is_not_restored() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let before = peers(&path, at(0.0));
+        before.note_presence(at(0.0));
+        before.note_presence(at(30.0));
+        drop(before);
+
+        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        other.set_user(Some(USER + 1));
+        other.keep_log_in(path.clone(), at(40.0));
+        assert_eq!(
+            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
+    }
+
+    #[test]
+    fn signing_in_as_someone_else_starts_afresh() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let peers = peers(&path, at(0.0));
+        peers.note_presence(at(0.0));
+        peers.set_user(Some(USER + 1));
+        assert_eq!(
+            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
+        peers.note_presence(at(5.0));
+        assert_eq!(
+            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            [span(5.0, 5.0)]
+        );
+    }
+
+    /// Evidence noted before anyone signed in, such as the launch, is kept for
+    /// whoever then does.
+    #[test]
+    fn evidence_from_before_signing_in_is_kept() {
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.note_presence(at(0.0));
+        peers.set_user(Some(USER));
+        assert_eq!(
+            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 0.0)]
+        );
+    }
+
+    /// A new interval is reported as one even when the same note drops a day-old
+    /// interval, which leaves the count unchanged.
+    #[test]
+    fn a_new_interval_counts_as_new_while_an_old_one_goes() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        assert!(log.note(at(0.0)));
+        assert!(!log.note(at(5.0)));
+        assert!(log.note(at(25.0 * 60.0)));
+        assert_eq!(log.intervals(), [span(25.0 * 60.0, 25.0 * 60.0)]);
+    }
+
+    /// A long stretch noted before the log was loaded joins what the file held,
+    /// whole, rather than its two ends standing apart with an absence between.
+    #[test]
+    fn evidence_noted_before_loading_joins_the_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let first = peers(&path, at(0.0));
+        first.note_presence(at(0.0));
+        first.note_presence(at(10.0));
+        drop(first);
+
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.set_user(Some(USER));
+        for minute in [12.0, 20.0, 30.0] {
+            peers.note_presence(at(minute));
+        }
+        peers.keep_log_in(path, at(30.0));
+        assert_eq!(
+            peers.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 30.0)]
+        );
+    }
+
+    /// The order the apps use: the log is loaded before anyone is signed in, and
+    /// the tracker names the user afterwards.
+    #[test]
+    fn loaded_before_signing_in_as_the_apps_do() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let first = peers(&path, at(0.0));
+        first.note_presence(at(0.0));
+        first.note_presence(at(10.0));
+        drop(first);
+
+        let same = Peers::new(THRESHOLD, Arc::new(Silent));
+        same.keep_log_in(path.clone(), at(20.0));
+        same.set_user(Some(USER));
+        assert_eq!(
+            same.answer_presence(USER, at(0.0)).unwrap().intervals,
+            [span(0.0, 10.0)]
+        );
+        drop(same);
+
+        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        other.keep_log_in(path, at(20.0));
+        other.set_user(Some(USER + 1));
+        assert_eq!(
+            other.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            []
+        );
+    }
+
+    /// A stretch from a clock that ran ahead is not restored: it would never
+    /// expire, and would vouch for the user over any absence.
+    #[test]
+    fn a_stretch_from_the_future_is_not_restored() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        log.restore(
+            vec![span(0.0, 10.0), span(5.0, 40.0), span(500.0, 600.0)],
+            at(20.0),
+        );
+        assert_eq!(log.intervals(), [span(0.0, 20.0)]);
+    }
+
+    #[test]
+    fn reads_back_only_the_last_day_and_only_sound_intervals() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        let backwards = Interval {
+            start: at(50.0),
+            end: at(40.0),
+        };
+        log.restore(
+            vec![
+                span(60.0, 70.0),
+                span(0.0, 10.0),
+                backwards,
+                span(-2000.0, -1990.0),
+            ],
+            at(80.0),
+        );
+        assert_eq!(log.intervals(), [span(0.0, 10.0), span(60.0, 70.0)]);
+        // And joined where a damaged file left them closer than the threshold.
+        log.restore(vec![span(0.0, 10.0), span(14.0, 20.0)], at(30.0));
+        assert_eq!(log.intervals(), [span(0.0, 20.0)]);
+    }
+}
+
 mod merge {
     use super::*;
 

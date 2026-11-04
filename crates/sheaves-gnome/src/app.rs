@@ -75,7 +75,7 @@ pub fn run() -> glib::ExitCode {
     {
         let shell = shell.clone();
         // Every launch arrives here, the first and each later one, which GApplication
-        // hands to the instance already running. Phase 9's quick entry joins in here.
+        // hands to the instance already running. Phase 10's quick entry joins in here.
         app.connect_command_line(move |_, command_line| {
             let background = command_line
                 .arguments()

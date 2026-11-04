@@ -14,6 +14,7 @@
 pub mod server;
 
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -65,7 +66,11 @@ impl PresenceLog {
     /// that short is not an absence: someone reading. Evidence can arrive out of
     /// order, as a call is dated to the previous poll, so it is placed where it
     /// belongs rather than appended.
-    pub fn note(&mut self, when: Timestamp) {
+    /// Returns whether `when` opened an interval of its own, which is what a peer's
+    /// question turns on: judged before anything a day old is dropped, so a drop
+    /// in the same call cannot hide it.
+    pub fn note(&mut self, when: Timestamp) -> bool {
+        let before = self.intervals.len();
         let at = self
             .intervals
             .partition_point(|interval| interval.start <= when);
@@ -86,9 +91,46 @@ impl PresenceLog {
             }
         }
         self.intervals = merged;
+        let opened = self.intervals.len() > before;
         let newest = self.intervals.last().map_or(when, |last| last.end);
         let horizon = offset_by(newest, -LOG_SPAN);
         self.intervals.retain(|interval| interval.end >= horizon);
+        opened
+    }
+
+    /// The intervals held, oldest first.
+    pub fn intervals(&self) -> &[Interval] {
+        &self.intervals
+    }
+
+    /// Takes `intervals` as the log, as read back from its file and with anything
+    /// noted before: in order, with any that are not, or end more than a day before
+    /// `now`, dropped, and any closer than the threshold joined, as `note` keeps
+    /// them. Joining by whole interval keeps a long stretch whole.
+    ///
+    /// Anything starting after `now` is dropped too, as from a clock that ran
+    /// ahead. Kept, it would never expire, since `note` measures a day back from
+    /// the newest evidence, and it would vouch for the user over any absence a
+    /// peer asked about.
+    pub fn restore(&mut self, mut intervals: Vec<Interval>, now: Timestamp) {
+        let horizon = offset_by(now, -LOG_SPAN);
+        intervals.retain(|interval| {
+            interval.start <= interval.end && interval.end >= horizon && interval.start <= now
+        });
+        for interval in &mut intervals {
+            interval.end = interval.end.min(now);
+        }
+        intervals.sort_by_key(|interval| interval.start);
+        let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
+        for interval in intervals {
+            match merged.last_mut() {
+                Some(last) if seconds_between(last.end, interval.start) < self.threshold => {
+                    last.end = last.end.max(interval.end);
+                }
+                _ => merged.push(interval),
+            }
+        }
+        self.intervals = merged;
     }
 
     /// The intervals that reach `since` or later.
@@ -342,7 +384,24 @@ pub struct Peers {
     log: Mutex<PresenceLog>,
     user_id: Mutex<Option<i64>>,
     on_touched: Mutex<Option<TouchedHandler>>,
+    /// Where the log is kept between launches, and when it was last written.
+    log_file: Mutex<Option<(PathBuf, Option<Timestamp>)>>,
+    /// Whose presence the log records. Evidence is of whoever is at the machine,
+    /// but the log is answered for one Harvest user, so a different user signing in
+    /// starts it afresh.
+    log_owner: Mutex<Option<i64>>,
 }
+
+/// The log as kept on disk, with whose it is.
+#[derive(Serialize, Deserialize)]
+struct SavedLog {
+    user_id: Option<i64>,
+    intervals: Vec<Interval>,
+}
+
+/// How often the log is written while the user is present: a machine that stops
+/// abruptly forgets at most this much of when it saw them.
+const SAVE_EVERY: f64 = 60.0;
 
 impl Peers {
     pub fn new(threshold: f64, transport: Arc<dyn PeerTransport>) -> Self {
@@ -352,6 +411,8 @@ impl Peers {
             log: Mutex::new(PresenceLog::new(threshold)),
             user_id: Mutex::new(None),
             on_touched: Mutex::new(None),
+            log_file: Mutex::new(None),
+            log_owner: Mutex::new(None),
         }
     }
 
@@ -374,6 +435,20 @@ impl Peers {
     /// The Harvest user this machine works for, or `None` before one is known.
     pub fn set_user(&self, user_id: Option<i64>) {
         *lock(&self.user_id) = user_id;
+        let Some(user_id) = user_id else {
+            return;
+        };
+        let previous = lock(&self.log_owner).replace(user_id);
+        match previous {
+            Some(previous) if previous == user_id => {}
+            Some(_) => {
+                // Someone else's presence is no evidence about this user.
+                lock(&self.log).intervals.clear();
+                self.save_now();
+            }
+            // Evidence gathered before anyone signed in is of whoever is here now.
+            None => self.save_now(),
+        }
     }
 
     /// What to do when a peer says it changed entries: probe Harvest.
@@ -381,8 +456,60 @@ impl Peers {
         *lock(&self.on_touched) = Some(Arc::new(handler));
     }
 
+    /// Keeps the log in `path` from now on, starting from what is there.
+    ///
+    /// A log kept only in memory was wiped by every relaunch or reboot, and a peer
+    /// asking about the hour before one was then told nobody had been here. The
+    /// relaunch itself counts as presence, but only from that moment.
+    pub fn keep_log_in(&self, path: PathBuf, now: Timestamp) {
+        if let Some(saved) = crate::persistence::read_json::<SavedLog>(&path) {
+            let current = *lock(&self.user_id);
+            // Restored only for the user it records; a log for someone else is
+            // left behind, and overwritten at the next save.
+            if current.is_none() || current == saved.user_id {
+                *lock(&self.log_owner) = saved.user_id;
+                let mut log = lock(&self.log);
+                // Anything noted before this was called joins in.
+                let mut intervals = saved.intervals;
+                intervals.append(&mut log.intervals);
+                log.restore(intervals, now);
+            }
+        }
+        *lock(&self.log_file) = Some((path, None));
+        self.save(now, true);
+    }
+
     pub fn note_presence(&self, when: Timestamp) {
-        lock(&self.log).note(when);
+        let opened = lock(&self.log).note(when);
+        self.save(when, opened);
+    }
+
+    fn save_now(&self) {
+        let last = lock(&self.log_file).as_ref().and_then(|(_, last)| *last);
+        if let Some(last) = last {
+            self.save(last, true);
+        }
+    }
+
+    /// Writes the log if it has a file, and either `now_please` or a minute has
+    /// passed since the last write.
+    fn save(&self, now: Timestamp, now_please: bool) {
+        let mut file = lock(&self.log_file);
+        let Some((path, last)) = file.as_mut() else {
+            return;
+        };
+        let due = now_please || last.is_none_or(|last| seconds_between(last, now) >= SAVE_EVERY);
+        if !due {
+            return;
+        }
+        let saved = SavedLog {
+            user_id: *lock(&self.log_owner),
+            intervals: lock(&self.log).intervals.clone(),
+        };
+        match crate::persistence::write_json(path, &saved) {
+            Ok(()) => *last = Some(now),
+            Err(error) => log::error!("could not save when the user was seen: {error}"),
+        }
     }
 
     // MARK: Asking
@@ -469,9 +596,15 @@ impl Peers {
         since: Timestamp,
     ) -> Result<PresenceAnswer, Refusal> {
         let own = self.check_user(user_id)?;
+        // A log not yet known to be this user's says nothing about them.
+        let intervals = if *lock(&self.log_owner) == Some(own) {
+            lock(&self.log).since(since)
+        } else {
+            Vec::new()
+        };
         Ok(PresenceAnswer {
             user_id: own,
-            intervals: lock(&self.log).since(since),
+            intervals,
         })
     }
 
@@ -538,14 +671,15 @@ impl Presence {
         } else {
             0.0
         };
-        let candidates = {
+        let (candidates, evidence) = {
             let mut monitor = lock(&self.monitor);
             let candidates = monitor.poll(reading, now);
-            for when in monitor.take_evidence() {
-                self.peers.note_presence(when);
-            }
-            candidates
+            (candidates, monitor.take_evidence())
         };
+        // Outside the monitor's lock: noting can write the log to disk.
+        for when in evidence {
+            self.peers.note_presence(when);
+        }
         let mut absences = Vec::new();
         for candidate in candidates {
             absences.extend(self.peers.confirm(candidate, self.threshold).await);
