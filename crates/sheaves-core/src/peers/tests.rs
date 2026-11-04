@@ -120,7 +120,11 @@ mod kept_on_disk {
     fn writes_a_new_interval_at_once_and_the_rest_each_minute() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("presence.json");
-        let saved = || crate::persistence::read_json::<Vec<Interval>>(&path).unwrap();
+        let saved = || {
+            crate::persistence::read_json::<serde_json::Value>(&path).unwrap()["intervals"]
+                .clone()
+        };
+        let saved = || serde_json::from_value::<Vec<Interval>>(saved()).unwrap();
         let peers = peers(&path, at(0.0));
 
         peers.note_presence(at(0.0));
@@ -131,6 +135,59 @@ mod kept_on_disk {
         assert_eq!(saved(), [span(0.0, 1.0)]);
         peers.note_presence(at(30.0));
         assert_eq!(saved(), [span(0.0, 1.0), span(30.0, 30.0)], "a new interval");
+    }
+
+    /// Presence is answered for one Harvest user, so a log kept for someone else
+    /// is neither restored nor served.
+    #[test]
+    fn another_users_log_is_not_restored() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let before = peers(&path, at(0.0));
+        before.note_presence(at(0.0));
+        before.note_presence(at(30.0));
+        drop(before);
+
+        let other = Peers::new(THRESHOLD, Arc::new(Silent));
+        other.set_user(Some(USER + 1));
+        other.keep_log_in(path.clone(), at(40.0));
+        assert_eq!(other.answer_presence(USER + 1, at(0.0)).unwrap().intervals, []);
+    }
+
+    #[test]
+    fn signing_in_as_someone_else_starts_afresh() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("presence.json");
+        let peers = peers(&path, at(0.0));
+        peers.note_presence(at(0.0));
+        peers.set_user(Some(USER + 1));
+        assert_eq!(peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals, []);
+        peers.note_presence(at(5.0));
+        assert_eq!(
+            peers.answer_presence(USER + 1, at(0.0)).unwrap().intervals,
+            [span(5.0, 5.0)]
+        );
+    }
+
+    /// Evidence noted before anyone signed in, such as the launch, is kept for
+    /// whoever then does.
+    #[test]
+    fn evidence_from_before_signing_in_is_kept() {
+        let peers = Peers::new(THRESHOLD, Arc::new(Silent));
+        peers.note_presence(at(0.0));
+        peers.set_user(Some(USER));
+        assert_eq!(peers.answer_presence(USER, at(0.0)).unwrap().intervals, [span(0.0, 0.0)]);
+    }
+
+    /// A new interval is reported as one even when the same note drops a day-old
+    /// interval, which leaves the count unchanged.
+    #[test]
+    fn a_new_interval_counts_as_new_while_an_old_one_goes() {
+        let mut log = PresenceLog::new(THRESHOLD);
+        assert!(log.note(at(0.0)));
+        assert!(!log.note(at(5.0)));
+        assert!(log.note(at(25.0 * 60.0)));
+        assert_eq!(log.intervals(), [span(25.0 * 60.0, 25.0 * 60.0)]);
     }
 
     #[test]

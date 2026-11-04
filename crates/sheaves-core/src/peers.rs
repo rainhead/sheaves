@@ -66,7 +66,11 @@ impl PresenceLog {
     /// that short is not an absence: someone reading. Evidence can arrive out of
     /// order, as a call is dated to the previous poll, so it is placed where it
     /// belongs rather than appended.
-    pub fn note(&mut self, when: Timestamp) {
+    /// Returns whether `when` opened an interval of its own, which is what a peer's
+    /// question turns on: judged before anything a day old is dropped, so a drop
+    /// in the same call cannot hide it.
+    pub fn note(&mut self, when: Timestamp) -> bool {
+        let before = self.intervals.len();
         let at = self
             .intervals
             .partition_point(|interval| interval.start <= when);
@@ -87,9 +91,11 @@ impl PresenceLog {
             }
         }
         self.intervals = merged;
+        let opened = self.intervals.len() > before;
         let newest = self.intervals.last().map_or(when, |last| last.end);
         let horizon = offset_by(newest, -LOG_SPAN);
         self.intervals.retain(|interval| interval.end >= horizon);
+        opened
     }
 
     /// The intervals held, oldest first.
@@ -359,6 +365,17 @@ pub struct Peers {
     on_touched: Mutex<Option<TouchedHandler>>,
     /// Where the log is kept between launches, and when it was last written.
     log_file: Mutex<Option<(PathBuf, Option<Timestamp>)>>,
+    /// Whose presence the log records. Evidence is of whoever is at the machine,
+    /// but the log is answered for one Harvest user, so a different user signing in
+    /// starts it afresh.
+    log_owner: Mutex<Option<i64>>,
+}
+
+/// The log as kept on disk, with whose it is.
+#[derive(Serialize, Deserialize)]
+struct SavedLog {
+    user_id: Option<i64>,
+    intervals: Vec<Interval>,
 }
 
 /// How often the log is written while the user is present: a machine that stops
@@ -374,6 +391,7 @@ impl Peers {
             user_id: Mutex::new(None),
             on_touched: Mutex::new(None),
             log_file: Mutex::new(None),
+            log_owner: Mutex::new(None),
         }
     }
 
@@ -396,6 +414,20 @@ impl Peers {
     /// The Harvest user this machine works for, or `None` before one is known.
     pub fn set_user(&self, user_id: Option<i64>) {
         *lock(&self.user_id) = user_id;
+        let Some(user_id) = user_id else {
+            return;
+        };
+        let previous = lock(&self.log_owner).replace(user_id);
+        match previous {
+            Some(previous) if previous == user_id => {}
+            Some(_) => {
+                // Someone else's presence is no evidence about this user.
+                lock(&self.log).intervals.clear();
+                self.save_now();
+            }
+            // Evidence gathered before anyone signed in is of whoever is here now.
+            None => self.save_now(),
+        }
     }
 
     /// What to do when a peer says it changed entries: probe Harvest.
@@ -409,14 +441,21 @@ impl Peers {
     /// asking about the hour before one was then told nobody had been here. The
     /// relaunch itself counts as presence, but only from that moment.
     pub fn keep_log_in(&self, path: PathBuf, now: Timestamp) {
-        if let Some(intervals) = crate::persistence::read_json::<Vec<Interval>>(&path) {
-            let mut log = lock(&self.log);
-            let ahead = std::mem::take(&mut log.intervals);
-            log.restore(intervals, now);
-            // Anything noted before this was called, such as the launch, joins in.
-            for interval in ahead {
-                log.note(interval.start);
-                log.note(interval.end);
+        if let Some(saved) = crate::persistence::read_json::<SavedLog>(&path) {
+            let current = *lock(&self.user_id);
+            // Restored only for the user it records; a log for someone else is
+            // left behind, and overwritten at the next save.
+            if current.is_none() || current == saved.user_id {
+                *lock(&self.log_owner) = saved.user_id;
+                let mut log = lock(&self.log);
+                let ahead = std::mem::take(&mut log.intervals);
+                log.restore(saved.intervals, now);
+                // Anything noted before this was called, such as the launch,
+                // joins in.
+                for interval in ahead {
+                    log.note(interval.start);
+                    log.note(interval.end);
+                }
             }
         }
         *lock(&self.log_file) = Some((path, None));
@@ -424,13 +463,15 @@ impl Peers {
     }
 
     pub fn note_presence(&self, when: Timestamp) {
-        let opened = {
-            let mut log = lock(&self.log);
-            let before = log.intervals.len();
-            log.note(when);
-            log.intervals.len() != before
-        };
+        let opened = lock(&self.log).note(when);
         self.save(when, opened);
+    }
+
+    fn save_now(&self) {
+        let last = lock(&self.log_file).as_ref().and_then(|(_, last)| *last);
+        if let Some(last) = last {
+            self.save(last, true);
+        }
     }
 
     /// Writes the log if it has a file, and either `now_please` or a minute has
@@ -444,8 +485,11 @@ impl Peers {
         if !due {
             return;
         }
-        let intervals = lock(&self.log).intervals.clone();
-        match crate::persistence::write_json(path, &intervals) {
+        let saved = SavedLog {
+            user_id: *lock(&self.log_owner),
+            intervals: lock(&self.log).intervals.clone(),
+        };
+        match crate::persistence::write_json(path, &saved) {
             Ok(()) => *last = Some(now),
             Err(error) => log::error!("could not save when the user was seen: {error}"),
         }
@@ -535,9 +579,15 @@ impl Peers {
         since: Timestamp,
     ) -> Result<PresenceAnswer, Refusal> {
         let own = self.check_user(user_id)?;
+        // A log not yet known to be this user's says nothing about them.
+        let intervals = if *lock(&self.log_owner) == Some(own) {
+            lock(&self.log).since(since)
+        } else {
+            Vec::new()
+        };
         Ok(PresenceAnswer {
             user_id: own,
-            intervals: lock(&self.log).since(since),
+            intervals,
         })
     }
 
