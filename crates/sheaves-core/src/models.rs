@@ -93,6 +93,39 @@ pub struct TimeEntry {
     pub ended_time: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    /// A link to something outside Harvest that this entry belongs to. Sheaves
+    /// keeps when each machine saw the user here, on the running entry; see
+    /// [`crate::peers::board`].
+    #[serde(default)]
+    pub external_reference: Option<ExternalReference>,
+}
+
+/// Harvest's `external_reference`: meant for an integration's link to an issue or
+/// a card, and the only place on an entry that holds text other than its notes.
+///
+/// Read leniently: another integration may have written a number where Harvest
+/// documents a string, and the reference sits on every entry, so a strict field
+/// would fail the whole day's sync over it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalReference {
+    #[serde(default, deserialize_with = "text_or_number")]
+    pub id: Option<String>,
+    #[serde(default, deserialize_with = "text_or_number")]
+    pub group_id: Option<String>,
+    /// Must be an http(s) URL, or Harvest stores nothing.
+    #[serde(default, deserialize_with = "text_or_number")]
+    pub permalink: Option<String>,
+}
+
+/// A string as itself, a number as its digits, and anything else as nothing.
+fn text_or_number<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(text) => Some(text),
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    })
 }
 
 impl TimeEntry {
@@ -273,4 +306,23 @@ fn describe(path: String, error: &serde_json::Error, prefix: Option<&str>) -> St
         .unwrap_or(&message)
         .to_string();
     format!("{message} at {path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_reference_whatever_another_integration_wrote_in_it() {
+        let read: ExternalReference = serde_json::from_value(serde_json::json!({
+            "id": 12345, "group_id": null, "permalink": "https://tracker.example/12345",
+            "service": "tracker.example",
+        }))
+        .unwrap();
+        assert_eq!(read.id.as_deref(), Some("12345"));
+        assert_eq!(read.group_id, None);
+        let odd: ExternalReference =
+            serde_json::from_value(serde_json::json!({ "id": { "nested": true } })).unwrap();
+        assert_eq!(odd, ExternalReference::default());
+    }
 }

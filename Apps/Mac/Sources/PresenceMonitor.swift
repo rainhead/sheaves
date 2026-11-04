@@ -109,8 +109,8 @@ struct SystemPresenceSensor: PresenceSensor {
 
 /// Reads the system's presence signals and hands them to the core, which decides
 /// what they mean (`PresenceMonitor::poll` in `crates/sheaves-core/src/absence.rs`)
-/// and asks this Mac's peers whether they saw the user meanwhile
-/// (`crates/sheaves-core/src/peers.rs`).
+/// and reads, from the running entry, whether the user's other machines saw them
+/// meanwhile (`crates/sheaves-core/src/peers.rs`).
 @MainActor
 final class PresenceMonitor {
     private static let log = Logger(subsystem: "com.rainhead.Sheaves", category: "presence")
@@ -127,8 +127,9 @@ final class PresenceMonitor {
     private var workspaceObservers: [any NSObjectProtocol] = []
     private var distributedObservers: [any NSObjectProtocol] = []
 
-    /// With `tracker`, absences are checked with its peers before they are
-    /// reported; without one, this Mac decides alone.
+    /// With `tracker`, absences are checked against what the other machines wrote
+    /// on the running entry before they are reported; without one, this Mac
+    /// decides alone.
     init(
         sensor: any PresenceSensor = SystemPresenceSensor(),
         threshold: TimeInterval = defaultAbsenceThreshold(),
@@ -186,9 +187,9 @@ final class PresenceMonitor {
     ///
     /// The core is where the rules are: a locked screen outranks everything, the
     /// microphone counts as presence and is dated to the previous poll, the idle
-    /// clock is read as how long *since* the last input, and an absence one of the
-    /// peers saw the user through is no absence. Asking the peers takes up to two
-    /// seconds, and only when there is an absence to ask about.
+    /// clock is read as how long *since* the last input, and an absence another
+    /// machine saw the user through is no absence. Reading what they saw is one
+    /// request to Harvest, made only when there is an absence to ask about.
     func poll(now: Date = Date()) async {
         let reading = PresenceReading(
             secondsSinceInput: sensor.secondsSinceInput,

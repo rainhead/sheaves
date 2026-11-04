@@ -149,18 +149,10 @@ public final class TimeTracker {
         await core.resolve(absence: absence, entry: entry, resolution: resolution); refresh()
     }
 
-    // MARK: Peers
+    // MARK: Presence
 
-    /// The other machines to share presence with, by their names on the tailnet,
-    /// such as `hostess`. With any named, this Mac also answers them, on its tailnet
-    /// addresses only; with none, it neither asks nor answers.
-    public func setPeers(_ names: [String]) { core.setPeers(names: names) }
-
-    /// Where this Mac is listening for its peers, such as `100.101.102.103:47147`.
-    /// Read when asked: the core looks for new tailnet addresses once a minute.
-    public var listeningOn: [String] { core.listeningOn() }
-
-    /// A presence fold that asks this tracker's peers before it reports an absence.
+    /// A presence fold that shares what this Mac sees through the running entry,
+    /// and reads what the other machines saw there before it reports an absence.
     public func presenceFold(threshold: TimeInterval, now: Date) -> PresenceFold {
         core.presence(threshold: threshold, now: now)
     }

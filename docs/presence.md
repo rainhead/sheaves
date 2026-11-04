@@ -92,14 +92,27 @@ never do.
 
 ## Other machines
 
-One machine's idle time says nothing about another's. With peers named in Settings,
-each instance keeps a log of when it saw the user over the last day: every moment of
-evidence above, with gaps shorter than the threshold joined. Before reporting an
-absence it asks each peer for its log since the absence began, removes every stretch
-a peer saw the user in, and reports what is left that is still as long as the
-threshold. A peer that does not answer within two seconds is left out, and the
-machine decides as it would alone. The rules are in
-[`peers.rs`](../crates/sheaves-core/src/peers.rs).
+One machine's idle time says nothing about another's. Each instance keeps a log of
+when it saw the user over the last day: every moment of evidence above, with gaps
+shorter than the threshold joined. The machines share these logs through Harvest,
+on the running time entry, so they need no network of their own and nobody has to
+name the other machines.
+
+**If you followed a link here from a time entry in Harvest:** the entry's external
+reference, which Harvest shows as an icon, is Sheaves writing down when each of your
+machines saw you while that timer ran. It reads something like
+`1;tq3c0;a7bq:1o-3c;k3x9:0-1o.3c-50`: a version, a starting minute, and for each
+machine (named by a random id) the stretches it saw you in, as minutes from that
+start, in base 36. It is rewritten about once a minute while you are at a machine
+and removed when Sheaves stops the timer. It is on your own entry, so anyone who
+can see your timesheet, such as an administrator of the account, can see it too.
+
+Before reporting an absence, a machine reads the running entry, removes every
+stretch another machine saw the user in, and reports what is left that is still as
+long as the threshold. If Harvest cannot be reached, or the entry links to something
+else, the machine decides as it would alone. The rules are in
+[`peers.rs`](../crates/sheaves-core/src/peers.rs) and the text in
+[`board.rs`](../crates/sheaves-core/src/peers/board.rs).
 
 ## On GNOME
 

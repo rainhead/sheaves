@@ -15,8 +15,9 @@ use crate::calendar_date::CalendarDate;
 use crate::client::{Credentials, HarvestClient, HarvestError};
 use crate::clock::Clock;
 use crate::credentials::{CredentialError, CredentialStore, Login};
+use crate::models::ExternalReference;
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
-use crate::peers::Peers;
+use crate::peers::{Noticeboard, Peers, Posted};
 use crate::queue::{Mutation, MutationQueue, Owner, StoppedRun};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
 use crate::tracked_entry::{
@@ -294,7 +295,7 @@ struct Inner {
     /// or `None` when that is not known yet. The queue's owner and the cached user
     /// are checked against this, never the other way round.
     known_user: Mutex<Option<i64>>,
-    /// The other machines told when this one changes a timer, and who tell it.
+    /// This machine's presence log, shared through the running entry.
     peers: Mutex<Option<Arc<Peers>>>,
 }
 
@@ -380,17 +381,12 @@ impl TimeTracker {
         *self.inner.power.lock().unwrap() = Arc::new(probe);
     }
 
-    /// Joins this machine's peers: each change this tracker delivers to Harvest is
-    /// announced to them, and each change they announce makes this tracker probe
-    /// Harvest at once.
+    /// Shares this machine's presence through this tracker's Harvest account: on
+    /// the user's running entry, where the other machines read it.
     pub fn join(&self, peers: Arc<Peers>) {
-        let weak = Arc::downgrade(&self.inner);
-        peers.on_touched(move |_| {
-            if let Some(inner) = weak.upgrade() {
-                let tracker = TimeTracker { inner };
-                tokio::spawn(async move { tracker.sync().await });
-            }
-        });
+        peers.share_on(Arc::new(RunningEntry {
+            inner: Arc::downgrade(&self.inner),
+        }));
         *self.inner.peers.lock().unwrap() = Some(peers);
         // Tells the peers whose machine this is.
         self.inner.changed();
@@ -622,13 +618,6 @@ impl TimeTracker {
         }
 
         let report = inner.queue.drain(&inner.client).await;
-        if !report.touched.is_empty() {
-            let peers = inner.peers.lock().unwrap().clone();
-            if let Some(peers) = peers {
-                let touched = report.touched.clone();
-                tokio::spawn(async move { peers.announce(touched).await });
-            }
-        }
         let pending = inner.queue.count() as u32;
         inner.update(|state| {
             adopt(state, &report.resolved);
@@ -1852,6 +1841,71 @@ fn note_recent(state: &mut State, target: &TimerTarget) {
         .retain(|recent| recent.id() != target.id());
     state.recent_targets.insert(0, target.clone());
     state.recent_targets.truncate(MAX_RECENTS);
+}
+
+/// The board the machines share: the user's running entry, read fresh each time,
+/// since the point is to see what the other machines wrote since.
+struct RunningEntry {
+    inner: Weak<Inner>,
+}
+
+#[async_trait::async_trait]
+impl Noticeboard for RunningEntry {
+    async fn running(&self) -> Result<Option<Posted>, String> {
+        let inner = self.inner.upgrade().ok_or("the tracker has gone")?;
+        let (user_id, is_running) = {
+            let state = inner.state.lock().unwrap();
+            (
+                state.user.as_ref().map(|user| user.id),
+                state.entries.iter().any(|entry| entry.is_running),
+            )
+        };
+        // Nothing running as far as this machine knows: no request. A timer
+        // started elsewhere shows up at the next probe, within a minute or five,
+        // and is shared from then on.
+        let Some(user_id) = user_id.filter(|_| is_running) else {
+            return Ok(None);
+        };
+        let entry = inner
+            .client
+            .running_time_entry(user_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(entry.and_then(|entry| {
+            Some(Posted {
+                entry_id: entry.id,
+                timer_started_at: entry.timer_started_at?,
+                reference: entry.external_reference,
+            })
+        }))
+    }
+
+    async fn post(&self, entry_id: i64, reference: &ExternalReference) -> Result<(), String> {
+        let inner = self.inner.upgrade().ok_or("the tracker has gone")?;
+        let entry = inner
+            .client
+            .set_external_reference(entry_id, reference)
+            .await
+            .map_err(|error| error.to_string())?;
+        // Stopped between the read and the write: a finished entry carries
+        // nothing, so the write is undone.
+        if !entry.is_running {
+            inner
+                .client
+                .remove_external_reference(entry_id)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn may_post(&self) -> bool {
+        let Some(inner) = self.inner.upgrade() else {
+            return false;
+        };
+        let power = inner.power.lock().unwrap().clone();
+        power() != PowerState::LowPower
+    }
 }
 
 /// Swaps local placeholder ids for the Harvest ids their creates earned, without

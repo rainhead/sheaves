@@ -22,7 +22,7 @@ uniffi::custom_type!(Uuid, String, {
 });
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::absence::{
     Absence, AbsenceDetector, AbsenceResolution, PresenceMonitor, PresenceReading,
@@ -35,8 +35,7 @@ use crate::credentials::CredentialStore;
 use crate::demo::DemoTransport;
 use crate::hours::{HoursEdit, HoursFormat, parse_hours};
 use crate::models::{HarvestUser, Reference};
-use crate::peers::server::Listener;
-use crate::peers::{HttpPeerTransport, PEER_PORT, Peers, Presence};
+use crate::peers::{Peers, Presence, machine_id_in};
 use crate::queue::MutationQueue;
 use crate::snapshot::SnapshotStore;
 use crate::tracked_entry::{EntryId, ProjectTargets, TimerTarget, TrackedEntry};
@@ -255,20 +254,17 @@ pub fn presence_poll_interval() -> f64 {
 #[derive(uniffi::Object)]
 pub struct PresenceFold {
     presence: Arc<Presence>,
-    /// Where asking peers runs, which needs a Tokio runtime. A fold with no peers
-    /// never asks, and runs wherever it is called.
+    /// Where reading the other machines' presence runs, which needs a Tokio
+    /// runtime. A fold sharing nothing never reads, and runs wherever it is called.
     runtime: Option<tokio::runtime::Handle>,
 }
 
 #[uniffi::export]
 impl PresenceFold {
-    /// A fold with no peers, deciding alone.
+    /// A fold sharing nothing, deciding alone.
     #[uniffi::constructor]
     pub fn new(threshold: f64, now: Timestamp) -> Arc<Self> {
-        let peers = Arc::new(Peers::new(
-            threshold,
-            Arc::new(HttpPeerTransport::new(PEER_PORT)),
-        ));
+        let peers = Arc::new(Peers::new(threshold, "alone"));
         Arc::new(Self {
             presence: Arc::new(Presence::new(threshold, now, peers)),
             runtime: None,
@@ -403,7 +399,6 @@ pub struct Tracker {
     tracker: TimeTracker,
     notice: Option<String>,
     peers: Arc<Peers>,
-    listener: Mutex<Option<Listener>>,
 }
 
 impl Tracker {
@@ -471,9 +466,9 @@ impl Tracker {
         });
         let peers = Arc::new(Peers::new(
             AbsenceDetector::DEFAULT_THRESHOLD,
-            Arc::new(HttpPeerTransport::new(PEER_PORT)),
+            machine_id_in(&directory.join("machine.json")),
         ));
-        // The demo account is nobody's, and must not speak to real machines.
+        // The demo account is nobody's, and has no running entry to share on.
         if !demo {
             peers.keep_log_in(directory.join("presence.json"), Timestamp::now());
             tracker.join(peers.clone());
@@ -483,44 +478,16 @@ impl Tracker {
             tracker,
             notice,
             peers,
-            listener: Mutex::new(None),
         })
     }
 
-    /// A presence fold that asks this tracker's peers before it reports an absence,
-    /// and logs what it sees for them to ask about.
+    /// A presence fold that shares what it sees through this tracker's running
+    /// entry, and reads what the other machines saw before it reports an absence.
     pub fn presence(&self, threshold: f64, now: Timestamp) -> Arc<PresenceFold> {
         Arc::new(PresenceFold {
             presence: Arc::new(Presence::new(threshold, now, self.peers.clone())),
             runtime: Some(self.runtime.handle().clone()),
         })
-    }
-
-    /// The other machines to share presence with, by their names on the tailnet,
-    /// such as `hostess`. With any named, this machine also answers them, on its
-    /// tailnet addresses only; with none, it neither asks nor answers.
-    pub fn set_peers(&self, names: Vec<String>) {
-        self.peers.set_names(names);
-        let mut listener = self
-            .listener
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.peers.names().is_empty() {
-            *listener = None;
-        } else if listener.is_none() {
-            let _entered = self.runtime.enter();
-            *listener = Some(Listener::start(self.peers.clone(), PEER_PORT));
-        }
-    }
-
-    /// Where this machine is listening for peers, such as `100.101.102.103:47147`.
-    pub fn listening_on(&self) -> Vec<String> {
-        self.listener
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .as_ref()
-            .map(|listener| listener.bound().iter().map(ToString::to_string).collect())
-            .unwrap_or_default()
     }
 
     pub fn snapshot(&self) -> TrackerSnapshot {

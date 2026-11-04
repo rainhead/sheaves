@@ -93,6 +93,11 @@ drained, and let the first sync rebuild the snapshot.
 
 ## Peers: sharing presence between machines
 
+*Phase 9 moved this off the tailnet: the machines now share their stretches on the
+running entry in Harvest, with no listener, no change notices and no Peers
+setting; see phase 9 below. The presence log, the merge and the stop's re-read
+described here stay as they were.*
+
 **The case this fixes.** Start a timer on the Mac at nine, work at Hostess from
 ten to twelve, come back to the Mac. Today the Mac prompts to trim two hours of
 real work. Hostess stays quiet, rightly, because the timer started before its own
@@ -652,8 +657,46 @@ Hostess from nine to ten and eleven to twelve, a single latest stretch would let
 the Mac count nine to eleven as away. Four or five stretches per machine fit; the
 oldest are dropped first.
 
-Check first, before building on it: what writing a reference does to a running
-timer's hours and start time. Then replace the tailnet transport, the listener,
+Checked on 2026-11-04, on a running timer: writing a reference leaves the timer
+alone (its start, its banked hours and its running state; the hours went on
+growing), and so does removing it. The write moved `updated_at` and cleared
+`started_time`, which an account that keeps durations does not show. A 250
+character `id` was stored exactly. Details are on
+[#21](https://github.com/rainhead/sheaves/issues/21#issuecomment-6644269356).
+
+**Decided in phase 9.**
+
+- **What is written.** The reference's `group_id` is `sheaves-presence`, which is
+  how a machine knows a reference is Sheaves' to rewrite; any other reference is
+  left alone, and nothing is shared while it is there. The permalink is this
+  repository's presence document. The `id` holds the stretches as text no longer
+  than 250 characters: a version, a base instant in minutes, and for each machine
+  its stretches as minute offsets from the base, all in base 36. A stretch's start
+  is rounded down and its end up, so a minute's rounding counts as presence.
+- **Machines are named by a short random id,** made once and kept in the data
+  folder, rather than by their host names, which would be written to Harvest and
+  are long. Nothing needs a person to name the other machines any more.
+- **When the text is too long,** the oldest stretches go first, whichever machine
+  saw them.
+- **A machine rewrites its part about once a minute while it sees the user and a
+  timer is running,** reading the entry first; not at all in Low Power Mode. Two
+  machines writing in the same moment can drop one's part until its next write,
+  which only makes a prompt more likely, never less.
+- **The question reads the entry fresh** and takes the stretches every other
+  machine wrote, which feed the same merge as the peers' answers did.
+- **A stop delivered by Sheaves removes the reference** once the stop has landed,
+  if it is Sheaves'. A timer stopped elsewhere keeps it until it next runs, when
+  what it holds is still true evidence.
+- **[#21](https://github.com/rainhead/sheaves/issues/21)'s idea shares the field.**
+  Marking a create in the reference, so a retried create can find its entry,
+  would need the mark only until the create lands. A mark in another group would
+  read as someone else's reference and stop the sharing, so such a mark should
+  use `sheaves-presence` too, or be removed once the create has its id.
+- **Without change notices,** a prompt answered on one machine leaves the other's
+  open until that machine next checks Harvest: within a minute plugged in, five on
+  battery.
+
+Then replace the tailnet transport, the listener,
 the Peers setting and the change notices; the presence log, the merge, the prompt
 and the stop's re-read stay. Done when the scenarios of phase 7 pass again with
 no tailnet, and the tests cover the reference's encoding, its overflow and its

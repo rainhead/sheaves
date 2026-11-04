@@ -1731,6 +1731,7 @@ mod target_ranking {
             ended_time: None,
             created_at: Timestamp::now(),
             updated_at: Timestamp::now(),
+            external_reference: None,
         }
     }
 
