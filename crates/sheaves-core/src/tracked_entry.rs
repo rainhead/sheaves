@@ -108,12 +108,14 @@ impl TimerTarget {
 
     /// "Client · Project": the project alone is often ambiguous across clients.
     pub fn project_label(&self) -> String {
-        match &self.client {
-            Some(client) if !client.name.is_empty() => {
-                format!("{} · {}", client.name, self.project.name)
-            }
-            _ => self.project.name.clone(),
-        }
+        project_label(&self.project, self.client.as_ref())
+    }
+}
+
+fn project_label(project: &Reference, client: Option<&Reference>) -> String {
+    match client {
+        Some(client) if !client.name.is_empty() => format!("{} · {}", client.name, project.name),
+        _ => project.name.clone(),
     }
 }
 
@@ -133,6 +135,11 @@ pub struct ProjectTargets {
 impl ProjectTargets {
     pub fn id(&self) -> i64 {
         self.project.id
+    }
+
+    /// "Client · Project", as a timer on it would be labelled.
+    pub fn label(&self) -> String {
+        project_label(&self.project, self.client.as_ref())
     }
 
     /// The pair to start, given whichever task the row is showing.

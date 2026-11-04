@@ -64,6 +64,8 @@ struct EntryRow: View {
                 .disabled(entry.isLocked)
             Button("Edit Time…") { beginEditingHours() }
                 .disabled(entry.isLocked)
+            MoveMenu(entry: entry)
+                .disabled(entry.isLocked)
             Button("Delete…", role: .destructive, action: requestDelete)
                 .disabled(entry.isLocked)
         }

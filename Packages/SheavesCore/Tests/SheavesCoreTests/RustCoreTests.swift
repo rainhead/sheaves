@@ -27,4 +27,59 @@ struct RustCoreTests {
         #expect(tracker.orderedProjects.count == 3)
         #expect(tracker.budgets.values.contains { $0.isOverBudget })
     }
+
+    /// The wrapper's spelling reaches the core's `retarget` with the entry and the
+    /// target it was given. The demo account keeps no changes, so the refetch that
+    /// follows the move puts the entry back where it was; what the move leaves
+    /// behind is the target at the head of the recent ones, which only a move or a
+    /// start puts there.
+    @Test("moves an entry to another project and task")
+    @MainActor
+    func retarget() async throws {
+        let tracker = TimeTracker.demo()
+        await tracker.sync()
+        let entry = try #require(tracker.entries.first { !$0.isRunning })
+        let elsewhere = try #require(tracker.orderedProjects.first { $0.id != entry.project.id })
+        let target = elsewhere.target(task: try #require(elsewhere.tasks.last))
+        #expect(tracker.recentTargets.first != target)
+
+        await tracker.retarget(entry, to: target)
+
+        #expect(tracker.recentTargets.first == target)
+        let moved = try #require(tracker.entries.first { $0.id == entry.id })
+        #expect(moved.bankedHours == entry.bankedHours)
+        #expect(moved.notes == entry.notes)
+    }
+
+    /// Hours, target, day and notes each reach the core in their own place: the
+    /// labels on the wrapper's arguments are the only thing keeping them apart.
+    @Test("logs time on the day on screen without a timer")
+    @MainActor
+    func logTime() async throws {
+        let tracker = TimeTracker.demo()
+        await tracker.sync()
+        let before = tracker.entries.map(\.id)
+        let project = try #require(tracker.orderedProjects.last)
+        let target = project.target(task: try #require(project.tasks.first))
+
+        await tracker.logTime(1.5, on: target, day: tracker.day, notes: "Standup")
+
+        let logged = try #require(tracker.entries.first { !before.contains($0.id) })
+        #expect(logged.target == target)
+        #expect(logged.bankedHours == 1.5)
+        #expect(logged.notes == "Standup")
+        #expect(!logged.isRunning)
+        #expect(logged.spentDate == tracker.day)
+    }
+
+    @Test("labels a project the way an entry on it is labelled")
+    func projectLabel() {
+        let project = ProjectTargets(
+            project: Reference(id: 1, name: "Website"),
+            client: Reference(id: 2, name: "Acme"),
+            tasks: [Reference(id: 3, name: "Design")]
+        )
+        #expect(project.label == "Acme · Website")
+        #expect(project.label == project.target(task: project.tasks[0]).projectLabel)
+    }
 }

@@ -48,6 +48,9 @@ extension ProjectTargets: Identifiable {
 
 public extension ProjectTargets {
     func target(task: Reference) -> TimerTarget { withTask(task: task) }
+
+    /// "Client · Project", the way an entry names its project.
+    var label: String { projectLabel() }
 }
 
 extension Reference: Identifiable {}

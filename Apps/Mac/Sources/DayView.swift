@@ -28,7 +28,9 @@ struct DayView: View {
     /// The entry ⌫ or the context menu has asked to delete, held here for the same
     /// reason.
     @State private var confirmingDelete: TrackedEntry.ID?
-    private var isEditingField: Bool { editingNotes != nil || editingHours != nil }
+    /// Whether the form for logging time without a timer is open under the header.
+    @State private var isLoggingTime = false
+    private var isEditingField: Bool { editingNotes != nil || editingHours != nil || isLoggingTime }
     @FocusState private var isPanelFocused: Bool
 
     private var format: HoursFormat { HoursFormat(company: tracker.company) }
@@ -70,6 +72,14 @@ struct DayView: View {
                 // is about the thing being worked on now.
                 if let active = tracker.activity.entry {
                     BudgetBar(entry: active, format: format)
+                }
+                if isLoggingTime {
+                    Divider()
+                    LogTimeForm(dayTitle: dayTitle) {
+                        isLoggingTime = false
+                        // Back to the panel, so the arrows and ⏎ work again.
+                        isPanelFocused = true
+                    }
                 }
                 Divider()
                 // Today's entries come first: resuming something already started is
@@ -193,6 +203,22 @@ struct DayView: View {
             Text(tracker.totalHours.formattedHours(format))
                 .font(.headline.monospacedDigit())
                 .frame(minWidth: 52, alignment: .trailing)
+
+            // Opens the form rather than toggling it, so a second press does not
+            // throw away what was typed.
+            Button {
+                editingNotes = nil
+                editingHours = nil
+                isLoggingTime = true
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .help("Log time without a timer")
+            .accessibilityLabel("Log time")
+            .contentShape(.rect)
+            .keyboardShortcut("n")
         }
     }
 

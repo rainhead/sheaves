@@ -50,6 +50,15 @@ enum DocumentationImages {
                 width: 380,
                 to: directory.appending(path: "edit-hours.png")
             ),
+            // Logging time with no timer, opened by the panel's + button, with a
+            // length and notes typed.
+            try await write(
+                LogTimeForm(dayTitle: "Today", hours: "1:30", notes: "Kickoff meeting") {}
+                    .environment(tracker)
+                    .padding(12),
+                width: 380,
+                to: directory.appending(path: "log-time.png")
+            ),
             // Settings, connected, with a peer named. The demo tracker never
             // listens, so the listening row reads as it does without Tailscale.
             try await write(

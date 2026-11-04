@@ -617,6 +617,16 @@ views of them.
 Checked at the desk, 2026-11-04: an edit made on Hostess reached the Mac; moving
 an entry and logging time both worked.
 
+- **On the Mac, an entry moves through "Move To" in its context menu,** listing
+  each project as "Client · Project", with its tasks in a submenu when it has more
+  than one ([`MoveMenu`](../Apps/Mac/Sources/MoveMenu.swift)). A project is
+  picked from a list, not typed, so it belongs in a menu where the notes and the
+  time are edited in place.
+- **A + button in the panel's header, or ⌘N, logs time** in a form that opens
+  under the header, on the day on screen when Log is pressed
+  ([`LogTimeForm`](../Apps/Mac/Sources/LogTimeForm.swift)). It shows the project's
+  name with its client beneath, as GNOME's row does.
+
 ### Phase 9: presence through Harvest, replacing the tailnet (core; Opus)
 
 Decided with Peter on 2026-11-04, after phase 7 was working: the machines share
