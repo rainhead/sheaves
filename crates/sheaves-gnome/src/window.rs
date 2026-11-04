@@ -21,6 +21,8 @@ use crate::format;
 pub enum Action {
     Start(TimerTarget),
     Toggle(TrackedEntry),
+    /// Open the editor for an entry's notes and total.
+    Edit(TrackedEntry),
     ShiftDay(i32),
     Today,
     Sync,
@@ -244,7 +246,20 @@ impl Window {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&entry.task.name))
                 .subtitle(glib::markup_escape_text(&subtitle(entry)))
+                .activatable(!entry.is_locked)
                 .build();
+            if entry.is_locked {
+                // Approved or invoiced in Harvest: it can be looked at, not changed.
+                let lock = gtk::Image::from_icon_name("changes-prevent-symbolic");
+                lock.set_tooltip_text(Some("Locked in Harvest"));
+                row.add_prefix(&lock);
+            } else {
+                let actions = self.actions.clone();
+                let opened = entry.clone();
+                row.connect_activated(move |_| {
+                    let _ = actions.try_send(Action::Edit(opened.clone()));
+                });
+            }
             let label = gtk::Label::new(None);
             label.add_css_class("numeric");
             if entry.is_running {

@@ -580,6 +580,22 @@ GNOME also lacks the edits the Mac already has, which phase 6 left out: notes,
 a new total typed onto an entry (running or not), and delete. They come first in
 this phase, since the core already does them.
 
+**Decided in phase 8, so far.** The phase goes in three pull requests: the edits
+GNOME was missing, then the new edits in the core and on GNOME, then the Mac's
+views of them.
+
+- **Editing a stopped entry's total needs nothing new.** The core and the Mac
+  already do it: it is the same edit as typing a new total onto a running timer.
+- **On GNOME, clicking an entry opens an editor** for its notes and total, with
+  Delete beside them ([`edit.rs`](../crates/sheaves-gnome/src/edit.rs)). That is
+  GNOME's usual pattern, where the Mac edits in place. The total follows the
+  core's rule that a field left as it opened sends nothing (`HoursEdit::commit`),
+  and a locked entry shows a padlock and does not open.
+- **Deleting asks first, and so does resuming a past day's entry,** in the Mac's
+  words: "Start on Today" or "Resume on" that day.
+
+Checked at the desk, 2026-11-04: an edit made on Hostess reached the Mac.
+
 ### Phase 9: quick entry and the shortcut (Hostess, a day)
 
 A quick entry window that `sheaves-gnome --quick-entry` raises in the running

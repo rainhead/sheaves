@@ -384,7 +384,66 @@ impl Shell {
                 glib::spawn_future_local(async move { tracker.start(target, None).await });
             }
             Action::Toggle(entry) => {
-                glib::spawn_future_local(async move { tracker.toggle(entry).await });
+                let today = self.latest.borrow().state.today;
+                if !entry.is_running && entry.spent_date != today {
+                    let resumed = entry.clone();
+                    let reopened = entry.clone();
+                    let started = tracker.clone();
+                    let resuming = tracker.clone();
+                    crate::edit::confirm_resume(
+                        &self.window.window,
+                        &entry,
+                        move || {
+                            // To today first, then start: the core's check for an
+                            // entry to resume sees only the visible day, and the
+                            // new timer is where the eye can follow it.
+                            let tracker = started.clone();
+                            let target = resumed.target();
+                            let notes = resumed.notes.clone();
+                            glib::spawn_future_local(async move {
+                                tracker.go_to_today().await;
+                                tracker.start(target, notes).await;
+                            });
+                        },
+                        move || {
+                            let tracker = resuming.clone();
+                            let entry = reopened.clone();
+                            glib::spawn_future_local(async move { tracker.resume(entry).await });
+                        },
+                    );
+                } else {
+                    glib::spawn_future_local(async move { tracker.toggle(entry).await });
+                }
+            }
+            Action::Edit(entry) => {
+                let latest = self.latest.borrow();
+                let saving = tracker.clone();
+                let saved = entry.clone();
+                let deleting = tracker.clone();
+                let deleted = entry.clone();
+                crate::edit::present_editor(
+                    &self.window.window,
+                    &entry,
+                    window::hours_format(&latest),
+                    latest.state.now,
+                    move |changes| {
+                        let tracker = saving.clone();
+                        let entry = saved.clone();
+                        glib::spawn_future_local(async move {
+                            if let Some(notes) = changes.notes {
+                                tracker.update_notes(entry.clone(), notes).await;
+                            }
+                            if let Some(hours) = changes.hours {
+                                tracker.update_hours(entry, hours).await;
+                            }
+                        });
+                    },
+                    move || {
+                        let tracker = deleting.clone();
+                        let entry = deleted.clone();
+                        glib::spawn_future_local(async move { tracker.delete(entry).await });
+                    },
+                );
             }
             Action::ShiftDay(days) => {
                 glib::spawn_future_local(async move { tracker.shift_day(days).await });

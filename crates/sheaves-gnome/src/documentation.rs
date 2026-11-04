@@ -87,6 +87,25 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                     write(&dialog, &window, &directory.join("gnome-prompt.png")),
                     &failed,
                 );
+                dialog.force_close();
+
+                // The editor, for the same entry.
+                let snapshot = tracker.snapshot();
+                crate::edit::present_editor(
+                    &window.window,
+                    &entry,
+                    crate::window::hours_format(&snapshot),
+                    snapshot.state.now,
+                    |_| {},
+                    || {},
+                );
+                glib::timeout_future(Duration::from_millis(600)).await;
+                if let Some(editor) = window.window.visible_dialog() {
+                    report(
+                        write(&editor, &window, &directory.join("gnome-editor.png")),
+                        &failed,
+                    );
+                }
             }
             app.quit();
         });
