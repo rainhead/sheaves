@@ -28,11 +28,12 @@ struct RustCoreTests {
         #expect(tracker.budgets.values.contains { $0.isOverBudget })
     }
 
-    /// The wrapper's spelling reaches the core's `retarget` with the entry and the
-    /// target it was given. The demo account keeps no changes, so the refetch that
-    /// follows the move puts the entry back where it was; what the move leaves
-    /// behind is the target at the head of the recent ones, which only a move or a
-    /// start puts there.
+    /// The wrapper reaches the core with the entry and the target it was given.
+    /// The demo account keeps no changes, so the refetch that follows the move puts
+    /// the entry back where it was; what the move leaves behind is the target at
+    /// the head of the recent ones. A start leaves the same, so this cannot tell
+    /// the two apart: that the move queues an update carrying the new project and
+    /// task is the core's test, in `tracker/tests.rs`.
     @Test("moves an entry to another project and task")
     @MainActor
     func retarget() async throws {

@@ -91,7 +91,6 @@ struct LogTimeForm: View {
                     .focused($focus, equals: .notes)
             }
             .onSubmit(log)
-            .onExitCommand(perform: onClose)
 
             HStack {
                 Spacer()
@@ -102,7 +101,20 @@ struct LogTimeForm: View {
             }
             .controlSize(.small)
         }
-        .onAppear { focus = .hours }
+        // On the whole form rather than its fields, so Escape closes the form even
+        // when a menu or nothing at all has the focus; otherwise it reaches the
+        // panel, which hides itself with the form still open inside it.
+        .onExitCommand(perform: onClose)
+        .onAppear {
+            // Fixed now rather than read from the head of the list each time: a
+            // timer started below while this is open moves its project to the top,
+            // and the time would quietly land there instead of where it showed.
+            if projectID == nil, let first = projects.first {
+                projectID = first.id
+                taskID = first.tasks.first?.id
+            }
+            focus = .hours
+        }
     }
 
     /// The project's name alone, with its client beneath: "Client · Project" in a
@@ -128,7 +140,9 @@ struct LogTimeForm: View {
                     .lineLimit(1)
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
+            // Its own height but not its own width, so a long name is cut short
+            // rather than pushing the form past the panel's edge.
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(projects.isEmpty)
             .accessibilityLabel("Project")
             .accessibilityValue(project?.label ?? "")
@@ -164,7 +178,9 @@ struct LogTimeForm: View {
                     .lineLimit(1)
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
+            // Its own height but not its own width, so a long name is cut short
+            // rather than pushing the form past the panel's edge.
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("Task")
             .accessibilityValue(task?.name ?? "")
         } else {
