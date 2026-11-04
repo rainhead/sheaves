@@ -100,12 +100,16 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                     || {},
                 );
                 glib::timeout_future(Duration::from_millis(600)).await;
-                if let Some(editor) = window.window.visible_dialog() {
-                    report(
-                        write(&editor, &window, &directory.join("gnome-editor.png")),
-                        &failed,
-                    );
-                }
+                let editor = window
+                    .window
+                    .visible_dialog()
+                    .ok_or_else(|| "the editor did not appear".to_string());
+                report(
+                    editor.and_then(|editor| {
+                        write(&editor, &window, &directory.join("gnome-editor.png"))
+                    }),
+                    &failed,
+                );
             }
             app.quit();
         });
