@@ -149,8 +149,10 @@ pub fn present(
 
     let finished = Rc::new(finished);
     let answered = Rc::new(Cell::new(false));
+    // Weak, because the dialog owns the rows that hold this: a strong reference
+    // would keep every prompt ever shown alive after it closed.
     let answer = {
-        let dialog = dialog.clone();
+        let dialog = dialog.downgrade();
         let finished = finished.clone();
         let answered = answered.clone();
         Rc::new(move |resolution: AbsenceResolution| {
@@ -158,7 +160,9 @@ pub fn present(
                 return;
             }
             finished(Outcome::Resolved(resolution));
-            dialog.force_close();
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.force_close();
+            }
         })
     };
     {
@@ -186,17 +190,21 @@ pub fn present(
         }
         let choice = *choice;
         let answer = answer.clone();
-        let stack = stack.clone();
+        let stack = stack.downgrade();
         row.connect_activated(move |_| match choice {
             Choice::TrimAndContinue => answer(AbsenceResolution::TrimAndContinue),
             Choice::TrimAndStop => answer(AbsenceResolution::TrimAndStop),
             Choice::Keep => answer(AbsenceResolution::Keep),
-            Choice::LogSeparately => stack.set_visible_child_name("targets"),
+            Choice::LogSeparately => {
+                if let Some(stack) = stack.upgrade() {
+                    stack.set_visible_child_name("targets");
+                }
+            }
         });
         choices.append(&row);
     }
     stack.add_named(&choices, Some("choices"));
-    stack.add_named(&target_picker(targets, answer), Some("targets"));
+    stack.add_named(&target_picker(targets, answer, &stack), Some("targets"));
     stack.set_visible_child_name("choices");
     dialog.set_extra_child(Some(&stack));
     dialog.present(parent);
@@ -204,11 +212,41 @@ pub fn present(
 }
 
 /// "Log the time away to…": the ranked targets, searchable.
-fn target_picker(targets: Vec<TimerTarget>, answer: Rc<dyn Fn(AbsenceResolution)>) -> gtk::Box {
+fn target_picker(
+    targets: Vec<TimerTarget>,
+    answer: Rc<dyn Fn(AbsenceResolution)>,
+    stack: &gtk::Stack,
+) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    // Back to the four choices: a change of mind here should not cost the
+    // question, which closing the prompt would.
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.set_tooltip_text(Some("Back"));
+    back.add_css_class("flat");
+    {
+        let stack = stack.downgrade();
+        back.connect_clicked(move |_| {
+            if let Some(stack) = stack.upgrade() {
+                stack.set_visible_child_name("choices");
+            }
+        });
+    }
     let label = gtk::Label::new(Some("Log the time away to…"));
     label.add_css_class("heading");
     label.set_xalign(0.0);
+    let heading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    heading.append(&back);
+    heading.append(&label);
+    if targets.is_empty() {
+        let none = gtk::Label::new(Some(
+            "There is nothing to log it to: this account has no projects assigned.",
+        ));
+        none.set_wrap(true);
+        none.add_css_class("dim-label");
+        column.append(&heading);
+        column.append(&none);
+        return column;
+    }
     let search = gtk::SearchEntry::new();
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
@@ -244,7 +282,7 @@ fn target_picker(targets: Vec<TimerTarget>, answer: Rc<dyn Fn(AbsenceResolution)
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_min_content_height(240);
     scrolled.set_child(Some(&list));
-    column.append(&label);
+    column.append(&heading);
     column.append(&search);
     column.append(&scrolled);
     column

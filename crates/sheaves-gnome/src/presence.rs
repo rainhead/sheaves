@@ -67,8 +67,11 @@ pub fn watch(fold: Arc<PresenceFold>, absences: async_channel::Sender<Absence>) 
                 .build()
                 .expect("a runtime can start");
             runtime.block_on(async move {
-                if let Err(error) = run(fold, absences).await {
-                    log::error!("not watching for absences: {error}");
+                // At login the session's services can still be starting, so a
+                // failure to set up is retried rather than ending the watch.
+                while let Err(error) = run(fold.clone(), absences.clone()).await {
+                    log::error!("not watching for absences, trying again in 30 seconds: {error}");
+                    tokio::time::sleep(Duration::from_secs(30)).await;
                 }
             });
         })
