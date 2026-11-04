@@ -126,6 +126,20 @@ public final class TimeTracker {
     public func updateHours(_ entry: TrackedEntry, to hours: Double) async {
         await core.updateHours(entry: entry, hours: hours); refresh()
     }
+    /// Moves `entry` to another project and task, keeping its time and notes.
+    public func retarget(_ entry: TrackedEntry, to target: TimerTarget) async {
+        await core.retarget(entry: entry, target: target); refresh()
+    }
+    /// Records `hours` on `target` on `day` with no timer. It shows at once when
+    /// `day` is the one on screen.
+    public func logTime(
+        _ hours: Double,
+        on target: TimerTarget,
+        day: CalendarDate,
+        notes: String? = nil
+    ) async {
+        await core.logTime(target: target, day: day, hours: hours, notes: notes); refresh()
+    }
     public func delete(_ entry: TrackedEntry) async { await core.delete(entry: entry); refresh() }
     public func resolve(
         _ absence: Absence,

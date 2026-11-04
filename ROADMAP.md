@@ -32,8 +32,8 @@ that would actually earn their place are a Live Activity — the running timer o
 Lock Screen and in the Dynamic Island — and a home screen widget. If iOS happens, it
 should be a small app that exists to host those.
 
-**Editing a day or week.** Inline duration edits, reassigning project and task, and a
-week view. Notes and delete already work; the rest was cut from v1 deliberately.
+**A week view.** Editing a day is done: notes, time, project and task, delete, and
+time logged without a timer. Seeing a week at once was cut from v1 and still is.
 
 **A signed, notarised build.** So it lives in `/Applications` rather than
 `DerivedData`. Needs a paid Developer Program membership. Less urgent since team

@@ -107,6 +107,11 @@ impl ProjectTargets {
     pub fn with_task(&self, task: Reference) -> TimerTarget {
         self.target(task)
     }
+
+    /// "Client · Project".
+    pub fn project_label(&self) -> String {
+        self.label()
+    }
 }
 
 #[uniffi::export]
