@@ -33,15 +33,19 @@ struct LogTimeForm: View {
 
     private var projects: [ProjectTargets] { tracker.orderedProjects }
 
-    /// The project chosen, or the best-ranked one until something is.
+    /// The project chosen, or the best-ranked one before anything is. A chosen
+    /// project that a sync has since taken away is nothing, not the next one down,
+    /// so Log waits for another choice instead of landing somewhere unseen.
     private var project: ProjectTargets? {
-        projects.first { $0.id == projectID } ?? projects.first
+        guard let projectID else { return projects.first }
+        return projects.first { $0.id == projectID }
     }
 
-    /// The task chosen, as long as it belongs to the project; else its best one.
+    /// The task chosen, on the same terms; a new project starts on its best one.
     private var task: Reference? {
         guard let project else { return nil }
-        return project.tasks.first { $0.id == taskID } ?? project.tasks.first
+        guard let taskID else { return project.tasks.first }
+        return project.tasks.first { $0.id == taskID }
     }
 
     private var hours: Double? {
@@ -136,7 +140,7 @@ struct LogTimeForm: View {
                     }
                 }
             } label: {
-                Text(project?.project.name ?? "No projects")
+                Text(project?.project.name ?? (projects.isEmpty ? "No projects" : "Choose a project"))
                     .lineLimit(1)
             }
             .menuStyle(.borderlessButton)
@@ -157,10 +161,11 @@ struct LogTimeForm: View {
     }
 
     /// A project with one task has nothing to choose, so it reads as a label, as it
-    /// does in the project list below.
+    /// does in the project list below — unless the task chosen has gone, which
+    /// leaves something to choose after all.
     @ViewBuilder
     private var taskMenu: some View {
-        if let project, project.tasks.count > 1 {
+        if let project, project.tasks.count > 1 || (task == nil && !project.tasks.isEmpty) {
             Menu {
                 ForEach(project.tasks) { option in
                     Button {
@@ -174,7 +179,7 @@ struct LogTimeForm: View {
                     }
                 }
             } label: {
-                Text(task?.name ?? "")
+                Text(task?.name ?? "Choose a task")
                     .lineLimit(1)
             }
             .menuStyle(.borderlessButton)
