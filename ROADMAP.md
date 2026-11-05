@@ -7,12 +7,9 @@ hours it records, then everything else. Nothing here is a commitment.
 ## Next
 
 **Nothing claimed.** The GNOME app is done ([how it was built](docs/gnome-port.md)),
-and so is editing a day. Three questions about absences wait on real use rather
-than on code: when exactly an absence begins
-([#23](https://github.com/rainhead/sheaves/issues/23)), an absence answered after an
-entry made offline got its Harvest id
-([#26](https://github.com/rainhead/sheaves/issues/26)), and the two left open in
-[phase 5 of the plan](docs/gnome-port.md#phase-5-peers-core-and-mac-a-few-days-opus).
+and so is editing a day. One question about absences waits on a check at the desk:
+whether locking the screen hides the keypress that locked it
+([#23](https://github.com/rainhead/sheaves/issues/23)).
 
 ## Maybe, and what each would cost
 

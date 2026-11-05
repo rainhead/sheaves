@@ -433,3 +433,61 @@ async fn presence_elsewhere_that_stops_short_leaves_the_question() {
     desk.mac.tracker.sync().await;
     assert_eq!(prompts(&desk.mac).len(), 1, "{:?}", desk.mac.absences);
 }
+
+/// Both machines ask about the same lunch, and both are answered Trim and keep
+/// timing before either has seen the other's answer. The second trim's stop is
+/// dropped as stale, and its restart patches the total to its own arithmetic,
+/// which is the first's on a record of the same lunch: the hours come out the
+/// same within the minute the two absences differ by.
+#[tokio::test]
+async fn trimming_the_same_lunch_on_both_machines_bills_it_once() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    desk.spend(At::Mac, "11:00").await;
+    desk.spend(At::Hostess, "12:00").await;
+    desk.spend(At::Away, "13:00").await;
+    desk.spend(At::Mac, "13:01").await;
+    desk.spend(At::Hostess, "13:02").await;
+    let on_mac = prompts(&desk.mac);
+    let on_hostess = prompts(&desk.hostess);
+    assert_eq!((on_mac.len(), on_hostess.len()), (1, 1));
+
+    let running = desk
+        .hostess
+        .tracker
+        .state()
+        .running_entry()
+        .cloned()
+        .unwrap();
+    desk.hostess
+        .tracker
+        .resolve(
+            &on_hostess[0],
+            &running,
+            &AbsenceResolution::TrimAndContinue,
+        )
+        .await;
+    let after_one = desk.harvest.only_entry();
+
+    // The Mac has not looked at Harvest since, so it still asks, and is answered.
+    desk.clock.advance(20.0);
+    let running = desk.mac.tracker.state().running_entry().cloned().unwrap();
+    desk.mac
+        .tracker
+        .resolve(&on_mac[0], &running, &AbsenceResolution::TrimAndContinue)
+        .await;
+    desk.mac.tracker.sync().await;
+
+    let after_both = desk.harvest.only_entry();
+    let now = desk.clock.now();
+    assert!(after_both.running_since.is_some(), "{after_both:?}");
+    // Three hours from nine to noon, and running since the user came back.
+    let expected = after_one.hours(now);
+    let billed = after_both.hours(now);
+    assert!(
+        (billed - expected).abs() < 2.0 / 60.0,
+        "billed {billed:.3} h, one trim alone {expected:.3} h"
+    );
+}
