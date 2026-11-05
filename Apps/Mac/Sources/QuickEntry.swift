@@ -170,7 +170,11 @@ struct QuickEntryView: View {
             }
             .padding(.bottom, 2)
         } else {
-            Text("Nothing running · \(tracker.totalHours.formattedHours(HoursFormat(company: tracker.company))) today")
+            // The total is the panel's day's, which is today's only when the
+            // panel shows today.
+            Text(tracker.isToday
+                ? "Nothing running · \(tracker.totalHours.formattedHours(HoursFormat(company: tracker.company))) today"
+                : "Nothing running")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

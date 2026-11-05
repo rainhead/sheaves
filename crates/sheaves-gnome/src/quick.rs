@@ -226,10 +226,16 @@ impl QuickEntry {
                 self.idle.set_visible(false);
             }
             None => {
-                self.idle.set_label(&format!(
-                    "Nothing running · {} today",
-                    format::hours(snapshot.total_hours, format)
-                ));
+                // The total is the window's day's, which is today's only when
+                // the window shows today.
+                self.idle.set_label(&if snapshot.is_today {
+                    format!(
+                        "Nothing running · {} today",
+                        format::hours(snapshot.total_hours, format)
+                    )
+                } else {
+                    "Nothing running".to_string()
+                });
                 self.running.set_visible(false);
                 self.idle.set_visible(true);
             }
