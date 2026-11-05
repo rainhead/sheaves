@@ -149,7 +149,23 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                     }),
                     &failed,
                 );
+                if let Some(logger) = window.window.visible_dialog() {
+                    logger.force_close();
+                }
             }
+
+            // Quick entry, with a timer running and a search typed.
+            let (actions, _ignored) = async_channel::unbounded();
+            let quick = crate::quick::QuickEntry::new(&app, actions);
+            quick.render(&tracker.snapshot());
+            quick.present();
+            quick.type_search("prog");
+            glib::timeout_future(Duration::from_millis(600)).await;
+            let content = quick.window().content().expect("quick entry has content");
+            report(
+                write(&content, &window, &directory.join("gnome-quick-entry.png")),
+                &failed,
+            );
             app.quit();
         });
     });

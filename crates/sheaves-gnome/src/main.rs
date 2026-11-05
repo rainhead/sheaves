@@ -15,8 +15,11 @@ mod indicator;
 mod keyring;
 mod launcher;
 mod presence;
+mod projects;
 mod prompt;
+mod quick;
 mod settings;
+mod shortcut;
 mod window;
 
 fn main() -> gtk::glib::ExitCode {

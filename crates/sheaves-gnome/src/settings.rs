@@ -17,6 +17,7 @@ pub fn present(parent: &adw::ApplicationWindow, tracker: Arc<Tracker>, snapshot:
     dialog.set_title("Settings");
     let page = adw::PreferencesPage::new();
     page.add(&harvest_group(&dialog, tracker, snapshot));
+    page.add(&shortcut_group());
     page.add(&startup_group());
     page.add(&about_group());
     dialog.add(&page);
@@ -158,6 +159,78 @@ fn harvest_group(
     });
     let on_click = attempt.clone();
     connect.connect_clicked(move |_| on_click(false));
+    group
+}
+
+/// The key for quick entry, as one of GNOME's custom shortcuts. Switched on, it
+/// is Ctrl+Alt+Super+T, which the user can change in GNOME's own Settings; the
+/// row says whichever key is bound.
+fn shortcut_group() -> adw::PreferencesGroup {
+    use crate::shortcut::{self, Shortcuts};
+
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Shortcut");
+    let row = adw::SwitchRow::builder().title("Quick entry").build();
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_visible(false);
+    group.add(&row);
+    group.add(&error);
+
+    let Some(shortcuts) = Shortcuts::desktop() else {
+        row.set_subtitle("GNOME's keyboard shortcuts are not available here.");
+        row.set_sensitive(false);
+        return group;
+    };
+    let describe = |row: &adw::SwitchRow, bound: Option<&str>| {
+        row.set_subtitle(&match bound {
+            Some(key) => format!(
+                "{} opens a window to start a timer from any app. Change the key in Settings › Keyboard › Custom Shortcuts.",
+                shortcut::readable(key)
+            ),
+            None => format!(
+                "Adds {} to GNOME's keyboard shortcuts, to start a timer from any app.",
+                shortcut::readable(shortcut::SUGGESTED)
+            ),
+        });
+    };
+    let bound = shortcuts.bound();
+    row.set_active(bound.is_some());
+    describe(&row, bound.as_deref());
+
+    // As with the login item: putting the switch back after a failure notifies
+    // again, and must not undo what it reports.
+    let reverting = std::rc::Rc::new(std::cell::Cell::new(false));
+    row.connect_active_notify(move |row| {
+        if reverting.get() {
+            return;
+        }
+        let result = if row.is_active() {
+            autostart::this_program()
+                .map_err(|error| error.to_string())
+                .and_then(|program| {
+                    shortcuts
+                        .bind(shortcut::SUGGESTED, &program)
+                        .map_err(|error| error.to_string())
+                })
+        } else {
+            shortcuts.unbind().map_err(|error| error.to_string())
+        };
+        let bound = shortcuts.bound();
+        match result {
+            Ok(()) => error.set_visible(false),
+            Err(failure) => {
+                error.set_label(&format!("Could not change the shortcut: {failure}"));
+                error.set_visible(true);
+                reverting.set(true);
+                row.set_active(bound.is_some());
+                reverting.set(false);
+            }
+        }
+        describe(row, bound.as_deref());
+    });
     group
 }
 
