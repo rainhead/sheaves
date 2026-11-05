@@ -64,7 +64,9 @@ pub fn day(day: CalendarDate) -> String {
         0,
         0.0,
     );
-    date.and_then(|date| date.format("%A %e %B"))
+    // The month abbreviated, as the Mac has it: in the window's header the full
+    // name made the day too long to sit between its arrows.
+    date.and_then(|date| date.format("%A %e %b"))
         .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_else(|_| day.to_string())
 }

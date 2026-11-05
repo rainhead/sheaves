@@ -33,8 +33,9 @@ pub enum Action {
 
 pub struct Window {
     pub window: adw::ApplicationWindow,
-    title: adw::WindowTitle,
-    today: gtk::Button,
+    day: gtk::Label,
+    total: gtk::Label,
+    today: gtk::Label,
     banner: adw::Banner,
     entries: gtk::ListBox,
     no_entries: gtk::Label,
@@ -52,24 +53,55 @@ pub struct Window {
 
 impl Window {
     pub fn new(app: &adw::Application, actions: async_channel::Sender<Action>) -> Rc<Self> {
-        let title = adw::WindowTitle::new("Sheaves", "");
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
         back.set_tooltip_text(Some("Previous day"));
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
         forward.set_tooltip_text(Some("Next day"));
-        let today = gtk::Button::with_label("Today");
+        // The day between its arrows, as the Mac's panel has it, rather than the
+        // arrows at the window's edge and the day adrift in the middle. Beneath
+        // it the day's total, and on any other day a way back to today, which
+        // as a button of its own crowded a long date.
+        let day = gtk::Label::new(None);
+        day.add_css_class("heading");
+        day.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let total = gtk::Label::new(None);
+        total.add_css_class("caption");
+        total.add_css_class("dim-label");
+        // A link in a label rather than a link button, whose padding made the
+        // header taller and the window wider.
+        let today = gtk::Label::new(None);
+        today.set_markup("<a href=\"today\">Back to today</a>");
+        today.add_css_class("caption");
+        let below = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        below.set_halign(gtk::Align::Center);
+        below.append(&total);
+        below.append(&today);
+        // A fixed width, so the arrows stay where they are as the day's name
+        // changes length: clicking back twice would otherwise miss the second
+        // time. Wide enough for the line with the way back to today.
+        let named = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        named.set_valign(gtk::Align::Center);
+        named.set_size_request(150, -1);
+        named.append(&day);
+        named.append(&below);
+        back.set_valign(gtk::Align::Center);
+        forward.set_valign(gtk::Align::Center);
+        let title = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        title.append(&back);
+        title.append(&named);
+        title.append(&forward);
         let log_time = gtk::Button::from_icon_name("list-add-symbolic");
         log_time.set_tooltip_text(Some("Log time without a timer"));
         let settings = gtk::Button::from_icon_name("emblem-system-symbolic");
         settings.set_tooltip_text(Some("Settings"));
 
         let header = adw::HeaderBar::new();
+        // Only + beside the day, at the start where GNOME puts "add": with
+        // Settings there too, and the window's own buttons, the day could not be
+        // centred at the window's usual width. Settings is in the footer, as on
+        // the Mac.
         header.set_title_widget(Some(&title));
-        header.pack_start(&back);
-        header.pack_start(&forward);
-        header.pack_start(&today);
-        header.pack_end(&settings);
-        header.pack_end(&log_time);
+        header.pack_start(&log_time);
 
         let banner = adw::Banner::new("");
 
@@ -132,7 +164,10 @@ impl Window {
         footer.set_margin_end(12);
         footer.set_margin_top(6);
         footer.set_margin_bottom(6);
+        status.set_hexpand(true);
+        settings.add_css_class("flat");
         footer.append(&status);
+        footer.append(&settings);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&banner);
@@ -161,7 +196,14 @@ impl Window {
         };
         back.connect_clicked(send(Action::ShiftDay(-1)));
         forward.connect_clicked(send(Action::ShiftDay(1)));
-        today.connect_clicked(send(Action::Today));
+        {
+            let actions = actions.clone();
+            // A link with nowhere to go: the click is the action.
+            today.connect_activate_link(move |_, _| {
+                let _ = actions.try_send(Action::Today);
+                glib::Propagation::Stop
+            });
+        }
         settings.connect_clicked(send(Action::OpenSettings));
         log_time.connect_clicked(send(Action::LogTime));
         {
@@ -178,7 +220,8 @@ impl Window {
 
         Rc::new(Self {
             window,
-            title,
+            day,
+            total,
             today,
             banner,
             entries,
@@ -202,8 +245,8 @@ impl Window {
         } else {
             format::day(state.day)
         };
-        self.title.set_title(&day);
-        self.title.set_subtitle(&format!(
+        self.day.set_label(&day);
+        self.total.set_label(&format!(
             "{} logged",
             format::hours(snapshot.total_hours, format)
         ));
