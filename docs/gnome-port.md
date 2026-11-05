@@ -525,6 +525,13 @@ it on Ubuntu 26.04, the release Hostess runs.
   `Scripts/render-mac-app-icon.sh`.
 - **`SHEAVES_RENDER=<folder>`** in a debug build draws the window from the demo
   account to `gnome-window.png`, as the Mac's documentation images do.
+- **The header follows the Mac's panel,** changed on 2026-11-04 after Peter found
+  the first layout awkward: the day between its arrows, with the day's total
+  beneath and, on any other day, a "Back to today" link, where a Today button
+  beside the full date had crowded it. The day has a fixed width so the arrows do
+  not move as its name changes. Only + shares the header, at the start; Settings
+  is in the footer, as on the Mac, because with it and the window's own buttons
+  the day could not be centred at the window's usual width.
 - **Not in this phase:** the power source (the tracker assumes mains power, which
   Hostess is), editing notes or hours (phase 8), presence and its prompt, and the
   peers field (phase 7).

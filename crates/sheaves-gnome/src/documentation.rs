@@ -61,6 +61,22 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
                 &failed,
             );
 
+            // Another day, for the way back to today beneath it.
+            tracker.shift_day(-1).await;
+            window.render(&tracker.snapshot());
+            glib::timeout_future(Duration::from_millis(300)).await;
+            report(
+                write(
+                    &content,
+                    &window,
+                    &directory.join("gnome-window-another-day.png"),
+                ),
+                &failed,
+            );
+            tracker.go_to_today().await;
+            window.render(&tracker.snapshot());
+            glib::timeout_future(Duration::from_millis(300)).await;
+
             // The absence prompt, over the window, for an hour away from the
             // demo account's running timer.
             let snapshot = tracker.snapshot();
