@@ -67,7 +67,7 @@ nothing. They are listed with their symptom, because that is how you will meet t
   `isTemplate`. Symptom: a state that was supposed to be coloured looks identical.
 - **A status item's click event lies about where it landed.** On macOS 27 both
   `NSEvent.locationInWindow` and the underlying `CGEvent` report the *centre of the
-  item* for every click. Symptom: the menu bar play/pause icon opened the panel like
+  item* for every click. Symptom: the menu bar stop/play icon opened the panel like
   the rest of the item and never toggled. Read `NSEvent.mouseLocation` instead.
 - **`NSScreen.main` is the *key window's* screen,** not the active one. An accessory
   app has no key window when a hotkey fires, so it silently means "primary display".

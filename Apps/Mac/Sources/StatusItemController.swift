@@ -2,12 +2,12 @@ import AppKit
 import SheavesCore
 import SwiftUI
 
-/// The menu bar item: a play/pause button on the left, everything else opens the
-/// popover.
+/// The menu bar item: a stop or play button on the left, everything else opens
+/// the popover.
 ///
 /// This is hand-rolled AppKit rather than SwiftUI's `MenuBarExtra` because a
 /// `MenuBarExtra` has exactly one behaviour — any click opens its content — and the
-/// point here is that pausing or resuming the current timer should take one click
+/// point here is that stopping or resuming the current timer should take one click
 /// and open nothing. Owning the `NSStatusItem` also means the popover can be shown
 /// programmatically, which `MenuBarExtra` cannot do.
 @MainActor
@@ -101,7 +101,7 @@ final class StatusItemController {
             ? "\(total.formatted()) minute\(total == 1 ? "" : "s")"
             : "\(( total / 60).formatted()) hour\(total / 60 == 1 ? "" : "s") \((total % 60).formatted()) minute\(total % 60 == 1 ? "" : "s")"
         return activity.entry.map { _ in
-            "\(duration), \(entry.isRunning ? "timer running" : "paused")"
+            "\(duration), \(entry.isRunning ? "timer running" : "stopped")"
         } ?? duration
     }
 
@@ -120,7 +120,7 @@ final class StatusItemController {
     static func icon(for activity: TimeTracker.Activity) -> NSImage? {
         // Idle shows Sheaves' own glyph, a sheaf of wheat between the plates of an
         // hourglass, the same one the GNOME app's top bar item draws
-        // (icons/sheaves-symbolic.svg). Play and pause stay the system's.
+        // (icons/sheaves-symbolic.svg). Stop and play stay the system's.
         if case .idle = activity {
             return NSImage(named: "Sheaves")
         }
@@ -140,7 +140,9 @@ final class StatusItemController {
 
     private static func symbolName(for activity: TimeTracker.Activity) -> String {
         switch activity {
-        case .running: "pause.fill"
+        // Stop, not pause: Harvest calls it stopping, and so does every other
+        // place in Sheaves, the entry rows and quick entry among them.
+        case .running: "stop.fill"
         case .recent: "play.fill"
         // Not reached: `icon(for:)` draws idle from the asset catalog.
         case .idle: "play.fill"
@@ -168,7 +170,7 @@ final class StatusItemController {
     private func toolTip(for activity: TimeTracker.Activity) -> String {
         switch activity {
         case .running(let entry):
-            "Pause \(entry.task.name) — click the icon. Click the name for today’s entries."
+            "Stop \(entry.task.name) — click the icon. Click the name for today’s entries."
         case .recent(let entry):
             "Resume \(entry.task.name) — click the icon. Click the name for today’s entries."
         case .idle:
@@ -211,12 +213,12 @@ final class StatusItemController {
     }
 
     /// The conventional menu bar extra right-click menu — and the only route to
-    /// pause, resume or quit that does not require a mouse aimed at a 24-point strip.
+    /// stop, resume or quit that does not require a mouse aimed at a 24-point strip.
     private func showMenu(for activity: TimeTracker.Activity) {
         let menu = NSMenu()
 
         if let entry = activity.entry {
-            let title = entry.isRunning ? "Pause \(entry.task.name)" : "Resume \(entry.task.name)"
+            let title = entry.isRunning ? "Stop \(entry.task.name)" : "Resume \(entry.task.name)"
             let item = NSMenuItem(title: title, action: #selector(toggleTimer), keyEquivalent: "")
             item.target = self
             menu.addItem(item)

@@ -41,7 +41,7 @@ impl Connection {
     }
 }
 
-/// What the menu bar should offer: a timer to pause, one to resume, or nothing.
+/// What the menu bar should offer: a timer to stop, one to resume, or nothing.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Activity {
     Idle,

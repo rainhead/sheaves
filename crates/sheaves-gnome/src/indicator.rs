@@ -35,7 +35,7 @@ const GLYPH_NAME: &str = "sheaves-symbolic";
 /// bar's own colour, as it does its own icons.
 ///
 /// A path rather than an icon folder: given a folder, the AppIndicator extension
-/// looks for every icon there and nowhere else, so the theme's play and pause
+/// looks for every icon there and nowhere else, so the theme's stop and play
 /// icons would go missing.
 pub fn install_glyph(folder: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(folder)?;
@@ -75,7 +75,8 @@ const LABEL_NAME_LIMIT: usize = 24;
 impl Look {
     /// The look for `activity`. The icon alone carries the state, as the Mac's
     /// does, so a top bar that drops the label loses nothing but the detail: a
-    /// pause button while a timer runs, a play button while one can be resumed.
+    /// stop button while a timer runs, a play button while one can be resumed.
+    /// Stop rather than pause, as Harvest says and the rest of Sheaves shows.
     pub fn of(activity: &Activity, format: HoursFormat, now: Timestamp) -> Self {
         match activity {
             Activity::Idle => Look {
@@ -89,7 +90,7 @@ impl Look {
                 let hours = format::hours(entry.hours(now), format);
                 let name = shortened(&entry.project.name);
                 Look {
-                    icon: "media-playback-pause-symbolic".to_string(),
+                    icon: "media-playback-stop-symbolic".to_string(),
                     label: format!("{name} {hours}"),
                     guide: format!("{name} {}", widest(&hours)),
                     tooltip: format!("{} · {}, {hours}", entry.task.name, entry.project.name),
@@ -593,7 +594,7 @@ mod tests {
         );
         assert_eq!(look.label, "Orcasound 1:30");
         assert_eq!(look.guide, "Orcasound 88:88");
-        assert_eq!(look.icon, "media-playback-pause-symbolic");
+        assert_eq!(look.icon, "media-playback-stop-symbolic");
         assert_eq!(look.toggle.as_deref(), Some("Stop Programming"));
     }
 
