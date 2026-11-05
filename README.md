@@ -163,7 +163,7 @@ slows both, and Low Power Mode stops the probe entirely. The cadence is
 the Mac shell answers the power question through
 [`PowerSource`](Apps/Mac/Sources/PowerSource.swift).
 
-**The menu bar is a control, not a readout.** The status item shows a pause button
+**The menu bar is a control, not a readout.** The status item shows a stop button
 while a timer runs and a play button for 90 minutes after one stops, and
 otherwise Sheaves' own glyph, a sheaf of wheat between the plates of an hourglass
 ([`icons/`](icons)), so the common
@@ -249,7 +249,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | | |
 | --- | --- |
 | ⌃⌥⌘T | Quick entry, from any app (rebindable in Settings) |
-| Click ⏸ / ▶ in the menu bar | Pause or resume, without opening anything |
+| Click ■ / ▶ in the menu bar | Stop or resume, without opening anything |
 | ↑ ↓ | Move through the day's entries and the projects, as one list |
 | ⏎ | Stop or resume the selected entry, or start the selected project |
 | ⌫ | Delete the selected entry, after asking |
