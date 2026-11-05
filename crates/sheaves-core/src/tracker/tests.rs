@@ -884,8 +884,9 @@ mod observing {
         tracker.sync().await;
 
         let seen = seen.lock().unwrap();
-        // The current state arrives at once, before anything changes.
-        assert_eq!(seen[0].connection, Connection::NeedsCredentials);
+        // The current state arrives at once, before anything changes: not yet
+        // known, since nothing has looked for a login.
+        assert_eq!(seen[0].connection, Connection::Connecting);
         // And the last one delivered is the state the tracker ended in.
         assert_eq!(seen.last(), Some(&tracker.state()));
         assert_eq!(seen.last().unwrap().connection, Connection::Online);
@@ -1439,6 +1440,9 @@ mod queue_ownership {
 
         let transport = RoutingTransport::standard_account();
         let tracker = tracker(transport.clone(), &scratch);
+        // Launched as the apps launch: with no login, it asks for one.
+        tracker.bootstrap().await;
+        assert_eq!(tracker.state().connection, Connection::NeedsCredentials);
         assert_eq!(
             tracker.connect(other_account(), false).await,
             Err(ConnectError::UnsentChangesBelongElsewhere { count: 1 })
