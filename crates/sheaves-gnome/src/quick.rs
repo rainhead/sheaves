@@ -31,6 +31,9 @@ pub struct QuickEntry {
     status: gtk::Label,
     actions: async_channel::Sender<Action>,
     latest: std::cell::RefCell<Option<TrackerSnapshot>>,
+    /// The search text the list was last filtered for. The field reports a
+    /// change only after a pause, and ⏎ can come sooner.
+    filtered_for: std::cell::RefCell<String>,
 }
 
 impl QuickEntry {
@@ -124,6 +127,7 @@ impl QuickEntry {
             status,
             actions,
             latest: std::cell::RefCell::default(),
+            filtered_for: std::cell::RefCell::default(),
         });
         quick.connect(&stop);
         quick
@@ -149,8 +153,9 @@ impl QuickEntry {
             // The first match chosen as the search changes, so ⏎ starts what is
             // at the top of what is showing.
             let quick = Rc::downgrade(self);
-            self.search.connect_search_changed(move |_| {
+            self.search.connect_search_changed(move |search| {
                 if let Some(quick) = quick.upgrade() {
+                    *quick.filtered_for.borrow_mut() = search.text().to_string();
                     quick.choose_first();
                 }
             });
@@ -197,6 +202,8 @@ impl QuickEntry {
     /// search field. It also looks at Harvest, as the Mac's panel does.
     pub fn present(&self) {
         self.search.set_text("");
+        self.filtered_for.borrow_mut().clear();
+        self.projects.list.invalidate_filter();
         self.choose_first();
         self.window.present();
         self.search.grab_focus();
@@ -263,6 +270,14 @@ impl QuickEntry {
     }
 
     fn start_chosen(&self) {
+        // Typed and ⏎ pressed before the field reported the change: the list
+        // still shows the last query's matches, and what is chosen among them.
+        let typed = self.search.text().to_string();
+        if *self.filtered_for.borrow() != typed {
+            self.projects.list.invalidate_filter();
+            *self.filtered_for.borrow_mut() = typed;
+            self.choose_first();
+        }
         let chosen = self
             .projects
             .list
