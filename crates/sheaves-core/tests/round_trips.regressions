@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 97972ba422f5b24f7dc71113f28d2192f3ef9d04866f8ac3e47f0b19d04840a4 # shrinks to mutations = [Stop { id: Server(0), hours: 913.0606173627847 }]
+cc cedd596a47bb8a2025d3f6ddbcf2db7457db823d89f60fac7770c948ff13d8e4 # shrinks to entries = [TrackedEntry { id: Server(0), project: Reference { id: 0, name: "" }, task: Reference { id: 0, name: "" }, client: None, notes: None, spent_date: CalendarDate { year: 1, month: 3, day: 1 }, banked_hours: 124.10352182889969, is_running: false, timer_started_at: None, is_locked: false, is_billable: false, is_pending: false, updated_at: 1970-01-01T00:00:00Z }], targets = [], saved_at = None
+cc 85d5c9ad6245a4a77fc30a20a014b968e7592cc909790587dc29ffd042d0ab42 # shrinks to date = CalendarDate { year: 863, month: 9, day: 8 }
+cc cedef677a2fcfa874afca8a912caf5b0a1be33a5eb70d7db2399c63176ea1f08 # shrinks to cents = 38587, separator = ',', zero = 1632
+cc 8dfb7a0c086465e94bf25c0a86f0704b38f861f5496c44a5486cd430f4f83919 # shrinks to whole = 3104, minutes = 45, zero = 1632

@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3fe12aea1d04b80bb8906198673e91c6177a607bf330547bde126c69e6248079 # shrinks to actions = [Start(0), Network(Offline), Start(1), Wait { minutes: 10 }, Start(0), Start(0), Start(0), Network(Online)]
+cc 477d51a8becb162ddb22463249aa31696d00b9bc977e94149f5189a1c70ca43e # shrinks to actions = [Network(Flaky([Garbled, Garbled])), Sync, Start(0)]
+cc 033eee46fd09a4e3f41e2215eed8b2392759963fc95ec3bcb3966259c9679679 # shrinks to actions = [Start(2), Network(Offline), StopRunning, Start(2), Wait { minutes: 10 }]
+cc 109cb5736f9b631e60b7a3f74515ee0357ab21a281e6e17e735060e5c8d4c596 # shrinks to actions = [Start(2), Start(0), Delete(0), Network(Offline), Delete(0), Start(2)]
+cc 7c169e39dfedb24b3d16b439c36cf6e595e36fd18503d4d5fe5d7e3ac705814d # shrinks to actions = [Network(Flaky([Garbled])), Start(0), Relaunch]
