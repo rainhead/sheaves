@@ -734,9 +734,11 @@ starts a timer.
   the shortcut's command at the binary where it is, as the desktop entry does.
   The portal was not needed: a custom shortcut works with the app not running,
   since running the command starts it.
-- **The command is quoted for a shell,** with `%` doubled, because GNOME reads a
-  custom shortcut's command as a desktop entry's `Exec` line without its key-file
-  escaping.
+- **The command is quoted for a shell and nothing more.** GNOME's settings
+  daemon doubles any `%` itself before it reads the command as a desktop entry's
+  `Exec` line ([`gsd-media-keys-manager.c`](https://gitlab.gnome.org/GNOME/gnome-settings-daemon/-/blob/master/plugins/media-keys/gsd-media-keys-manager.c),
+  `execute`). It also launches with no startup notification, so whether GNOME
+  raises the window or says "Sheaves is ready" is for the desk to show.
 
 ### Phase 11: documents and cleanup
 

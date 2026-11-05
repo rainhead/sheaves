@@ -22,15 +22,12 @@ const PATH: &str =
 /// Ubuntu's terminal.
 pub const SUGGESTED: &str = "<Control><Alt><Super>t";
 
-/// What starting quick entry runs. GNOME reads the command as a shell would,
-/// after expanding `%` codes as a desktop entry's are, so the path is
-/// shell-quoted and any `%` in it doubled.
+/// What starting quick entry runs, with the path quoted for a shell. GNOME's
+/// settings daemon doubles any `%` itself before it expands a desktop entry's
+/// `%` codes, then reads the command as a shell would.
 pub fn command(program: &Path) -> String {
     let quoted = gtk::glib::shell_quote(program);
-    format!(
-        "{} --quick-entry",
-        quoted.to_string_lossy().replace('%', "%%")
-    )
+    format!("{} --quick-entry", quoted.to_string_lossy())
 }
 
 /// Where the shortcuts are kept: the desktop's settings, or a stand-in in tests.
@@ -219,7 +216,7 @@ mod tests {
             "/home/me/my apps/sheaves-gnome",
             "/home/me/it's 100%/sheaves-gnome",
         ] {
-            let line = command(Path::new(program)).replace("%%", "%");
+            let line = command(Path::new(program));
             let argv = gtk::glib::shell_parse_argv(&line).unwrap();
             assert_eq!(
                 argv,
