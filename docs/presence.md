@@ -7,7 +7,8 @@ runs through lunch and bills hours nobody worked.
 
 These are the notes behind
 [`PresenceMonitor`](../Apps/Mac/Sources/PresenceMonitor.swift), which reads the
-Mac's signals, and [`absence.rs`](../crates/sheaves-core/src/absence.rs) in the core,
+Mac's signals, [`presence.rs`](../crates/sheaves-gnome/src/presence.rs), which reads
+GNOME's, and [`absence.rs`](../crates/sheaves-core/src/absence.rs) in the core,
 which decides what they mean —
 what is measured, what was checked against a real machine, and what is still
 guesswork.
