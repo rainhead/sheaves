@@ -1386,16 +1386,37 @@ impl TimeTracker {
         else {
             return;
         };
+        // Judged as asked first: an absence from before a timer restarted is no
+        // longer this machine's to speak for, however much of it was covered.
+        if absence.trimmed_hours(&entry).is_none() {
+            return;
+        }
+        // Keep says the user worked through the whole of it, so the whole of it
+        // is what is shared.
+        if *resolution == AbsenceResolution::Keep {
+            let peers = self.inner.peers.lock().unwrap().clone();
+            if let Some(peers) = peers {
+                peers.vouch(*absence, self.inner.clock.now()).await;
+            }
+            return;
+        }
         // What another machine has since said the user was here for is not this
-        // machine's to trim: the answer is for what is left. Of several stretches
-        // left, the latest, since a trim keeps everything before it starts and so
-        // can never take time another machine saw.
+        // machine's to trim: a trim is of what is left. Of several stretches left,
+        // the latest, since a trim keeps everything before it starts and so can
+        // never take time another machine saw; an earlier one stays billed. That
+        // needs another machine's evidence to land, late, in the middle of an
+        // absence, which writing once a minute makes rare.
         let remaining = unwitnessed(*absence, &state.seen_elsewhere, state.absence_threshold);
         let Some(&narrowed) = remaining.last() else {
             log::info!("the absence was covered by another machine since it was asked about");
             return;
         };
-        if narrowed != *absence {
+        if remaining.len() > 1 {
+            log::warn!(
+                "the absence is now {} stretches; trimming the latest and leaving the rest",
+                remaining.len()
+            );
+        } else if narrowed != *absence {
             log::info!(
                 "answering for {} to {}, the part of the absence no other machine has covered",
                 narrowed.began,
@@ -1412,12 +1433,8 @@ impl TimeTracker {
         };
 
         match resolution {
-            AbsenceResolution::Keep => {
-                let peers = self.inner.peers.lock().unwrap().clone();
-                if let Some(peers) = peers {
-                    peers.vouch(*absence, self.inner.clock.now()).await;
-                }
-            }
+            // Answered above, before the absence was narrowed.
+            AbsenceResolution::Keep => {}
             AbsenceResolution::TrimAndContinue => {
                 self.trim(&entry, trimmed, absence.began, Some(absence.ended))
                     .await;

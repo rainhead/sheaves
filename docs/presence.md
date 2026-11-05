@@ -113,7 +113,8 @@ stretch another machine saw the user in, and reports what is left that is still 
 long as the threshold. Answering **Keep** says you were working through the
 absence, so the machine that was answered writes it as a stretch of its own, at
 once; another machine already asking about the same stretch stops asking when it
-next looks at Harvest, within a minute while a timer runs. If Harvest cannot be reached, or the entry links to something
+next looks at Harvest: within a minute plugged in, five on battery, and at its next
+sync in Low Power Mode, which stops the regular checks. If Harvest cannot be reached, or the entry links to something
 else, the machine decides as it would alone. The rules are in
 [`peers.rs`](../crates/sheaves-core/src/peers.rs) and the text in
 [`board.rs`](../crates/sheaves-core/src/peers/board.rs).
