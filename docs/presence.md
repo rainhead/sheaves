@@ -17,7 +17,11 @@ guesswork.
 
 Presence is keyboard or mouse input **or** the microphone being in use. A locked
 screen outranks both: a meeting left open on a locked Mac is a machine alone in a
-room, not somebody working.
+room, not somebody working. The one exception is the press that locked it. On a
+Mac, locking resets the idle clock, which then counts on through the lock, and
+unlocking with Touch ID resets nothing (measured on 2026-11-04). So the first look
+at a locked screen reads the clock once, and the absence begins when the screen
+was locked rather than at the last keystroke before.
 
 Sleep, screen lock and a shut lid need no special case. Each one simply stops the
 evidence arriving, and the gap is measured when it resumes. Waking and unlocking are

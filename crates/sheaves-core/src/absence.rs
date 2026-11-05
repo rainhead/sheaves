@@ -159,6 +159,9 @@ pub struct PresenceMonitor {
     /// Every moment of evidence handed to the detector since the last
     /// [`take_evidence`](Self::take_evidence), for the log peers are answered from.
     evidence: Vec<Timestamp>,
+    /// Whether the last look found the screen locked, so the first look at a
+    /// locked screen can be told from the rest.
+    was_locked: bool,
 }
 
 impl PresenceMonitor {
@@ -171,6 +174,7 @@ impl PresenceMonitor {
             detector: AbsenceDetector::new(threshold, now),
             last_poll: now,
             evidence: Vec::new(),
+            was_locked: false,
         }
     }
 
@@ -194,9 +198,25 @@ impl PresenceMonitor {
         // A locked screen outranks everything. A call left running on a locked
         // machine still holds the microphone, and that is somebody's machine sitting
         // in an empty room, not somebody working.
+        //
+        // Except for the press that locked it. Checked at a Mac on 2026-11-04:
+        // locking resets the idle clock, which then counts on through the lock,
+        // and unlocking with Touch ID resets nothing. So the first look at a
+        // locked screen reads the clock once, and finds the user there at the
+        // moment they locked it: without this, ten minutes' reading and then a
+        // lock dated the absence from ten minutes before they left (#23). Only
+        // once, because whether input at a lock screen reaches the clock is not
+        // known on every machine, and nobody is working at one.
         if reading.screen_locked {
-            return Vec::new();
+            if std::mem::replace(&mut self.was_locked, true) {
+                return Vec::new();
+            }
+            return self
+                .note(offset_by(now, -reading.seconds_since_input))
+                .into_iter()
+                .collect();
         }
+        self.was_locked = false;
         let mut absences = Vec::new();
 
         // The microphone is read first, and its evidence is dated to the previous
@@ -537,6 +557,25 @@ mod tests {
             run.reading.screen_locked = false;
             run.return_at(40.0 * 60.0 + 1.0, 1.0);
             assert_eq!(run.absences[0].began, at(0.0));
+        }
+
+        /// Ten minutes reading, then the screen locked and the user gone for lunch.
+        /// The press that locked it resets the idle clock, so the absence begins
+        /// when they locked it, not when they last typed.
+        #[test]
+        fn an_absence_begins_at_the_press_that_locked_the_screen() {
+            let mut run = Run::new();
+            run.still(30.0, 10.0 * 60.0);
+            let locked_at = 10.0 * 60.0 + 10.0;
+            run.reading.screen_locked = true;
+            run.return_at(10.0 * 60.0 + 30.0, 20.0);
+            // Later looks at the locked screen are not evidence, even when
+            // something there resets the clock.
+            run.return_at(30.0 * 60.0, 5.0);
+            run.reading.screen_locked = false;
+            run.return_at(60.0 * 60.0, 1.0);
+            assert_eq!(run.absences.len(), 1, "{:?}", run.absences);
+            assert_eq!(run.absences[0].began, at(locked_at));
         }
 
         /// Sleeping needs no special case: the evidence simply stops arriving, and
