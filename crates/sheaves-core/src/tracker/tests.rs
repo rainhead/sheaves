@@ -1887,6 +1887,37 @@ mod resolving_an_absence {
         assert!(transport.calls_to(Method::Post, "time_entries").is_empty());
     }
 
+    /// Asked about while its create was still queued, answered once it had
+    /// landed: the answer still reaches the entry, which by then is known by its
+    /// Harvest id.
+    #[tokio::test]
+    async fn an_answer_finds_an_entry_whose_create_landed_since() {
+        let scratch = scratch();
+        let local = Uuid::new_v4();
+        std::fs::write(
+            &scratch.queue,
+            // The fixture account's own queue: a queue changing hands forgets
+            // what its creates earned.
+            format!(
+                r#"{{"pending":[],"resolved":[{{"local":"{local}","server_id":636708906}}],"owner":{{"account_id":"12345","user_id":1782959}}}}"#
+            ),
+        )
+        .unwrap();
+        let transport = running_account();
+        let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
+        let as_asked = TrackedEntry {
+            id: EntryId::Local(local),
+            ..running
+        };
+
+        tracker
+            .resolve(&absence(), &as_asked, &AbsenceResolution::TrimAndStop)
+            .await;
+
+        assert_eq!(transport.calls_to(Method::Patch, "/stop").len(), 1);
+        assert_eq!(corrections(&transport), [1.5]);
+    }
+
     #[tokio::test]
     async fn trim_and_stop_sends_trimmed_hours() {
         let scratch = scratch();

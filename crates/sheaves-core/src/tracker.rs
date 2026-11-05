@@ -1338,12 +1338,14 @@ impl TimeTracker {
         // be stopped from a phone, edited on the web, or deleted. Answer for the
         // entry as it is now: the captured copy is only a record of what was asked
         // about. An entry that is gone, or no longer running, is no longer ours to
-        // trim.
+        // trim. One started offline may have had its create land since the
+        // question was asked, and so be known by its Harvest id now.
+        let earned = self.inner.queue.server_id(entry.id).map(EntryId::Server);
         let Some(entry) = self
             .state()
             .entries
             .iter()
-            .find(|candidate| candidate.id == entry.id)
+            .find(|candidate| candidate.id == entry.id || Some(candidate.id) == earned)
             .cloned()
         else {
             return;

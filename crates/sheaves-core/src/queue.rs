@@ -872,7 +872,8 @@ impl MutationQueue {
     }
 
     /// The Harvest id a local id earned, if this queue has seen it created.
-    fn server_id(&self, id: EntryId) -> Option<i64> {
+    /// The Harvest id `id` stands for: its own, or the one its create earned.
+    pub fn server_id(&self, id: EntryId) -> Option<i64> {
         match id {
             EntryId::Server(id) => Some(id),
             EntryId::Local(local) => self

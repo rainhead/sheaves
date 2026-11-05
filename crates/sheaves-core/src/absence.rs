@@ -152,8 +152,10 @@ pub struct PresenceReading {
 pub struct PresenceMonitor {
     detector: AbsenceDetector,
     /// When the machine was last looked at, so a call found in progress can be
-    /// credited to the whole interval it may have been running for.
-    last_poll: Option<Timestamp>,
+    /// credited to the whole interval it may have been running for. The launch
+    /// counts as a look, as it counts as presence: a machine launched behind a
+    /// locked screen has otherwise looked at nothing until it is unlocked.
+    last_poll: Timestamp,
     /// Every moment of evidence handed to the detector since the last
     /// [`take_evidence`](Self::take_evidence), for the log peers are answered from.
     evidence: Vec<Timestamp>,
@@ -167,7 +169,7 @@ impl PresenceMonitor {
     pub fn new(threshold: f64, now: Timestamp) -> Self {
         Self {
             detector: AbsenceDetector::new(threshold, now),
-            last_poll: None,
+            last_poll: now,
             evidence: Vec::new(),
         }
     }
@@ -207,13 +209,21 @@ impl PresenceMonitor {
         // this must never do. Reading it before the idle clock means the presence is
         // banked before any gap is measured.
         if reading.microphone_in_use {
-            absences.extend(self.note(self.last_poll.unwrap_or(now)));
+            absences.extend(self.note(self.last_poll));
         }
 
         // The idle clock says how long *since* the last event, which is a better
         // answer than the moment this poll happened to run.
         absences.extend(self.note(offset_by(now, -reading.seconds_since_input)));
-        self.last_poll = Some(now);
+
+        // And the call was heard now, so somebody is here now: an absence after
+        // it begins at the last look that heard it, not the one before. Last, so
+        // the idle clock's evidence is already in: unlocked and straight into a
+        // call, the first look would otherwise measure from before the unlock.
+        if reading.microphone_in_use {
+            absences.extend(self.note(now));
+        }
+        self.last_poll = now;
         absences
     }
 }
@@ -481,14 +491,26 @@ mod tests {
             run.still(30.0 * 60.0 + 30.0, 50.0 * 60.0);
             run.return_at(50.0 * 60.0 + 1.0, 1.0);
 
-            // One poll interval earlier than the call actually ended: a microphone
-            // found running could have started at any point since the last look, so
-            // its evidence is dated to that look. Erring this way trims slightly
-            // more than was missed, never less.
-            assert_eq!(
-                run.absences[0].began,
-                at(call_ended - PresenceMonitor::POLL_INTERVAL)
-            );
+            // At the last look that heard the call, which is when somebody was
+            // last known to be here. Dating it a look earlier, as the start of a
+            // call is dated, trimmed half a minute that was not missed.
+            assert_eq!(run.absences[0].began, at(call_ended));
+        }
+
+        /// Launched behind a locked screen, unlocked and straight into a call just
+        /// under the threshold after launch: the first look must not take the
+        /// launch to the call as an absence.
+        #[test]
+        fn a_call_after_launching_behind_a_locked_screen_is_presence() {
+            let mut run = Run::new();
+            run.reading.screen_locked = true;
+            run.still(30.0, 14.0 * 60.0);
+            run.reading.screen_locked = false;
+            run.reading.microphone_in_use = true;
+            // Unlocked twenty seconds before the first look that is not locked.
+            run.return_at(15.0 * 60.0 + 10.0, 20.0);
+            run.still(15.0 * 60.0 + 40.0, 30.0 * 60.0);
+            assert_eq!(run.absences, []);
         }
 
         /// Joining a call after a quiet stretch of reading must not open the prompt
