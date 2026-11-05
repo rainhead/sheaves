@@ -764,10 +764,11 @@ newcomer can build both apps from the README alone.
 **Done in phase 11.** The README introduces both apps, builds each under a heading
 of its own, and gives each its keys; the roadmap lists what the GNOME app leaves
 out and why it has no package. `docs/presence.md` had gained the GNOME signals and
-the sharing through Harvest in phases 7 and 9. Not done: the README's lead image
-still shows the pause button that [#40](https://github.com/rainhead/sheaves/pull/40)
-replaced with stop. The demo instance's panel no longer opens by itself on macOS
-27, so retaking it needs someone at the Mac to click the demo's menu bar item.
+the sharing through Harvest in phases 7 and 9. The README's lead image was retaken on
+2026-11-05, with the stop button that [#40](https://github.com/rainhead/sheaves/pull/40)
+chose, once the demo instance kept its panel open: on macOS 27 it had shown the
+panel only once more after its layout pass, and on one launch that was not
+enough.
 
 ## Working practice
 
