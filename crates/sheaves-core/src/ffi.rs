@@ -485,6 +485,7 @@ impl Tracker {
     /// entry, and reads what the other machines saw before it reports an absence.
     pub fn presence(&self, threshold: f64, now: Timestamp) -> Arc<PresenceFold> {
         self.tracker.set_absence_threshold(threshold);
+        self.peers.set_threshold(threshold);
         Arc::new(PresenceFold {
             presence: Arc::new(Presence::new(threshold, now, self.peers.clone())),
             runtime: Some(self.runtime.handle().clone()),

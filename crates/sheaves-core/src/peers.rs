@@ -111,6 +111,12 @@ impl PresenceLog {
         self.intervals = merged;
     }
 
+    /// Joins evidence closer than `threshold` from now on. Intervals already
+    /// joined under a longer one stay joined, which can only vouch for more.
+    pub fn set_threshold(&mut self, threshold: f64) {
+        self.threshold = threshold;
+    }
+
     /// The intervals held, oldest first.
     pub fn intervals(&self) -> &[Interval] {
         &self.intervals
@@ -303,6 +309,13 @@ impl Peers {
 
     pub fn machine(&self) -> &str {
         &self.machine
+    }
+
+    /// The absence threshold the presence fold uses, which joining evidence in
+    /// the log must follow, or a gap the fold counts as an absence could be
+    /// written as a stretch of presence and vouch for the user over it.
+    pub fn set_threshold(&self, threshold: f64) {
+        lock(&self.log).set_threshold(threshold);
     }
 
     /// Shares presence on `board` from now on.

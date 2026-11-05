@@ -1835,7 +1835,11 @@ mod resolving_an_absence {
     }
 
     fn running_account() -> Arc<RoutingTransport> {
-        let running = fixture::entries_page(&[fixture::running_time_entry()]);
+        running_account_with(fixture::running_time_entry())
+    }
+
+    fn running_account_with(entry: String) -> Arc<RoutingTransport> {
+        let running = fixture::entries_page(&[entry]);
         RoutingTransport::new(vec![
             Route::new(
                 Method::Get,
@@ -1916,6 +1920,76 @@ mod resolving_an_absence {
 
         assert_eq!(transport.calls_to(Method::Patch, "/stop").len(), 1);
         assert_eq!(corrections(&transport), [1.5]);
+    }
+
+    /// Another machine wrote, after the question was asked, that it saw the user
+    /// for the first twelve minutes of the half hour away. The trim is of the
+    /// eighteen minutes left, not of time another machine saw worked.
+    #[tokio::test]
+    async fn a_trim_leaves_what_another_machine_has_since_covered() {
+        let scratch = scratch();
+        let seen = Board {
+            parts: [(
+                "zzzz".to_string(),
+                vec![Interval {
+                    start: instant("2026-08-29T14:40:00Z"),
+                    end: instant("2026-08-29T15:12:00Z"),
+                }],
+            )]
+            .into(),
+        };
+        let reference = serde_json::to_string(&seen.reference()).unwrap();
+        let entry = fixture::running_time_entry().replacen(
+            "\n}",
+            &format!(",\n  \"external_reference\": {reference}\n}}"),
+            1,
+        );
+        let transport = running_account_with(entry);
+        let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
+        assert_eq!(tracker.state().seen_elsewhere, seen.parts["zzzz"]);
+
+        tracker
+            .resolve(&absence(), &running, &AbsenceResolution::TrimAndStop)
+            .await;
+
+        // An hour banked, and the timer's run from half past two to twelve past
+        // three, where the stretch left begins.
+        let corrections = corrections(&transport);
+        assert_eq!(corrections.len(), 1, "{corrections:?}");
+        assert!((corrections[0] - 1.7).abs() < 0.001, "{corrections:?}");
+    }
+
+    /// Covered whole by another machine since it was asked, the absence is
+    /// nobody's to trim.
+    #[tokio::test]
+    async fn a_trim_of_an_absence_covered_since_does_nothing() {
+        let scratch = scratch();
+        let seen = Board {
+            parts: [(
+                "zzzz".to_string(),
+                vec![Interval {
+                    start: instant("2026-08-29T14:40:00Z"),
+                    end: instant("2026-08-29T15:35:00Z"),
+                }],
+            )]
+            .into(),
+        };
+        let reference = serde_json::to_string(&seen.reference()).unwrap();
+        let entry = fixture::running_time_entry().replacen(
+            "\n}",
+            &format!(",\n  \"external_reference\": {reference}\n}}"),
+            1,
+        );
+        let transport = running_account_with(entry);
+        let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
+        assert!(!tracker.state().absence_applies(&absence()));
+
+        tracker
+            .resolve(&absence(), &running, &AbsenceResolution::TrimAndStop)
+            .await;
+
+        assert!(transport.calls_to(Method::Patch, "/stop").is_empty());
+        assert!(corrections(&transport).is_empty());
     }
 
     #[tokio::test]

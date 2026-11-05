@@ -1377,8 +1377,8 @@ impl TimeTracker {
         // trim. One started offline may have had its create land since the
         // question was asked, and so be known by its Harvest id now.
         let earned = self.inner.queue.server_id(entry.id).map(EntryId::Server);
-        let Some(entry) = self
-            .state()
+        let state = self.state();
+        let Some(entry) = state
             .entries
             .iter()
             .find(|candidate| candidate.id == entry.id || Some(candidate.id) == earned)
@@ -1386,6 +1386,23 @@ impl TimeTracker {
         else {
             return;
         };
+        // What another machine has since said the user was here for is not this
+        // machine's to trim: the answer is for what is left. Of several stretches
+        // left, the latest, since a trim keeps everything before it starts and so
+        // can never take time another machine saw.
+        let remaining = unwitnessed(*absence, &state.seen_elsewhere, state.absence_threshold);
+        let Some(&narrowed) = remaining.last() else {
+            log::info!("the absence was covered by another machine since it was asked about");
+            return;
+        };
+        if narrowed != *absence {
+            log::info!(
+                "answering for {} to {}, the part of the absence no other machine has covered",
+                narrowed.began,
+                narrowed.ended
+            );
+        }
+        let absence = &narrowed;
         if entry.is_locked {
             return;
         }
