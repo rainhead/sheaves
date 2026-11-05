@@ -101,6 +101,11 @@ impl AbsenceDetector {
     /// evidence arriving, and the gap is measured when it resumes. They are worth
     /// observing only so the question can be asked the instant the machine wakes,
     /// rather than at the next poll.
+    /// Whether evidence at `when` would end an absence, without noting it.
+    pub fn would_end_absence(&self, when: Timestamp) -> bool {
+        when > self.last_presence && seconds_between(self.last_presence, when) >= self.threshold
+    }
+
     pub fn note_presence(&mut self, when: Timestamp) -> Option<Absence> {
         // Evidence older than what we already hold says nothing new, and a clock
         // that steps backwards must never manufacture an absence.
@@ -159,6 +164,9 @@ pub struct PresenceMonitor {
     /// Every moment of evidence handed to the detector since the last
     /// [`take_evidence`](Self::take_evidence), for the log peers are answered from.
     evidence: Vec<Timestamp>,
+    /// Whether the last look found the screen locked, so the first look at a
+    /// locked screen can be told from the rest.
+    was_locked: bool,
 }
 
 impl PresenceMonitor {
@@ -171,6 +179,7 @@ impl PresenceMonitor {
             detector: AbsenceDetector::new(threshold, now),
             last_poll: now,
             evidence: Vec::new(),
+            was_locked: false,
         }
     }
 
@@ -194,9 +203,28 @@ impl PresenceMonitor {
         // A locked screen outranks everything. A call left running on a locked
         // machine still holds the microphone, and that is somebody's machine sitting
         // in an empty room, not somebody working.
+        //
+        // Except for the press that locked it. Checked at a Mac on 2026-11-04:
+        // locking resets the idle clock, which then counts on through the lock,
+        // and unlocking with Touch ID resets nothing. So the first look at a
+        // locked screen reads the clock once, and finds the user there at the
+        // moment they locked it: without this, ten minutes' reading and then a
+        // lock dated the absence from ten minutes before they left (#23). Only
+        // once, because whether input at a lock screen reaches the clock is not
+        // known on every machine, and nobody is working at one. And only when the
+        // press ends a gap too short to ask about: after a long stillness it
+        // would split one departure into two questions, the stillness and the
+        // lunch, so the question stays one, from the last input before it.
         if reading.screen_locked {
+            if !std::mem::replace(&mut self.was_locked, true) {
+                let pressed = offset_by(now, -reading.seconds_since_input);
+                if !self.detector.would_end_absence(pressed) {
+                    self.note(pressed);
+                }
+            }
             return Vec::new();
         }
+        self.was_locked = false;
         let mut absences = Vec::new();
 
         // The microphone is read first, and its evidence is dated to the previous
@@ -536,6 +564,40 @@ mod tests {
             assert!(run.absences.is_empty());
             run.reading.screen_locked = false;
             run.return_at(40.0 * 60.0 + 1.0, 1.0);
+            assert_eq!(run.absences[0].began, at(0.0));
+        }
+
+        /// Ten minutes reading, then the screen locked and the user gone for lunch.
+        /// The press that locked it resets the idle clock, so the absence begins
+        /// when they locked it, not when they last typed.
+        #[test]
+        fn an_absence_begins_at_the_press_that_locked_the_screen() {
+            let mut run = Run::new();
+            run.still(30.0, 10.0 * 60.0);
+            let locked_at = 10.0 * 60.0 + 10.0;
+            run.reading.screen_locked = true;
+            run.return_at(10.0 * 60.0 + 30.0, 20.0);
+            // Later looks at the locked screen are not evidence, even when
+            // something there resets the clock.
+            run.return_at(30.0 * 60.0, 5.0);
+            run.reading.screen_locked = false;
+            run.return_at(60.0 * 60.0, 1.0);
+            assert_eq!(run.absences.len(), 1, "{:?}", run.absences);
+            assert_eq!(run.absences[0].began, at(locked_at));
+        }
+
+        /// Twenty minutes still, then a lock and lunch: one question, from the
+        /// last input, as before. The press would otherwise split it in two, the
+        /// stillness and the lunch.
+        #[test]
+        fn a_lock_after_a_long_stillness_leaves_one_question() {
+            let mut run = Run::new();
+            run.still(30.0, 20.0 * 60.0);
+            run.reading.screen_locked = true;
+            run.return_at(20.0 * 60.0 + 30.0, 20.0);
+            run.reading.screen_locked = false;
+            run.return_at(60.0 * 60.0, 1.0);
+            assert_eq!(run.absences.len(), 1, "{:?}", run.absences);
             assert_eq!(run.absences[0].began, at(0.0));
         }
 
