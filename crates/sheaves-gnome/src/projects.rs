@@ -17,6 +17,8 @@ pub struct ProjectList {
     /// Each row's task menu, in row order.
     tasks: RefCell<Vec<gtk::DropDown>>,
     start: Rc<dyn Fn(TimerTarget)>,
+    /// Whether a row can be chosen and clicked to start, as in quick entry.
+    choosable: std::cell::Cell<bool>,
 }
 
 /// Every word typed appears somewhere in the project's name, its client's or one
@@ -67,7 +69,20 @@ impl ProjectList {
             shown: RefCell::default(),
             tasks: RefCell::default(),
             start: Rc::new(start),
+            choosable: std::cell::Cell::new(false),
         })
+    }
+
+    /// Lets one row at a time be chosen, and a click on a row start it. Action
+    /// rows cannot be activated unless told so, and a click would only choose.
+    pub fn make_choosable(&self) {
+        self.choosable.set(true);
+        self.list.set_selection_mode(gtk::SelectionMode::Single);
+        let mut index = 0;
+        while let Some(row) = self.list.row_at_index(index) {
+            row.set_activatable(true);
+            index += 1;
+        }
     }
 
     /// Shows `projects`, rebuilding the rows only when they changed, so a row is
@@ -83,6 +98,7 @@ impl ProjectList {
         for project in projects {
             haystacks.push(haystack(project));
             let row = adw::ActionRow::builder()
+                .activatable(self.choosable.get())
                 .title(glib::markup_escape_text(&project.project.name))
                 .subtitle(glib::markup_escape_text(
                     project

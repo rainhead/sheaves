@@ -56,7 +56,7 @@ impl QuickEntry {
                 }
             })
         };
-        projects.list.set_selection_mode(gtk::SelectionMode::Single);
+        projects.make_choosable();
 
         let task = gtk::Label::new(None);
         task.add_css_class("heading");
