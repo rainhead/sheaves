@@ -454,10 +454,20 @@ async fn trimming_the_same_lunch_on_both_machines_bills_it_once() {
     let on_hostess = prompts(&desk.hostess);
     assert_eq!((on_mac.len(), on_hostess.len()), (1, 1));
 
-    let running = desk.hostess.tracker.state().running_entry().cloned().unwrap();
+    let running = desk
+        .hostess
+        .tracker
+        .state()
+        .running_entry()
+        .cloned()
+        .unwrap();
     desk.hostess
         .tracker
-        .resolve(&on_hostess[0], &running, &AbsenceResolution::TrimAndContinue)
+        .resolve(
+            &on_hostess[0],
+            &running,
+            &AbsenceResolution::TrimAndContinue,
+        )
         .await;
     let after_one = desk.harvest.only_entry();
 
