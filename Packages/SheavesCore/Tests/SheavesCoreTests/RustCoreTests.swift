@@ -17,7 +17,7 @@ struct RustCoreTests {
     @MainActor
     func demoTracker() async {
         let tracker = TimeTracker.demo()
-        #expect(tracker.connection == .needsCredentials)
+        #expect(tracker.connection == .connecting)
 
         await tracker.sync()
 

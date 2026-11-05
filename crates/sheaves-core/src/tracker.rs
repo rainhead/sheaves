@@ -329,7 +329,10 @@ impl TimeTracker {
                 snapshots,
                 queue,
                 state: Mutex::new(State {
-                    connection: Connection::NeedsCredentials,
+                    // Not yet known: `bootstrap` reads the login and says. Starting
+                    // on "needs credentials" showed a signed-in user, for the moment
+                    // the keyring took to answer, a prompt to connect.
+                    connection: Connection::Connecting,
                     user: None,
                     company: None,
                     targets: Vec::new(),
