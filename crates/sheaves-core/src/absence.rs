@@ -101,6 +101,11 @@ impl AbsenceDetector {
     /// evidence arriving, and the gap is measured when it resumes. They are worth
     /// observing only so the question can be asked the instant the machine wakes,
     /// rather than at the next poll.
+    /// Whether evidence at `when` would end an absence, without noting it.
+    pub fn would_end_absence(&self, when: Timestamp) -> bool {
+        when > self.last_presence && seconds_between(self.last_presence, when) >= self.threshold
+    }
+
     pub fn note_presence(&mut self, when: Timestamp) -> Option<Absence> {
         // Evidence older than what we already hold says nothing new, and a clock
         // that steps backwards must never manufacture an absence.
@@ -206,15 +211,18 @@ impl PresenceMonitor {
         // moment they locked it: without this, ten minutes' reading and then a
         // lock dated the absence from ten minutes before they left (#23). Only
         // once, because whether input at a lock screen reaches the clock is not
-        // known on every machine, and nobody is working at one.
+        // known on every machine, and nobody is working at one. And only when the
+        // press ends a gap too short to ask about: after a long stillness it
+        // would split one departure into two questions, the stillness and the
+        // lunch, so the question stays one, from the last input before it.
         if reading.screen_locked {
-            if std::mem::replace(&mut self.was_locked, true) {
-                return Vec::new();
+            if !std::mem::replace(&mut self.was_locked, true) {
+                let pressed = offset_by(now, -reading.seconds_since_input);
+                if !self.detector.would_end_absence(pressed) {
+                    self.note(pressed);
+                }
             }
-            return self
-                .note(offset_by(now, -reading.seconds_since_input))
-                .into_iter()
-                .collect();
+            return Vec::new();
         }
         self.was_locked = false;
         let mut absences = Vec::new();
@@ -576,6 +584,21 @@ mod tests {
             run.return_at(60.0 * 60.0, 1.0);
             assert_eq!(run.absences.len(), 1, "{:?}", run.absences);
             assert_eq!(run.absences[0].began, at(locked_at));
+        }
+
+        /// Twenty minutes still, then a lock and lunch: one question, from the
+        /// last input, as before. The press would otherwise split it in two, the
+        /// stillness and the lunch.
+        #[test]
+        fn a_lock_after_a_long_stillness_leaves_one_question() {
+            let mut run = Run::new();
+            run.still(30.0, 20.0 * 60.0);
+            run.reading.screen_locked = true;
+            run.return_at(20.0 * 60.0 + 30.0, 20.0);
+            run.reading.screen_locked = false;
+            run.return_at(60.0 * 60.0, 1.0);
+            assert_eq!(run.absences.len(), 1, "{:?}", run.absences);
+            assert_eq!(run.absences[0].began, at(0.0));
         }
 
         /// Sleeping needs no special case: the evidence simply stops arriving, and
