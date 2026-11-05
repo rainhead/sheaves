@@ -97,12 +97,11 @@ struct PresenceMonitorTests {
         sensor.secondsSinceInput = 1
         await monitor.poll(now: start + 50 * 60 + 1)
 
-        // One poll interval earlier than the call actually ended: a microphone found
-        // running could have started at any point since the last look, so its
-        // evidence is dated to that look rather than to the moment of noticing.
-        // Erring this way trims slightly more than was missed, never less.
+        // At the last look that heard the call, which is when somebody was last
+        // known to be here. Dating it a look earlier, as the start of a call is
+        // dated, trimmed half a minute that was not missed (#23).
         let absence = try #require(box.absences.first)
-        #expect(absence.began == callEnded - PresenceMonitor.pollInterval)
+        #expect(absence.began == callEnded)
     }
 
     /// Joining a call after a quiet stretch of reading must not open the prompt
