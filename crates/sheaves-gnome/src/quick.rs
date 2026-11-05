@@ -198,13 +198,16 @@ impl QuickEntry {
         self.window.add_controller(keys);
     }
 
-    /// Opens fresh: nothing typed, the top project chosen, and the cursor in the
-    /// search field. It also looks at Harvest, as the Mac's panel does.
+    /// Opens fresh, since the window is kept between uses: nothing typed, the top
+    /// project chosen and in view, and the cursor in the search field. It also looks at Harvest, as the Mac's panel does.
     pub fn present(&self) {
         self.search.set_text("");
         self.filtered_for.borrow_mut().clear();
         self.projects.list.invalidate_filter();
         self.choose_first();
+        // The window is kept between uses, and so is where its list was
+        // scrolled to: back to the top, where the chosen row is.
+        self.scrolled.vadjustment().set_value(0.0);
         self.window.present();
         self.search.grab_focus();
         let _ = self.actions.try_send(Action::Sync);
