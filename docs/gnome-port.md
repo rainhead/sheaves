@@ -5,6 +5,12 @@ the Mac app, with the two machines agreeing about when he was away. Decided on
 2026-11-02. Each phase below is written as a brief for a separate session, so a
 session can pick one up without the conversation that produced this file.
 
+**Finished on 2026-11-04.** Every phase is merged, and each records what it
+decided. Left open, for Peter: the two questions at the end of phase 5, which
+phase 9 did not change, and [#23](https://github.com/rainhead/sheaves/issues/23)
+and [#26](https://github.com/rainhead/sheaves/issues/26). What the GNOME app still
+leaves out is in [`ROADMAP.md`](../ROADMAP.md).
+
 ## Decisions
 
 - **Rust for everything portable; Swift only for SwiftUI and Apple integration.**
@@ -747,6 +753,14 @@ Checked at the desk, 2026-11-04: the key opens quick entry from another app.
 The README's layout table and "How it works", `ROADMAP.md`, this file, and
 `docs/presence.md`, which gains the GNOME signals and the peer merge. Done when a
 newcomer can build both apps from the README alone.
+
+**Done in phase 11.** The README introduces both apps, builds each under a heading
+of its own, and gives each its keys; the roadmap lists what the GNOME app leaves
+out and why it has no package. `docs/presence.md` had gained the GNOME signals and
+the sharing through Harvest in phases 7 and 9. Not done: the README's lead image
+still shows the pause button that [#40](https://github.com/rainhead/sheaves/pull/40)
+replaced with stop. The demo instance's panel no longer opens by itself on macOS
+27, so retaking it needs someone at the Mac to click the demo's menu bar item.
 
 ## Working practice
 

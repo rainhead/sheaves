@@ -2,16 +2,19 @@
 
 [![Build](https://github.com/rainhead/sheaves/actions/workflows/build.yml/badge.svg)](https://github.com/rainhead/sheaves/actions/workflows/build.yml)
 
-A native SwiftUI menu bar client for [Harvest](https://www.getharvest.com) time tracking.
+A [Harvest](https://www.getharvest.com) time-tracking client for the Mac's menu
+bar and GNOME's top bar, two native apps on one Rust core.
 
-It notices when a timer has been running with nobody at the Mac and offers to trim
-the time — and it knows that being on a call is not being away, so it stays quiet
-through Zoom and Meet. The clock you are on is always visible in the menu bar,
-⌃⌥⌘T starts a timer from anywhere, and nothing blocks on the network: Sheaves shows
-local state immediately and reconciles with Harvest afterwards.
+It notices when a timer has been running with nobody at the machine and offers to
+trim the time — and it knows that being on a call is not being away, so it stays
+quiet through Zoom and Meet. Your machines compare notes through Harvest, so work
+at one is not taken for an absence at the other. The clock you are on is always
+visible in the menu bar or the top bar, a key starts a timer from anywhere, and
+nothing blocks on the network: Sheaves shows local state immediately and
+reconciles with Harvest afterwards.
 
 <img src="docs/images/menu-bar-live.png" width="396"
-  alt="The Sheaves menu bar item — a pause button beside “Orcasound 1:30” — with
+  alt="The Sheaves menu bar item — a pause button beside “Online Store - Phase 1 1:30” — with
   its panel open beneath: a budget bar for the running project, a running timer
   with a stop button, a stopped entry with a resume button, and a list of
   projects — each with a task dropdown and its remaining budget, one of them
@@ -19,13 +22,12 @@ local state immediately and reconciles with Harvest afterwards.
 
 ## Status
 
-Early. The macOS app tracks time, and a GNOME app is being built beside it on the
-same Rust core ([the plan](docs/gnome-port.md)): it starts and stops timers and
-shows the running one in the top bar, asks about time away as the Mac does, and
-edits entries as the Mac does: their notes, time, project and task, and time
-logged without a timer. Ctrl+Alt+Super+T, switched on in its Settings, opens a
-quick entry window from any app, as ⌃⌥⌘T does on the Mac.
-iOS is not built.
+Both apps are in daily use. The GNOME app was built on the Mac app's core
+([how, phase by phase](docs/gnome-port.md)) and does what the Mac does: timers
+from the top bar, the day in a window, the same questions about time away, the
+same edits, and quick entry from any app. It does not show budgets, it assumes
+mains power, and it has no microphone signal, since nobody takes calls on the
+machine it was built for. iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.
 **If this is interesting to you, please get in touch** —
@@ -54,10 +56,11 @@ therefore waiting on the paragraph above.
 
 ## Building it
 
-Requires Xcode 26 or later and [rustup](https://rustup.rs), which installs the Rust
-compiler that [`rust-toolchain.toml`](rust-toolchain.toml) names on first use. The
-core is Rust so a GNOME app can share it; the plan for that app is
-[`docs/gnome-port.md`](docs/gnome-port.md).
+Both apps need [rustup](https://rustup.rs), which installs the Rust compiler that
+[`rust-toolchain.toml`](rust-toolchain.toml) names on first use. The Mac app also
+needs Xcode 26 or later, and the GNOME app GTK 4 and libadwaita.
+
+### On the Mac
 
 ```sh
 brew install xcodegen          # the .xcodeproj is generated, not committed
@@ -92,23 +95,25 @@ that made ⌘V silently do nothing.
 
 ### On GNOME
 
-Requires GTK 4, libadwaita and rustup. There is no package; build from the checkout
-and run.
+There is no package; build from the checkout and run.
 
 ```sh
-sudo apt install libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
+sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
 cargo run --release -p sheaves-gnome
-cargo test -p sheaves-gnome
+cargo test --workspace                           # the core and the GNOME app
 ```
 
 The running timer shows in the top bar through Ubuntu's AppIndicator extension,
 which is on by default there; elsewhere, install that extension. Each launch
 installs a desktop entry and icon into `~/.local/share`, pointing at the binary
-where it is, so GNOME knows the window and the app grid lists it. Settings has a
-switch to start at login. The token is kept in the keyring.
+where it is, so GNOME knows the window and the app grid lists it. Settings has
+switches to start at login and to add the quick entry key to GNOME's keyboard
+shortcuts.
 
-A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml) and
-pushing a matching `v` tag.
+### Releases
+
+Releases are of the Mac app. A release is cut by bumping `MARKETING_VERSION` in
+[`project.yml`](project.yml) and pushing a matching `v` tag.
 [`Scripts/package-release.sh`](Scripts/package-release.sh) builds and zips the app,
 and [the release workflow](.github/workflows/release.yml) runs that same script after
 the tests pass — refusing any tag that disagrees with the version the built app
@@ -118,12 +123,14 @@ reports.
 
 Create a personal access token at
 [id.getharvest.com/developers](https://id.getharvest.com/developers) and paste it,
-with the account ID shown beside it, into Sheaves' settings. The token is stored in
-the Keychain and sent only to `api.harvestapp.com`.
+with the account ID shown beside it, into Sheaves' settings. The token is kept in
+the Keychain on the Mac and in the keyring on GNOME, and sent only to
+`api.harvestapp.com`.
 
-Settings has a switch to open Sheaves at login, which registers the bundle where it
-sits right now — move the app and the switch has to go off and on again to point at
-the new location.
+On the Mac, the switch to open Sheaves at login registers the bundle where it sits
+right now — move the app and the switch has to go off and on again to point at the
+new location. On GNOME, each launch points the login item and the quick entry key
+at the binary that is running.
 
 ## How it works
 
@@ -226,25 +233,32 @@ own instead of riding every start and stop.
 of the last known state is restored at launch, so the popover is populated before the
 first request returns.
 
-The global hotkey uses Carbon's `RegisterEventHotKey`
+On the Mac, the global hotkey uses Carbon's `RegisterEventHotKey`
 ([`GlobalHotKey`](Apps/Mac/Sources/GlobalHotKey.swift)) rather than an `NSEvent`
 monitor: it needs no Accessibility permission and can actually consume the key. It is
 rebindable in Settings, and says so when another app already owns the combination —
-Carbon reports that by failing silently, which is worth surfacing.
+Carbon reports that by failing silently, which is worth surfacing. GNOME keeps
+global keys in its own settings, so there the key is one of its custom shortcuts,
+running `sheaves-gnome --quick-entry`
+([`shortcut.rs`](crates/sheaves-gnome/src/shortcut.rs)), which works even before
+Sheaves is running.
 
 ## Layout
 
 | Path | What lives there |
 | --- | --- |
-| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and how it is shared between machines. Rust, so a GNOME app can share it. |
+| [`crates/sheaves-core`](crates/sheaves-core) | Everything but the views: the API client, models, the queue, the tracker, presence, and how it is shared between machines. Rust, so both apps share it. |
 | [`Packages/SheavesCore`](Packages/SheavesCore) | The core as Swift sees it: the [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings, an `@Observable` wrapper, the Keychain, and formatting. |
 | [`Apps/Mac`](Apps/Mac) | The menu bar app: popover, quick-entry panel, settings. |
-| [`crates/sheaves-gnome`](crates/sheaves-gnome) | The GNOME app: the running timer in the top bar, the day in a libadwaita window. |
-| [`project.yml`](project.yml) | Targets and build settings; the `.xcodeproj` is generated from it. |
+| [`crates/sheaves-gnome`](crates/sheaves-gnome) | The GNOME app: the running timer in the top bar, the day in a libadwaita window, quick entry. |
+| [`icons`](icons) | Sheaves' glyph and app icon, as SVG, for both apps. |
+| [`project.yml`](project.yml) | The Mac app's targets and build settings; the `.xcodeproj` is generated from it. |
 | [`Scripts`](Scripts) | Jobs that need more than a line: the Rust core for the Mac, the release package, the documentation images. |
 | [`docs`](docs) | Notes too long for here, and the images this file uses. |
 
 ## Keyboard
+
+On the Mac:
 
 | | |
 | --- | --- |
@@ -255,6 +269,14 @@ Carbon reports that by failing silently, which is worth surfacing.
 | ⌫ | Delete the selected entry, after asking |
 | Right-click an entry | Edit its notes or time, move it, or delete it |
 | ⌘← ⌘→ | Previous / next day |
+
+On GNOME:
+
+| | |
+| --- | --- |
+| Ctrl+Alt+Super+T | Quick entry, from any app (switched on in Settings; changed in GNOME's) |
+| ↑ ↓, ⏎, Escape | In quick entry: choose a project, start it, close |
+| Middle-click the top bar item | Stop or resume, without opening anything |
 
 ## Licence
 
