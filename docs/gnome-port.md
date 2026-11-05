@@ -717,6 +717,31 @@ custom shortcuts. The GlobalShortcuts portal is available if a binding inside th
 app turns out to be wanted. Done when the key opens the window from any app and
 starts a timer.
 
+**Decided in phase 10.**
+
+- **The window is the Mac's panel** ([`quick.rs`](../crates/sheaves-gnome/src/quick.rs)):
+  what is running with a Stop button, or else how much is logged today; then a
+  search field over the projects, ranked as in the window, with the first match
+  chosen. The arrow keys move the choice while typing goes on in the field, ⏎
+  starts it, a click on a row starts that row, and Escape closes. Opening it looks
+  at Harvest, as the Mac's does. The window and quick entry share one project
+  list ([`projects.rs`](../crates/sheaves-gnome/src/projects.rs)).
+- **The key is one of GNOME's custom shortcuts,** added by a switch in Settings
+  ([`shortcut.rs`](../crates/sheaves-gnome/src/shortcut.rs)) at a path of
+  Sheaves' own, leaving any others alone. It is Ctrl+Alt+Super+T, the Mac's
+  ⌃⌥⌘T with Super for ⌘; Ctrl+Alt+T is Ubuntu's terminal. The key can be changed
+  in GNOME's Settings, and Sheaves keeps whichever is bound. Each launch points
+  the shortcut's command at the binary where it is, as the desktop entry does.
+  The portal was not needed: a custom shortcut works with the app not running,
+  since running the command starts it.
+- **The command is quoted for a shell and nothing more.** GNOME's settings
+  daemon doubles any `%` itself before it reads the command as a desktop entry's
+  `Exec` line ([`gsd-media-keys-manager.c`](https://gitlab.gnome.org/GNOME/gnome-settings-daemon/-/blob/master/plugins/media-keys/gsd-media-keys-manager.c),
+  `execute`). It also launches with no startup notification, so whether GNOME
+  raises the window or says "Sheaves is ready" is for the desk to show.
+
+Checked at the desk, 2026-11-04: the key opens quick entry from another app.
+
 ### Phase 11: documents and cleanup
 
 The README's layout table and "How it works", `ROADMAP.md`, this file, and

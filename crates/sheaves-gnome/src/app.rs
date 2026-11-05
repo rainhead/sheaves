@@ -19,6 +19,7 @@ use crate::prompt::{self, Outcome, Wording};
 
 use crate::indicator::{self, Command, Indicator, Look};
 use crate::keyring::Keyring;
+use crate::quick::QuickEntry;
 use crate::settings;
 use crate::window::{self, Action, Window};
 
@@ -38,6 +39,7 @@ struct Shell {
     app: adw::Application,
     tracker: Arc<Tracker>,
     window: Rc<Window>,
+    quick: Rc<QuickEntry>,
     latest: RefCell<TrackerSnapshot>,
     looks: tokio::sync::watch::Sender<Look>,
     /// Absences waiting their turn to be asked about, oldest first. Each describes
@@ -73,14 +75,21 @@ pub fn run() -> glib::ExitCode {
     {
         let shell = shell.clone();
         // Every launch arrives here, the first and each later one, which GApplication
-        // hands to the instance already running. Phase 10's quick entry joins in here.
+        // hands to the instance already running: `--quick-entry` from the shortcut,
+        // `--background` from the login item, nothing from the app grid.
         app.connect_command_line(move |_, command_line| {
-            let background = command_line
-                .arguments()
-                .iter()
-                .any(|argument| argument.to_str() == Some("--background"));
-            if !background && let Some(shell) = shell.borrow().as_ref() {
-                shell.window.window.present();
+            let arguments = command_line.arguments();
+            let has = |flag: &str| {
+                arguments
+                    .iter()
+                    .any(|argument| argument.to_str() == Some(flag))
+            };
+            if let Some(shell) = shell.borrow().as_ref() {
+                if has("--quick-entry") {
+                    shell.quick.present();
+                } else if !has("--background") {
+                    shell.window.window.present();
+                }
             }
             glib::ExitCode::SUCCESS
         });
@@ -99,6 +108,13 @@ fn start(app: &adw::Application) -> Rc<Shell> {
     {
         log::warn!("could not install Sheaves' desktop entry: {error}");
     }
+    // The shortcut runs the binary by its path, which moves with each checkout.
+    if let (Some(shortcuts), Ok(program)) = (
+        crate::shortcut::Shortcuts::desktop(),
+        crate::autostart::this_program(),
+    ) {
+        shortcuts.refresh(&program);
+    }
 
     let (snapshots, snapshot_rx) = async_channel::unbounded();
     let directory = persistence::data_directory();
@@ -110,9 +126,11 @@ fn start(app: &adw::Application) -> Rc<Shell> {
     );
 
     let (actions, action_rx) = async_channel::unbounded();
-    let window = Window::new(app, actions);
+    let window = Window::new(app, actions.clone());
+    let quick = QuickEntry::new(app, actions);
     let initial = tracker.snapshot();
     window.render(&initial);
+    quick.render(&initial);
 
     let (commands, command_rx) = async_channel::unbounded();
     let (looks, look_rx) = tokio::sync::watch::channel(Look::default());
@@ -129,6 +147,7 @@ fn start(app: &adw::Application) -> Rc<Shell> {
         app: app.clone(),
         tracker: tracker.clone(),
         window,
+        quick,
         latest: RefCell::new(initial),
         looks,
         absences: RefCell::default(),
@@ -248,6 +267,7 @@ impl Shell {
             return;
         }
         self.window.render(&snapshot);
+        self.quick.render(&snapshot);
         // Takes the question down once it no longer applies: another machine
         // trimmed the timer, which this one sees at its next look at Harvest, or
         // it was stopped somewhere. Asking anyway would trim the same absence

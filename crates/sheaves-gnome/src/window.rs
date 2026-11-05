@@ -11,10 +11,11 @@ use adw::prelude::*;
 use gtk::glib;
 use sheaves_core::ffi::TrackerSnapshot;
 use sheaves_core::hours::HoursFormat;
-use sheaves_core::tracked_entry::{EntryId, ProjectTargets, TimerTarget, TrackedEntry};
+use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
 use sheaves_core::tracker::Connection;
 
 use crate::format;
+use crate::projects::ProjectList;
 
 /// What the user asked for in the window.
 #[derive(Clone, Debug)]
@@ -39,15 +40,12 @@ pub struct Window {
     banner: adw::Banner,
     entries: gtk::ListBox,
     no_entries: gtk::Label,
-    projects: gtk::ListBox,
+    projects: Rc<ProjectList>,
     status: gtk::Label,
     /// The hours label of each entry row, so the running one can tick without
     /// rebuilding the list under the pointer.
     hours: RefCell<Vec<(EntryId, gtk::Label)>>,
     shown_entries: RefCell<Vec<TrackedEntry>>,
-    shown_projects: RefCell<Vec<ProjectTargets>>,
-    /// The text each project row is searched by, in row order.
-    haystacks: Rc<RefCell<Vec<String>>>,
     actions: async_channel::Sender<Action>,
 }
 
@@ -122,28 +120,12 @@ impl Window {
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some("Find a project or task"));
-        let projects = gtk::ListBox::new();
-        projects.add_css_class("boxed-list");
-        projects.set_selection_mode(gtk::SelectionMode::None);
-        let haystacks: Rc<RefCell<Vec<String>>> = Rc::default();
-        {
-            let haystacks = haystacks.clone();
-            let search = search.clone();
-            projects.set_filter_func(move |row| {
-                let query = search.text().to_lowercase();
-                query.is_empty()
-                    || haystacks
-                        .borrow()
-                        .get(row.index() as usize)
-                        .is_some_and(|haystack| {
-                            query.split_whitespace().all(|word| haystack.contains(word))
-                        })
-            });
-        }
-        {
-            let projects = projects.clone();
-            search.connect_search_changed(move |_| projects.invalidate_filter());
-        }
+        let projects = {
+            let actions = actions.clone();
+            ProjectList::new(&search, move |target| {
+                let _ = actions.try_send(Action::Start(target));
+            })
+        };
 
         let status = gtk::Label::new(None);
         status.add_css_class("dim-label");
@@ -159,7 +141,7 @@ impl Window {
         column.append(&no_entries);
         column.append(&heading("Start a timer"));
         column.append(&search);
-        column.append(&projects);
+        column.append(&projects.list);
         let clamp = adw::Clamp::new();
         clamp.set_maximum_size(560);
         clamp.set_child(Some(&column));
@@ -239,8 +221,6 @@ impl Window {
             status,
             hours: RefCell::default(),
             shown_entries: RefCell::default(),
-            shown_projects: RefCell::default(),
-            haystacks,
             actions,
         })
     }
@@ -274,10 +254,7 @@ impl Window {
             }
         }
 
-        if *self.shown_projects.borrow() != snapshot.ordered_projects {
-            self.rebuild_projects(&snapshot.ordered_projects);
-            *self.shown_projects.borrow_mut() = snapshot.ordered_projects.clone();
-        }
+        self.projects.show(&snapshot.ordered_projects);
     }
 
     fn render_banner(&self, snapshot: &TrackerSnapshot) {
@@ -346,57 +323,6 @@ impl Window {
         self.no_entries.set_visible(entries.is_empty());
         *self.hours.borrow_mut() = hours;
     }
-
-    fn rebuild_projects(&self, projects: &[ProjectTargets]) {
-        self.projects.remove_all();
-        let mut haystacks = Vec::new();
-        for project in projects {
-            let mut haystack = project.project.name.to_lowercase();
-            if let Some(client) = &project.client {
-                haystack.push(' ');
-                haystack.push_str(&client.name.to_lowercase());
-            }
-            for task in &project.tasks {
-                haystack.push(' ');
-                haystack.push_str(&task.name.to_lowercase());
-            }
-            haystacks.push(haystack);
-
-            let row = adw::ActionRow::builder()
-                .title(glib::markup_escape_text(&project.project.name))
-                .subtitle(glib::markup_escape_text(
-                    project
-                        .client
-                        .as_ref()
-                        .map_or("", |client| client.name.as_str()),
-                ))
-                .build();
-            let names: Vec<&str> = project
-                .tasks
-                .iter()
-                .map(|task| task.name.as_str())
-                .collect();
-            let tasks = gtk::DropDown::from_strings(&names);
-            tasks.set_valign(gtk::Align::Center);
-            let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
-            start.set_tooltip_text(Some("Start a timer"));
-            start.add_css_class("flat");
-            start.set_valign(gtk::Align::Center);
-            let actions = self.actions.clone();
-            let project = project.clone();
-            let chosen = tasks.clone();
-            start.connect_clicked(move |_| {
-                if let Some(task) = project.tasks.get(chosen.selected() as usize) {
-                    let _ = actions.try_send(Action::Start(project.target(task.clone())));
-                }
-            });
-            row.add_suffix(&tasks);
-            row.add_suffix(&start);
-            self.projects.append(&row);
-        }
-        *self.haystacks.borrow_mut() = haystacks;
-        self.projects.invalidate_filter();
-    }
 }
 
 fn heading(text: &str) -> gtk::Label {
@@ -433,7 +359,7 @@ fn subtitle(entry: &TrackedEntry) -> String {
 }
 
 /// "Synced 3 minutes ago · 2 changes waiting".
-fn status_text(snapshot: &TrackerSnapshot) -> String {
+pub fn status_text(snapshot: &TrackerSnapshot) -> String {
     let state = &snapshot.state;
     let mut parts = Vec::new();
     match (&state.connection, state.last_synced_at) {

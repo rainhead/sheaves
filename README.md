@@ -23,7 +23,8 @@ Early. The macOS app tracks time, and a GNOME app is being built beside it on th
 same Rust core ([the plan](docs/gnome-port.md)): it starts and stops timers and
 shows the running one in the top bar, asks about time away as the Mac does, and
 edits entries as the Mac does: their notes, time, project and task, and time
-logged without a timer.
+logged without a timer. Ctrl+Alt+Super+T, switched on in its Settings, opens a
+quick entry window from any app, as ⌃⌥⌘T does on the Mac.
 iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.
@@ -252,7 +253,7 @@ Carbon reports that by failing silently, which is worth surfacing.
 | ↑ ↓ | Move through the day's entries and the projects, as one list |
 | ⏎ | Stop or resume the selected entry, or start the selected project |
 | ⌫ | Delete the selected entry, after asking |
-| Right-click an entry | Edit its notes or time, or delete it |
+| Right-click an entry | Edit its notes or time, move it, or delete it |
 | ⌘← ⌘→ | Previous / next day |
 
 ## Licence
