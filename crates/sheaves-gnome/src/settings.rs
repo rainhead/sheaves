@@ -163,13 +163,18 @@ fn harvest_group(
 }
 
 /// The key for quick entry, as one of GNOME's custom shortcuts. Switched on, it
-/// is Ctrl+Alt+Super+T, which the user can change in GNOME's own Settings; the
-/// row says whichever key is bound.
+/// is Ctrl+Alt+Super+T, which the user can change in GNOME's own Settings. The
+/// row says the same thing either way, naming the key it adds or the key that is
+/// bound: a description that changed with the switch also changed the row's
+/// height.
 fn shortcut_group() -> adw::PreferencesGroup {
     use crate::shortcut::{self, Shortcuts};
 
     let group = adw::PreferencesGroup::new();
     group.set_title("Shortcut");
+    group.set_description(Some(
+        "To use another key, change it in GNOME's Settings › Keyboard › Custom Shortcuts.",
+    ));
     let row = adw::SwitchRow::builder().title("Quick entry").build();
     let error = gtk::Label::new(None);
     error.add_css_class("error");
@@ -185,16 +190,10 @@ fn shortcut_group() -> adw::PreferencesGroup {
         return group;
     };
     let describe = |row: &adw::SwitchRow, bound: Option<&str>| {
-        row.set_subtitle(&match bound {
-            Some(key) => format!(
-                "{} opens a window to start a timer from any app. Change the key in Settings › Keyboard › Custom Shortcuts.",
-                shortcut::readable(key)
-            ),
-            None => format!(
-                "Adds {} to GNOME's keyboard shortcuts, to start a timer from any app.",
-                shortcut::readable(shortcut::SUGGESTED)
-            ),
-        });
+        row.set_subtitle(&format!(
+            "{} opens a window to start a timer from any app.",
+            shortcut::readable(bound.unwrap_or(shortcut::SUGGESTED))
+        ));
     };
     let bound = shortcuts.bound();
     row.set_active(bound.is_some());
