@@ -340,6 +340,8 @@ mod sharing {
         reference: Mutex<Option<ExternalReference>>,
         posts: AtomicUsize,
         low_power: AtomicBool,
+        /// Harvest unreachable: every write fails.
+        failing: AtomicBool,
     }
 
     impl Entry {
@@ -348,6 +350,7 @@ mod sharing {
                 reference: Mutex::new(None),
                 posts: AtomicUsize::new(0),
                 low_power: AtomicBool::new(false),
+                failing: AtomicBool::new(false),
             })
         }
     }
@@ -363,6 +366,9 @@ mod sharing {
         }
 
         async fn post(&self, _: i64, reference: &ExternalReference) -> Result<(), String> {
+            if self.failing.load(Ordering::SeqCst) {
+                return Err("Harvest is unreachable".to_string());
+            }
             self.posts.fetch_add(1, Ordering::SeqCst);
             *self.reference.lock().unwrap() = Some(reference.clone());
             Ok(())
@@ -434,19 +440,37 @@ mod sharing {
         assert_eq!(entry.posts.load(Ordering::SeqCst), 0);
     }
 
-    #[test]
-    fn is_due_a_minute_after_the_last_write_and_only_with_news() {
+    #[tokio::test]
+    async fn is_due_a_minute_after_the_last_try_and_only_with_news() {
         let entry = Entry::new();
         let mac = sharing(&entry, "mac");
         mac.note_presence(at(10.0));
         assert!(mac.post_due(at(10.0)));
-        *lock(&mac.posted_at) = Some(at(10.0));
+        mac.post(at(10.0)).await;
         mac.note_presence(at(10.5));
         assert!(!mac.post_due(at(10.5)));
         assert!(mac.post_due(at(11.0)));
-        // Nobody seen since the last write: nothing to say.
-        *lock(&mac.posted_at) = Some(at(11.0));
+        // Nobody seen since the last write that went through: nothing to say.
+        mac.post(at(11.0)).await;
         assert!(!mac.post_due(at(20.0)));
+    }
+
+    /// A write that fails is tried again a minute later, with nothing new to
+    /// say: a Keep written during an outage still reaches the other machines.
+    #[tokio::test]
+    async fn a_failed_write_is_tried_again() {
+        let entry = Entry::new();
+        let mac = sharing(&entry, "mac");
+        entry.failing.store(true, Ordering::SeqCst);
+        mac.vouch(absence(20.0, 60.0), at(61.0)).await;
+        assert_eq!(entry.posts.load(Ordering::SeqCst), 0);
+        assert!(!mac.post_due(at(61.5)));
+        assert!(mac.post_due(at(62.0)));
+
+        entry.failing.store(false, Ordering::SeqCst);
+        mac.post(at(62.0)).await;
+        assert_eq!(entry.posts.load(Ordering::SeqCst), 1);
+        assert!(!mac.post_due(at(70.0)));
     }
 
     #[test]

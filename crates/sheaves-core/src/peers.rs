@@ -270,7 +270,13 @@ pub struct Peers {
     /// starts it afresh.
     log_owner: Mutex<Option<i64>>,
     /// When this machine last wrote its part, or tried to.
-    posted_at: Mutex<Option<Timestamp>>,
+    /// When this machine last tried to write its part, so it writes at most once
+    /// a minute.
+    attempted_at: Mutex<Option<Timestamp>>,
+    /// Whether the log holds something the running entry may not: evidence or a
+    /// Keep since the last write that went through. A write that fails leaves it
+    /// set, so the next is tried a minute later whether or not there is more.
+    unshared: AtomicBool,
     posting: AtomicBool,
     /// Writes take turns: each reads the entry, adds this machine's part and
     /// writes it, and one landing in the middle of another would be undone by it.
@@ -299,7 +305,8 @@ impl Peers {
             user_id: Mutex::new(None),
             log_file: Mutex::new(None),
             log_owner: Mutex::new(None),
-            posted_at: Mutex::new(None),
+            attempted_at: Mutex::new(None),
+            unshared: AtomicBool::new(false),
             posting: AtomicBool::new(false),
             write_turn: tokio::sync::Mutex::new(()),
         }
@@ -362,6 +369,7 @@ impl Peers {
 
     pub fn note_presence(&self, when: Timestamp) {
         let opened = lock(&self.log).note(when);
+        self.unshared.store(true, Ordering::SeqCst);
         self.save(when, opened);
     }
 
@@ -412,6 +420,7 @@ impl Peers {
             start: absence.began,
             end: absence.ended,
         });
+        self.unshared.store(true, Ordering::SeqCst);
         self.save_now();
         self.post(now).await;
     }
@@ -462,20 +471,17 @@ impl Peers {
     // MARK: Writing
 
     /// Whether this machine's part is due to be written at `now`: a board to write
-    /// on, the user seen since the last write, and a minute gone since it.
+    /// on, something not yet shared, and a minute gone since the last try.
     fn post_due(&self, now: Timestamp) -> bool {
         let Some(board) = self.board() else {
             return false;
         };
-        if !board.may_post() {
+        if !board.may_post() || !self.unshared.load(Ordering::SeqCst) {
             return false;
         }
-        let Some(newest) = lock(&self.log).intervals.last().map(|last| last.end) else {
-            return false;
-        };
-        match *lock(&self.posted_at) {
+        match *lock(&self.attempted_at) {
             None => true,
-            Some(posted) => newest > posted && seconds_between(posted, now) >= POST_EVERY,
+            Some(attempted) => seconds_between(attempted, now) >= POST_EVERY,
         }
     }
 
@@ -494,12 +500,18 @@ impl Peers {
         if user.is_none() || *lock(&self.log_owner) != user {
             return;
         }
-        *lock(&self.posted_at) = Some(now);
+        *lock(&self.attempted_at) = Some(now);
+        // Cleared now, so evidence noted while this write is under way sets it
+        // again; put back below if the write does not go through.
+        self.unshared.store(false, Ordering::SeqCst);
         let posted = match board.running().await {
             Ok(Some(posted)) => posted,
+            // No timer, nothing to share: a timer started later is shared from
+            // the evidence noted after it starts.
             Ok(None) => return,
             Err(error) => {
                 log::info!("could not read the running entry to share presence: {error}");
+                self.unshared.store(true, Ordering::SeqCst);
                 return;
             }
         };
@@ -525,6 +537,7 @@ impl Peers {
         }
         if let Err(error) = board.post(posted.entry_id, &reference).await {
             log::info!("could not share presence on the running entry: {error}");
+            self.unshared.store(true, Ordering::SeqCst);
         }
     }
 
