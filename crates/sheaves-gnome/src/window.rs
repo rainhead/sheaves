@@ -67,28 +67,37 @@ impl Window {
         let total = gtk::Label::new(None);
         total.add_css_class("caption");
         total.add_css_class("dim-label");
+        total.set_ellipsize(gtk::pango::EllipsizeMode::End);
         // A link in a label rather than a link button, whose padding made the
         // header taller and the window wider.
         let today = gtk::Label::new(None);
         today.set_markup("<a href=\"today\">Back to today</a>");
         today.add_css_class("caption");
+        today.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let below = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         below.set_halign(gtk::Align::Center);
         below.append(&total);
         below.append(&today);
-        // A fixed width, so the arrows stay where they are as the day's name
-        // changes length: clicking back twice would otherwise miss the second
-        // time. Wide enough for the line with the way back to today.
+        // A fixed width, so the arrows stay where they are as the day's name and
+        // total change length: clicking back twice would otherwise miss the
+        // second time. At least this wide, and clamped to it, with every label
+        // in it shortened rather than allowed to widen it.
+        const DAY_WIDTH: i32 = 170;
         let named = gtk::Box::new(gtk::Orientation::Vertical, 0);
         named.set_valign(gtk::Align::Center);
-        named.set_size_request(150, -1);
+        named.set_size_request(DAY_WIDTH, -1);
         named.append(&day);
         named.append(&below);
         back.set_valign(gtk::Align::Center);
         forward.set_valign(gtk::Align::Center);
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         title.append(&back);
-        title.append(&named);
+        let clamped = adw::Clamp::builder()
+            .maximum_size(DAY_WIDTH)
+            .tightening_threshold(DAY_WIDTH)
+            .child(&named)
+            .build();
+        title.append(&clamped);
         title.append(&forward);
         let log_time = gtk::Button::from_icon_name("list-add-symbolic");
         log_time.set_tooltip_text(Some("Log time without a timer"));
