@@ -277,6 +277,12 @@ impl FakeHarvest {
                 if let Some(notes) = body.get("notes").and_then(Value::as_str) {
                     entry.notes = Some(notes.to_string());
                 }
+                if let Some(project_id) = body.get("project_id").and_then(Value::as_i64) {
+                    entry.project_id = project_id;
+                }
+                if let Some(task_id) = body.get("task_id").and_then(Value::as_i64) {
+                    entry.task_id = task_id;
+                }
                 entry.updated_at = now;
                 (200, entry.json(now))
             }
@@ -433,6 +439,10 @@ enum Action {
     StopRunning,
     SetHours { entry: usize, quarter_hours: u8 },
     Delete(usize),
+    /// The entry moved to another project and task, keeping its time.
+    Move { entry: usize, to: usize },
+    /// Time logged by hand, with no timer.
+    Log { target: usize, quarter_hours: u8 },
     Wait { minutes: u32 },
     Network(Network),
     Sync,
@@ -490,6 +500,8 @@ fn action() -> impl Strategy<Value = Action> {
         2 => Just(Action::StopRunning),
         1 => (0..3usize, 1..16u8).prop_map(|(entry, quarter_hours)| Action::SetHours { entry, quarter_hours }),
         1 => (0..3usize).prop_map(Action::Delete),
+        1 => (0..3usize, 0..TARGETS.len()).prop_map(|(entry, to)| Action::Move { entry, to }),
+        1 => (0..TARGETS.len(), 1..16u8).prop_map(|(target, quarter_hours)| Action::Log { target, quarter_hours }),
         4 => (10..120u32).prop_map(|minutes| Action::Wait { minutes }),
         1 => Just(Action::Network(Network::Online)),
         3 => Just(Action::Network(Network::Offline)),
@@ -611,6 +623,38 @@ fn run(actions: Vec<Action>) -> Result<(), TestCaseError> {
                     };
                     tracker.delete(&local).await;
                     model.entries.retain(|e| e.target != index);
+                }
+                // The oracle holds one entry for each project and task, so an entry
+                // moves, and time is logged, only where there is none yet.
+                Action::Move { entry, to } => {
+                    if model.entries.iter().any(|e| e.target == to) {
+                        continue;
+                    }
+                    let state = tracker.state();
+                    let Some(local) = state.entries.get(entry).cloned() else { continue };
+                    let Some(index) = TARGETS
+                        .iter()
+                        .position(|(p, _, t, _)| *p == local.project.id && *t == local.task.id)
+                    else {
+                        continue;
+                    };
+                    let Some(modelled) = model.entries.iter_mut().find(|e| e.target == index) else {
+                        continue;
+                    };
+                    tracker.retarget(&local, &target(to)).await;
+                    modelled.target = to;
+                }
+                Action::Log { target: index, quarter_hours } => {
+                    if model.entries.iter().any(|e| e.target == index) {
+                        continue;
+                    }
+                    let hours = f64::from(quarter_hours) / 4.0;
+                    tracker.log_time(&target(index), today, hours, None).await;
+                    model.entries.push(ModelEntry {
+                        target: index,
+                        banked: hours,
+                        running_since: None,
+                    });
                 }
                 Action::Wait { minutes } => {
                     let seconds = f64::from(minutes) * 60.0;
