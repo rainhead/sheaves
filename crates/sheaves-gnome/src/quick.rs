@@ -199,7 +199,8 @@ impl QuickEntry {
     }
 
     /// Opens fresh, since the window is kept between uses: nothing typed, the top
-    /// project chosen and in view, and the cursor in the search field. It also looks at Harvest, as the Mac's panel does.
+    /// project chosen and in view, and the cursor in the search field. It also
+    /// looks at Harvest, as the Mac's panel does.
     pub fn present(&self) {
         self.search.set_text("");
         self.filtered_for.borrow_mut().clear();
