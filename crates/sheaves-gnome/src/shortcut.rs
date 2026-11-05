@@ -142,10 +142,15 @@ mod tests {
 
     const OTHER: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/";
 
-    /// Skipped where GNOME's settings daemon is not installed, as on a Mac.
+    /// Skipped where GNOME's settings daemon is not installed, except in CI,
+    /// which installs its schemas: a skip there would pass unseen.
     fn shortcuts() -> Option<Shortcuts> {
         let shortcuts = Shortcuts::in_memory();
         if shortcuts.is_none() {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "GNOME's settings schemas are missing: install gnome-settings-daemon-common"
+            );
             eprintln!("skipped: no GNOME settings schemas here");
         }
         shortcuts

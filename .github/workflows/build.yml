@@ -46,6 +46,11 @@ jobs:
       - name: Test Rust core
         run: cargo test --locked
 
+      # The core has code only the Mac builds, such as its TLS, so it is linted
+      # here as well as on Ubuntu.
+      - name: Lint Rust core
+        run: cargo clippy --locked -p sheaves-core --all-targets -- --deny warnings
+
       - name: Build Rust core for the Swift package
         run: Scripts/build-xcframework.sh
 
@@ -78,15 +83,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install GTK 4 and libadwaita
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libgtk-4-dev libadwaita-1-dev
+      # GNOME's settings daemon's schemas too, which the quick entry shortcut is
+      # kept in; its tests fail without them here, rather than skip.
+      - name: Install GTK 4, libadwaita and GNOME's settings schemas
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libgtk-4-dev libadwaita-1-dev gnome-settings-daemon-common
 
       - name: Install Rust
         run: rustup toolchain install --no-self-update
 
-      # The GNOME app is not a default member, so it is named.
-      - name: Lint GNOME app
-        run: cargo clippy --locked -p sheaves-gnome --all-targets -- --deny warnings
+      # Once, here: formatting is the same on every machine.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # The GNOME app is not a default member, so the workspace is named whole.
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets -- --deny warnings
+
+      # On Linux the core uses rustls and keeps its files where GNOME expects,
+      # neither of which the Mac's run of the same tests reaches.
+      - name: Test Rust core
+        run: cargo test --locked
 
       - name: Test GNOME app
         run: cargo test --locked -p sheaves-gnome
