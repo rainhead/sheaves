@@ -17,7 +17,8 @@ use crate::clock::Clock;
 use crate::credentials::{CredentialError, CredentialStore, Login};
 use crate::models::ExternalReference;
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
-use crate::peers::{Noticeboard, Peers, Posted};
+use crate::peers::board::Board;
+use crate::peers::{Interval, Noticeboard, Peers, Posted};
 use crate::queue::{Mutation, MutationQueue, Owner, StoppedRun};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
 use crate::tracked_entry::{
@@ -98,6 +99,41 @@ pub struct TrackerState {
     /// what the menu bar shows should not change just because the user looked at
     /// last Tuesday.
     pub last_active_today: Option<TrackedEntry>,
+    /// When the user's other machines saw them, or were told they were here, as
+    /// written on the running entry at the last sync. A question about an
+    /// absence these overlap no longer applies.
+    pub seen_elsewhere: Vec<Interval>,
+}
+
+/// How much of an absence another machine may turn out to have seen before the
+/// question about it is withdrawn. Machines write once a minute, rounded out to
+/// the minute, so the stretch one last saw the user in can land a minute late and
+/// reach a minute into a real absence.
+pub const LATE_EVIDENCE_SLACK: f64 = 2.0 * crate::peers::POST_EVERY;
+
+/// Seconds of `absence` that `seen` covers, overlaps counted once.
+pub fn covered_elsewhere(absence: &Absence, seen: &[Interval]) -> f64 {
+    let mut overlaps: Vec<(Timestamp, Timestamp)> = seen
+        .iter()
+        .map(|stretch| {
+            (
+                stretch.start.max(absence.began),
+                stretch.end.min(absence.ended),
+            )
+        })
+        .filter(|(start, end)| start < end)
+        .collect();
+    overlaps.sort();
+    let mut covered = 0.0;
+    let mut reached = absence.began;
+    for (start, end) in overlaps {
+        let start = start.max(reached);
+        if end > start {
+            covered += seconds_between(start, end);
+            reached = end;
+        }
+    }
+    covered
 }
 
 /// How long a stopped timer stays one click away before the menu bar collapses back
@@ -136,6 +172,11 @@ impl TrackerState {
     pub fn absence_applies(&self, absence: &Absence) -> bool {
         self.running_entry()
             .is_some_and(|entry| absence.trimmed_hours(entry).is_some())
+            // Another machine turned out to have seen the user during it, or was
+            // told they were here: answered Keep there, say. Then the question
+            // is withdrawn, rather than narrowed to what is left, so no answer
+            // can trim time another machine saw worked.
+            && covered_elsewhere(absence, &self.seen_elsewhere) <= LATE_EVIDENCE_SLACK
     }
 
     /// The budget to show beside `entry`, or `None` when there is nothing to show.
@@ -238,6 +279,7 @@ struct State {
     budgets: HashMap<i64, ProjectBudget>,
     now: Timestamp,
     last_active_today: Option<TrackedEntry>,
+    seen_elsewhere: Vec<Interval>,
     /// When the last sync *began*, however it was triggered and however it ended.
     /// The probe paces itself by this rather than `last_synced_at` so a failing
     /// connection is retried on the probe's cadence, not on every tick.
@@ -345,6 +387,7 @@ impl TimeTracker {
                     budgets: HashMap::new(),
                     now,
                     last_active_today: None,
+                    seen_elsewhere: Vec::new(),
                     last_sync_started_at: None,
                     account_data_fetched_at: None,
                     budget_availability: BudgetAvailability::Unknown,
@@ -667,8 +710,23 @@ impl TimeTracker {
             });
         }
         let today = inner.clock.today();
+        // The other machines' parts of what is written on the running entry. This
+        // machine's own are left out: rounded out to the minute, they would narrow
+        // its own absences, and it needs no telling when it saw the user.
+        let machine = inner
+            .peers
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|peers| peers.machine().to_string());
+        let seen_elsewhere = running
+            .as_ref()
+            .and_then(|entry| Board::of(entry.external_reference.as_ref()))
+            .map(|board| board.others(machine.as_deref().unwrap_or("")))
+            .unwrap_or_default();
         inner.update(|state| {
             state.entries = merge(&day_entries, running.as_ref());
+            state.seen_elsewhere = seen_elsewhere;
             note_last_activity(state, today);
         });
         self.refresh_account_data_if_stale(user.id).await?;
@@ -1341,8 +1399,8 @@ impl TimeTracker {
         // trim. One started offline may have had its create land since the
         // question was asked, and so be known by its Harvest id now.
         let earned = self.inner.queue.server_id(entry.id).map(EntryId::Server);
-        let Some(entry) = self
-            .state()
+        let state = self.state();
+        let Some(entry) = state
             .entries
             .iter()
             .find(|candidate| candidate.id == entry.id || Some(candidate.id) == earned)
@@ -1350,6 +1408,13 @@ impl TimeTracker {
         else {
             return;
         };
+        // Withdrawn since it was asked, because another machine turned out to have
+        // seen the user during it, the question has no answer: answered before
+        // the window caught up, it must not trim time that machine saw worked.
+        if covered_elsewhere(absence, &state.seen_elsewhere) > LATE_EVIDENCE_SLACK {
+            log::info!("not answering: another machine saw the user during this absence");
+            return;
+        }
         if entry.is_locked {
             return;
         }
@@ -1359,7 +1424,14 @@ impl TimeTracker {
         };
 
         match resolution {
-            AbsenceResolution::Keep => {}
+            // Keep says the user worked through it, so the other machines are told,
+            // and a question they have open about the same stretch stops applying.
+            AbsenceResolution::Keep => {
+                let peers = self.inner.peers.lock().unwrap().clone();
+                if let Some(peers) = peers {
+                    peers.vouch(*absence, self.inner.clock.now()).await;
+                }
+            }
             AbsenceResolution::TrimAndContinue => {
                 self.trim(&entry, trimmed, absence.began, Some(absence.ended))
                     .await;
@@ -1629,6 +1701,7 @@ impl Inner {
             budgets: state.budgets.clone(),
             now: state.now,
             last_active_today: state.last_active_today.clone(),
+            seen_elsewhere: state.seen_elsewhere.clone(),
         }
     }
 

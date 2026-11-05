@@ -196,12 +196,14 @@ async fn work_at_the_other_machine_prompts_on_neither() {
     // What Hostess wrote is what kept the Mac quiet: ten to twelve.
     let board = shared(&desk).expect("both machines wrote their parts");
     assert_eq!(board.parts["host"].last().unwrap().end, clock_at("12:00"));
-    // Alone, the Mac would have asked about ten until five past twelve.
-    let state = desk.mac.tracker.state();
+    // Alone, the Mac would have asked about ten until five past twelve. Judged
+    // by the timer alone: the Mac's state now knows what Hostess wrote, which is
+    // the point, and would cover this too.
+    let running = desk.mac.tracker.state().running_entry().cloned().unwrap();
     let alone_prompts: Vec<_> = desk
         .mac_alone_absences
         .iter()
-        .filter(|absence| state.absence_applies(absence))
+        .filter(|absence| absence.trimmed_hours(&running).is_some())
         .collect();
     assert_eq!(alone_prompts.len(), 1, "{:?}", desk.mac_alone_absences);
     assert_eq!(alone_prompts[0].began, clock_at("10:00"));
@@ -367,4 +369,67 @@ async fn asks_nothing_while_no_timer_runs() {
     let before = desk.harvest.running_reads();
     desk.spend(At::Mac, "08:30").await;
     assert_eq!(desk.harvest.running_reads(), before);
+}
+
+/// Both machines ask about the same lunch. Keep on one says the user was working
+/// through it, and the other stops asking once it next looks at Harvest.
+#[tokio::test]
+async fn keep_on_one_machine_withdraws_the_other_question() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    desk.spend(At::Mac, "11:00").await;
+    desk.spend(At::Hostess, "12:00").await;
+    desk.spend(At::Away, "13:00").await;
+    desk.spend(At::Mac, "13:01").await;
+    desk.spend(At::Hostess, "13:02").await;
+    let on_hostess = prompts(&desk.hostess);
+    assert_eq!(prompts(&desk.mac).len(), 1, "{:?}", desk.mac.absences);
+    assert_eq!(on_hostess.len(), 1, "{:?}", desk.hostess.absences);
+
+    let running = desk
+        .hostess
+        .tracker
+        .state()
+        .running_entry()
+        .cloned()
+        .unwrap();
+    desk.hostess
+        .tracker
+        .resolve(&on_hostess[0], &running, &AbsenceResolution::Keep)
+        .await;
+
+    // Nothing in Harvest's hours changed: three hours from nine, still running.
+    let entry = desk.harvest.only_entry();
+    assert!(entry.running_since.is_some());
+    // The Mac still asks until it looks at Harvest, and then does not.
+    assert_eq!(prompts(&desk.mac).len(), 1);
+    desk.mac.tracker.sync().await;
+    assert_eq!(prompts(&desk.mac), []);
+    // What withdrew it: Hostess wrote the kept hour onto the entry as presence.
+    let board = shared(&desk).expect("Hostess wrote the kept stretch");
+    assert!(
+        board.parts["host"]
+            .iter()
+            .any(|stretch| stretch.start <= clock_at("12:00") && stretch.end >= clock_at("13:00")),
+        "{board:?}"
+    );
+}
+
+/// A question the other machines' stretches do not cover still stands, however
+/// close they come: an hour away is asked about although the other machine saw
+/// the user until five minutes into it.
+#[tokio::test]
+async fn presence_elsewhere_that_stops_short_leaves_the_question() {
+    let mut desk = Desk::new().await;
+    desk.spend(At::Mac, "09:00").await;
+    desk.mac.tracker.start(&target(), None).await;
+    desk.hostess.tracker.sync().await;
+    desk.spend(At::Mac, "12:00").await;
+    desk.spend(At::Hostess, "12:05").await;
+    desk.spend(At::Away, "13:00").await;
+    desk.spend(At::Mac, "13:01").await;
+    desk.mac.tracker.sync().await;
+    assert_eq!(prompts(&desk.mac).len(), 1, "{:?}", desk.mac.absences);
 }
