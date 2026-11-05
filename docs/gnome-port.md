@@ -6,9 +6,10 @@ the Mac app, with the two machines agreeing about when he was away. Decided on
 session can pick one up without the conversation that produced this file.
 
 **Finished on 2026-11-04.** Every phase is merged, and each records what it
-decided. Left open, for Peter: the two questions at the end of phase 5, which
-phase 9 did not change, and [#23](https://github.com/rainhead/sheaves/issues/23)
-and [#26](https://github.com/rainhead/sheaves/issues/26). What the GNOME app still
+decided. The two questions left at the end of phase 5 are settled there, and
+[#26](https://github.com/rainhead/sheaves/issues/26) is fixed. Left open: the first
+case of [#23](https://github.com/rainhead/sheaves/issues/23), whether locking the
+screen hides the keypress that locked it, which needs a check at the desk. What the GNOME app still
 leaves out is in [`ROADMAP.md`](../ROADMAP.md).
 
 ## Decisions
@@ -475,7 +476,11 @@ is written onto the running entry as a stretch of presence, and a question it
 covers stops applying (see `docs/presence.md`).* And if both prompts are
 answered with a trim within the few seconds before the notice arrives, the second
 machine's stop is dropped as stale but its restart still goes, which patches the
-running timer's hours to its own trim.
+running timer's hours to its own trim. *Checked on 2026-11-04
+(`trimming_the_same_lunch_on_both_machines_bills_it_once` in `tests/peers.rs`): the
+second machine's arithmetic is the first's, on its own record of the same lunch, so
+the total comes out the same but for the time between the two answers and Harvest's
+rounding, twenty seconds in the test. Left as it is.*
 
 ### Phase 6: the GNOME app (Hostess, a few days)
 
