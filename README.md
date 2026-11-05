@@ -14,7 +14,7 @@ nothing blocks on the network: Sheaves shows local state immediately and
 reconciles with Harvest afterwards.
 
 <img src="docs/images/menu-bar-live.png" width="396"
-  alt="The Sheaves menu bar item — a pause button beside “Online Store - Phase 1 1:30” — with
+  alt="The Sheaves menu bar item — a stop button beside “Online Store - Ph… 1:30” — with
   its panel open beneath: a budget bar for the running project, a running timer
   with a stop button, a stopped entry with a resume button, and a list of
   projects — each with a task dropdown and its remaining budget, one of them

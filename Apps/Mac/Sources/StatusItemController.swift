@@ -264,17 +264,27 @@ final class StatusItemController {
         panel.isVisible ? hidePanel() : showPanel()
     }
 
-    /// Demo instances only: the panel, opened the way a person would see it.
+    /// Demo instances only: the panel, opened the way a person would see it, and
+    /// kept open for as long as the demo runs.
     ///
-    /// Twice over, because a cold panel positions itself from a zero size —
-    /// SwiftUI reports none until it has laid out — so the first show is only
-    /// the layout pass. The middle sleep outlasts `showPanel`'s reopen guard.
+    /// Shown once first only for the layout pass, because a cold panel positions
+    /// itself from a zero size: SwiftUI reports none until it has laid out. Then
+    /// shown again whenever it is not showing. Showing it just once more, as this
+    /// used to, left a panel positioned under its item and never on screen on one
+    /// launch in four on macOS 27, and nothing tried again; a demo exists to be
+    /// photographed, so it may as well insist.
     func showPanelForDemo() async {
         showPanel()
         try? await Task.sleep(for: .milliseconds(400))
         hidePanel()
-        try? await Task.sleep(for: .milliseconds(300))
-        showPanel()
+        while !Task.isCancelled {
+            // Outlasts `showPanel`'s reopen guard.
+            try? await Task.sleep(for: .milliseconds(300))
+            if !panel.isVisible {
+                showPanel()
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 
     private func showPanel() {
