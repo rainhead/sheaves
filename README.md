@@ -98,7 +98,7 @@ that made ⌘V silently do nothing.
 There is no package; build from the checkout and run.
 
 ```sh
-sudo apt install libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
+sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
 cargo run --release -p sheaves-gnome
 cargo test --workspace                           # the core and the GNOME app
 ```
@@ -112,8 +112,8 @@ shortcuts.
 
 ### Releases
 
-Releases are of the Mac app. A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml) and
-pushing a matching `v` tag.
+Releases are of the Mac app. A release is cut by bumping `MARKETING_VERSION` in
+[`project.yml`](project.yml) and pushing a matching `v` tag.
 [`Scripts/package-release.sh`](Scripts/package-release.sh) builds and zips the app,
 and [the release workflow](.github/workflows/release.yml) runs that same script after
 the tests pass — refusing any tag that disagrees with the version the built app
