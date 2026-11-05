@@ -1922,18 +1922,15 @@ mod resolving_an_absence {
         assert_eq!(corrections(&transport), [1.5]);
     }
 
-    /// Another machine wrote, after the question was asked, that it saw the user
-    /// for the first twelve minutes of the half hour away. The trim is of the
-    /// eighteen minutes left, not of time another machine saw worked.
-    #[tokio::test]
-    async fn a_trim_leaves_what_another_machine_has_since_covered() {
-        let scratch = scratch();
+    /// The running entry, carrying a stretch another machine wrote from twenty
+    /// to three until `until`.
+    fn entry_seen_elsewhere_until(until: &str) -> (String, Vec<Interval>) {
         let seen = Board {
             parts: [(
                 "zzzz".to_string(),
                 vec![Interval {
                     start: instant("2026-08-29T14:40:00Z"),
-                    end: instant("2026-08-29T15:12:00Z"),
+                    end: instant(until),
                 }],
             )]
             .into(),
@@ -1944,19 +1941,45 @@ mod resolving_an_absence {
             &format!(",\n  \"external_reference\": {reference}\n}}"),
             1,
         );
+        (entry, seen.parts["zzzz"].clone())
+    }
+
+    /// Another machine wrote, after the question was asked, that it saw the user
+    /// for the first twelve minutes of the half hour away. The question is
+    /// withdrawn, and an answer given before the window caught up does nothing,
+    /// rather than trim time that machine saw worked.
+    #[tokio::test]
+    async fn a_question_covered_in_part_since_is_withdrawn() {
+        let scratch = scratch();
+        let (entry, seen) = entry_seen_elsewhere_until("2026-08-29T15:12:00Z");
         let transport = running_account_with(entry);
         let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
-        assert_eq!(tracker.state().seen_elsewhere, seen.parts["zzzz"]);
+        assert_eq!(tracker.state().seen_elsewhere, seen);
+        assert!(!tracker.state().absence_applies(&absence()));
 
         tracker
             .resolve(&absence(), &running, &AbsenceResolution::TrimAndStop)
             .await;
 
-        // An hour banked, and the timer's run from half past two to twelve past
-        // three, where the stretch left begins.
-        let corrections = corrections(&transport);
-        assert_eq!(corrections.len(), 1, "{corrections:?}");
-        assert!((corrections[0] - 1.7).abs() < 0.001, "{corrections:?}");
+        assert!(transport.calls_to(Method::Patch, "/stop").is_empty());
+        assert!(corrections(&transport).is_empty());
+    }
+
+    /// The stretch another machine last saw the user in can land a minute late
+    /// and reach a minute into a real absence. That leaves the question standing.
+    #[tokio::test]
+    async fn a_minute_seen_elsewhere_leaves_the_question() {
+        let scratch = scratch();
+        let (entry, _) = entry_seen_elsewhere_until("2026-08-29T15:01:00Z");
+        let transport = running_account_with(entry);
+        let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
+        assert!(tracker.state().absence_applies(&absence()));
+
+        tracker
+            .resolve(&absence(), &running, &AbsenceResolution::TrimAndStop)
+            .await;
+
+        assert_eq!(corrections(&transport), [1.5]);
     }
 
     /// Covered whole by another machine since it was asked, the absence is
@@ -1964,22 +1987,7 @@ mod resolving_an_absence {
     #[tokio::test]
     async fn a_trim_of_an_absence_covered_since_does_nothing() {
         let scratch = scratch();
-        let seen = Board {
-            parts: [(
-                "zzzz".to_string(),
-                vec![Interval {
-                    start: instant("2026-08-29T14:40:00Z"),
-                    end: instant("2026-08-29T15:35:00Z"),
-                }],
-            )]
-            .into(),
-        };
-        let reference = serde_json::to_string(&seen.reference()).unwrap();
-        let entry = fixture::running_time_entry().replacen(
-            "\n}",
-            &format!(",\n  \"external_reference\": {reference}\n}}"),
-            1,
-        );
+        let (entry, _) = entry_seen_elsewhere_until("2026-08-29T15:35:00Z");
         let transport = running_account_with(entry);
         let (tracker, running) = tracker_with_running_timer(&transport, &scratch).await;
         assert!(!tracker.state().absence_applies(&absence()));

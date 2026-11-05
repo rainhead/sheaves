@@ -18,7 +18,7 @@ use crate::credentials::{CredentialError, CredentialStore, Login};
 use crate::models::ExternalReference;
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
 use crate::peers::board::Board;
-use crate::peers::{Interval, Noticeboard, Peers, Posted, unwitnessed};
+use crate::peers::{Interval, Noticeboard, Peers, Posted};
 use crate::queue::{Mutation, MutationQueue, Owner, StoppedRun};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
 use crate::tracked_entry::{
@@ -101,10 +101,39 @@ pub struct TrackerState {
     pub last_active_today: Option<TrackedEntry>,
     /// When the user's other machines saw them, or were told they were here, as
     /// written on the running entry at the last sync. A question about an
-    /// absence these cover no longer applies.
+    /// absence these overlap no longer applies.
     pub seen_elsewhere: Vec<Interval>,
-    /// How long with nobody here counts as away, as the presence fold was given.
-    pub absence_threshold: f64,
+}
+
+/// How much of an absence another machine may turn out to have seen before the
+/// question about it is withdrawn. Machines write once a minute, rounded out to
+/// the minute, so the stretch one last saw the user in can land a minute late and
+/// reach a minute into a real absence.
+pub const LATE_EVIDENCE_SLACK: f64 = 2.0 * crate::peers::POST_EVERY;
+
+/// Seconds of `absence` that `seen` covers, overlaps counted once.
+pub fn covered_elsewhere(absence: &Absence, seen: &[Interval]) -> f64 {
+    let mut overlaps: Vec<(Timestamp, Timestamp)> = seen
+        .iter()
+        .map(|stretch| {
+            (
+                stretch.start.max(absence.began),
+                stretch.end.min(absence.ended),
+            )
+        })
+        .filter(|(start, end)| start < end)
+        .collect();
+    overlaps.sort();
+    let mut covered = 0.0;
+    let mut reached = absence.began;
+    for (start, end) in overlaps {
+        let start = start.max(reached);
+        if end > start {
+            covered += seconds_between(start, end);
+            reached = end;
+        }
+    }
+    covered
 }
 
 /// How long a stopped timer stays one click away before the menu bar collapses back
@@ -143,9 +172,11 @@ impl TrackerState {
     pub fn absence_applies(&self, absence: &Absence) -> bool {
         self.running_entry()
             .is_some_and(|entry| absence.trimmed_hours(entry).is_some())
-            // Another machine saw the user, or was told by them, through all but
-            // a remainder too short to ask about: answered Keep there, say.
-            && !unwitnessed(*absence, &self.seen_elsewhere, self.absence_threshold).is_empty()
+            // Another machine turned out to have seen the user during it, or was
+            // told they were here: answered Keep there, say. Then the question
+            // is withdrawn, rather than narrowed to what is left, so no answer
+            // can trim time another machine saw worked.
+            && covered_elsewhere(absence, &self.seen_elsewhere) <= LATE_EVIDENCE_SLACK
     }
 
     /// The budget to show beside `entry`, or `None` when there is nothing to show.
@@ -249,7 +280,6 @@ struct State {
     now: Timestamp,
     last_active_today: Option<TrackedEntry>,
     seen_elsewhere: Vec<Interval>,
-    absence_threshold: f64,
     /// When the last sync *began*, however it was triggered and however it ended.
     /// The probe paces itself by this rather than `last_synced_at` so a failing
     /// connection is retried on the probe's cadence, not on every tick.
@@ -358,7 +388,6 @@ impl TimeTracker {
                     now,
                     last_active_today: None,
                     seen_elsewhere: Vec::new(),
-                    absence_threshold: crate::absence::AbsenceDetector::DEFAULT_THRESHOLD,
                     last_sync_started_at: None,
                     account_data_fetched_at: None,
                     budget_availability: BudgetAvailability::Unknown,
@@ -396,13 +425,6 @@ impl TimeTracker {
     /// otherwise, the machine is treated as plugged in.
     pub fn set_power_source(&self, probe: impl Fn() -> PowerState + Send + Sync + 'static) {
         *self.inner.power.lock().unwrap() = Arc::new(probe);
-    }
-
-    /// How long with nobody here counts as away: what the presence fold was
-    /// given, so a question is judged covered by the same rule that raised it.
-    pub fn set_absence_threshold(&self, threshold: f64) {
-        self.inner
-            .update(|state| state.absence_threshold = threshold);
     }
 
     /// Shares this machine's presence through this tracker's Harvest account: on
@@ -1386,44 +1408,13 @@ impl TimeTracker {
         else {
             return;
         };
-        // Judged as asked first: an absence from before a timer restarted is no
-        // longer this machine's to speak for, however much of it was covered.
-        if absence.trimmed_hours(&entry).is_none() {
+        // Withdrawn since it was asked, because another machine turned out to have
+        // seen the user during it, the question has no answer: answered before
+        // the window caught up, it must not trim time that machine saw worked.
+        if covered_elsewhere(absence, &state.seen_elsewhere) > LATE_EVIDENCE_SLACK {
+            log::info!("not answering: another machine saw the user during this absence");
             return;
         }
-        // Keep says the user worked through the whole of it, so the whole of it
-        // is what is shared.
-        if *resolution == AbsenceResolution::Keep {
-            let peers = self.inner.peers.lock().unwrap().clone();
-            if let Some(peers) = peers {
-                peers.vouch(*absence, self.inner.clock.now()).await;
-            }
-            return;
-        }
-        // What another machine has since said the user was here for is not this
-        // machine's to trim: a trim is of what is left. Of several stretches left,
-        // the latest, since a trim keeps everything before it starts and so can
-        // never take time another machine saw; an earlier one stays billed. That
-        // needs another machine's evidence to land, late, in the middle of an
-        // absence, which writing once a minute makes rare.
-        let remaining = unwitnessed(*absence, &state.seen_elsewhere, state.absence_threshold);
-        let Some(&narrowed) = remaining.last() else {
-            log::info!("the absence was covered by another machine since it was asked about");
-            return;
-        };
-        if remaining.len() > 1 {
-            log::warn!(
-                "the absence is now {} stretches; trimming the latest and leaving the rest",
-                remaining.len()
-            );
-        } else if narrowed != *absence {
-            log::info!(
-                "answering for {} to {}, the part of the absence no other machine has covered",
-                narrowed.began,
-                narrowed.ended
-            );
-        }
-        let absence = &narrowed;
         if entry.is_locked {
             return;
         }
@@ -1433,8 +1424,14 @@ impl TimeTracker {
         };
 
         match resolution {
-            // Answered above, before the absence was narrowed.
-            AbsenceResolution::Keep => {}
+            // Keep says the user worked through it, so the other machines are told,
+            // and a question they have open about the same stretch stops applying.
+            AbsenceResolution::Keep => {
+                let peers = self.inner.peers.lock().unwrap().clone();
+                if let Some(peers) = peers {
+                    peers.vouch(*absence, self.inner.clock.now()).await;
+                }
+            }
             AbsenceResolution::TrimAndContinue => {
                 self.trim(&entry, trimmed, absence.began, Some(absence.ended))
                     .await;
@@ -1705,7 +1702,6 @@ impl Inner {
             now: state.now,
             last_active_today: state.last_active_today.clone(),
             seen_elsewhere: state.seen_elsewhere.clone(),
-            absence_threshold: state.absence_threshold,
         }
     }
 

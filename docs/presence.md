@@ -114,7 +114,10 @@ long as the threshold. Answering **Keep** says you were working through the
 absence, so the machine that was answered writes it as a stretch of its own, at
 once; another machine already asking about the same stretch stops asking when it
 next looks at Harvest: within a minute plugged in, five on battery, and at its next
-sync in Low Power Mode, which stops the regular checks. If Harvest cannot be reached, or the entry links to something
+sync in Low Power Mode, which stops the regular checks. The same goes for any
+question another machine turns out to have seen the user during, for more than the
+two minutes a late write can account for: it is withdrawn, not narrowed to what is
+left, so no answer can trim time another machine saw worked. If Harvest cannot be reached, or the entry links to something
 else, the machine decides as it would alone. The rules are in
 [`peers.rs`](../crates/sheaves-core/src/peers.rs) and the text in
 [`board.rs`](../crates/sheaves-core/src/peers/board.rs).

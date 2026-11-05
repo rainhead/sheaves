@@ -272,6 +272,9 @@ pub struct Peers {
     /// When this machine last wrote its part, or tried to.
     posted_at: Mutex<Option<Timestamp>>,
     posting: AtomicBool,
+    /// Writes take turns: each reads the entry, adds this machine's part and
+    /// writes it, and one landing in the middle of another would be undone by it.
+    write_turn: tokio::sync::Mutex<()>,
 }
 
 /// The log as kept on disk, with whose it is.
@@ -298,6 +301,7 @@ impl Peers {
             log_owner: Mutex::new(None),
             posted_at: Mutex::new(None),
             posting: AtomicBool::new(false),
+            write_turn: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -480,6 +484,7 @@ impl Peers {
     /// another machine wrote since. Does nothing when no timer runs or the entry
     /// links elsewhere.
     pub async fn post(&self, now: Timestamp) {
+        let _turn = self.write_turn.lock().await;
         let Some(board) = self.board() else {
             return;
         };
