@@ -470,7 +470,9 @@ and without being added to the firewall's list.
 
 Open, for Peter: answering **Keep** on one machine changes nothing in Harvest, so
 the other machine's prompt for the same lunch stays open and asks again. Withdrawing
-it would need the answer itself shared between peers. And if both prompts are
+it would need the answer itself shared between peers. *Settled on 2026-11-04: Keep
+is written onto the running entry as a stretch of presence, and a question it
+covers stops applying (see `docs/presence.md`).* And if both prompts are
 answered with a trim within the few seconds before the notice arrives, the second
 machine's stop is dropped as stale but its restart still goes, which patches the
 running timer's hours to its own trim.

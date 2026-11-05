@@ -110,7 +110,10 @@ can see your timesheet, such as an administrator of the account, can see it too.
 
 Before reporting an absence, a machine reads the running entry, removes every
 stretch another machine saw the user in, and reports what is left that is still as
-long as the threshold. If Harvest cannot be reached, or the entry links to something
+long as the threshold. Answering **Keep** says you were working through the
+absence, so the machine that was answered writes it as a stretch of its own, at
+once; another machine already asking about the same stretch stops asking when it
+next looks at Harvest, within a minute while a timer runs. If Harvest cannot be reached, or the entry links to something
 else, the machine decides as it would alone. The rules are in
 [`peers.rs`](../crates/sheaves-core/src/peers.rs) and the text in
 [`board.rs`](../crates/sheaves-core/src/peers/board.rs).

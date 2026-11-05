@@ -30,7 +30,7 @@ const LOG_SPAN: f64 = 24.0 * 3600.0;
 
 /// A stretch during which a machine had evidence of the user, with no gap in it as
 /// long as the absence threshold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct Interval {
     pub start: Timestamp,
     pub end: Timestamp,
@@ -89,6 +89,26 @@ impl PresenceLog {
         let horizon = offset_by(newest, -LOG_SPAN);
         self.intervals.retain(|interval| interval.end >= horizon);
         opened
+    }
+
+    /// Adds `stretch` as presence, joined to whatever it touches or comes within
+    /// the threshold of, as `note` joins evidence.
+    pub fn add(&mut self, stretch: Interval) {
+        if stretch.start > stretch.end {
+            return;
+        }
+        self.intervals.push(stretch);
+        self.intervals.sort_by_key(|interval| interval.start);
+        let mut merged: Vec<Interval> = Vec::with_capacity(self.intervals.len());
+        for interval in self.intervals.drain(..) {
+            match merged.last_mut() {
+                Some(last) if seconds_between(last.end, interval.start) < self.threshold => {
+                    last.end = last.end.max(interval.end);
+                }
+                _ => merged.push(interval),
+            }
+        }
+        self.intervals = merged;
     }
 
     /// The intervals held, oldest first.
@@ -378,6 +398,18 @@ impl Peers {
             return Vec::new();
         }
         lock(&self.log).since(since)
+    }
+
+    /// Records that the user was here through `absence`, because they said so:
+    /// they answered Keep. Written onto the running entry at once, so another
+    /// machine asking about the same stretch stops asking when it next looks.
+    pub async fn vouch(&self, absence: Absence, now: Timestamp) {
+        lock(&self.log).add(Interval {
+            start: absence.began,
+            end: absence.ended,
+        });
+        self.save_now();
+        self.post(now).await;
     }
 
     // MARK: Reading

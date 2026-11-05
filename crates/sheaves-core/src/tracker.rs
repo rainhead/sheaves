@@ -17,7 +17,8 @@ use crate::clock::Clock;
 use crate::credentials::{CredentialError, CredentialStore, Login};
 use crate::models::ExternalReference;
 use crate::models::{HarvestCompany, HarvestUser, TimeEntry, seconds_between};
-use crate::peers::{Noticeboard, Peers, Posted};
+use crate::peers::board::Board;
+use crate::peers::{Interval, Noticeboard, Peers, Posted, unwitnessed};
 use crate::queue::{Mutation, MutationQueue, Owner, StoppedRun};
 use crate::snapshot::{CachedSnapshot, SnapshotStore};
 use crate::tracked_entry::{
@@ -98,6 +99,12 @@ pub struct TrackerState {
     /// what the menu bar shows should not change just because the user looked at
     /// last Tuesday.
     pub last_active_today: Option<TrackedEntry>,
+    /// When the user's other machines saw them, or were told they were here, as
+    /// written on the running entry at the last sync. A question about an
+    /// absence these cover no longer applies.
+    pub seen_elsewhere: Vec<Interval>,
+    /// How long with nobody here counts as away, as the presence fold was given.
+    pub absence_threshold: f64,
 }
 
 /// How long a stopped timer stays one click away before the menu bar collapses back
@@ -136,6 +143,9 @@ impl TrackerState {
     pub fn absence_applies(&self, absence: &Absence) -> bool {
         self.running_entry()
             .is_some_and(|entry| absence.trimmed_hours(entry).is_some())
+            // Another machine saw the user, or was told by them, through all but
+            // a remainder too short to ask about: answered Keep there, say.
+            && !unwitnessed(*absence, &self.seen_elsewhere, self.absence_threshold).is_empty()
     }
 
     /// The budget to show beside `entry`, or `None` when there is nothing to show.
@@ -238,6 +248,8 @@ struct State {
     budgets: HashMap<i64, ProjectBudget>,
     now: Timestamp,
     last_active_today: Option<TrackedEntry>,
+    seen_elsewhere: Vec<Interval>,
+    absence_threshold: f64,
     /// When the last sync *began*, however it was triggered and however it ended.
     /// The probe paces itself by this rather than `last_synced_at` so a failing
     /// connection is retried on the probe's cadence, not on every tick.
@@ -345,6 +357,8 @@ impl TimeTracker {
                     budgets: HashMap::new(),
                     now,
                     last_active_today: None,
+                    seen_elsewhere: Vec::new(),
+                    absence_threshold: crate::absence::AbsenceDetector::DEFAULT_THRESHOLD,
                     last_sync_started_at: None,
                     account_data_fetched_at: None,
                     budget_availability: BudgetAvailability::Unknown,
@@ -382,6 +396,13 @@ impl TimeTracker {
     /// otherwise, the machine is treated as plugged in.
     pub fn set_power_source(&self, probe: impl Fn() -> PowerState + Send + Sync + 'static) {
         *self.inner.power.lock().unwrap() = Arc::new(probe);
+    }
+
+    /// How long with nobody here counts as away: what the presence fold was
+    /// given, so a question is judged covered by the same rule that raised it.
+    pub fn set_absence_threshold(&self, threshold: f64) {
+        self.inner
+            .update(|state| state.absence_threshold = threshold);
     }
 
     /// Shares this machine's presence through this tracker's Harvest account: on
@@ -667,8 +688,23 @@ impl TimeTracker {
             });
         }
         let today = inner.clock.today();
+        // The other machines' parts of what is written on the running entry. This
+        // machine's own are left out: rounded out to the minute, they would narrow
+        // its own absences, and it needs no telling when it saw the user.
+        let machine = inner
+            .peers
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|peers| peers.machine().to_string());
+        let seen_elsewhere = running
+            .as_ref()
+            .and_then(|entry| Board::of(entry.external_reference.as_ref()))
+            .map(|board| board.others(machine.as_deref().unwrap_or("")))
+            .unwrap_or_default();
         inner.update(|state| {
             state.entries = merge(&day_entries, running.as_ref());
+            state.seen_elsewhere = seen_elsewhere;
             note_last_activity(state, today);
         });
         self.refresh_account_data_if_stale(user.id).await?;
@@ -1359,7 +1395,12 @@ impl TimeTracker {
         };
 
         match resolution {
-            AbsenceResolution::Keep => {}
+            AbsenceResolution::Keep => {
+                let peers = self.inner.peers.lock().unwrap().clone();
+                if let Some(peers) = peers {
+                    peers.vouch(*absence, self.inner.clock.now()).await;
+                }
+            }
             AbsenceResolution::TrimAndContinue => {
                 self.trim(&entry, trimmed, absence.began, Some(absence.ended))
                     .await;
@@ -1629,6 +1670,8 @@ impl Inner {
             budgets: state.budgets.clone(),
             now: state.now,
             last_active_today: state.last_active_today.clone(),
+            seen_elsewhere: state.seen_elsewhere.clone(),
+            absence_threshold: state.absence_threshold,
         }
     }
 
