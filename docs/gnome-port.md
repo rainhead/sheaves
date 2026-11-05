@@ -740,6 +740,8 @@ starts a timer.
   `execute`). It also launches with no startup notification, so whether GNOME
   raises the window or says "Sheaves is ready" is for the desk to show.
 
+Checked at the desk, 2026-11-04: the key opens quick entry from another app.
+
 ### Phase 11: documents and cleanup
 
 The README's layout table and "How it works", `ROADMAP.md`, this file, and
