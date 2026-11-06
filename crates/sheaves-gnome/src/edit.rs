@@ -219,11 +219,20 @@ pub fn present_logger(
 /// cursor where it lands, and does so after focus has arrived, so the selection
 /// waits until the click has been handled. It waits at high priority, ahead of
 /// input, so a key already pressed replaces the total rather than going into it.
+///
+/// A field keeps its selection when it loses focus, and GTK treats a press
+/// inside a selection as the start of a drag: if none follows, the release
+/// collapses the selection to where it was clicked, after ours has been made.
+/// So whatever was selected goes first, while the click is still moving focus
+/// here and before GTK looks for a selection.
 fn select_all_on_focus(row: &adw::EntryRow) {
     use gtk::glib;
     let focus = gtk::EventControllerFocus::new();
     let target = row.downgrade();
     focus.connect_enter(move |_| {
+        if let Some(row) = target.upgrade() {
+            row.select_region(0, 0);
+        }
         let target = target.clone();
         glib::idle_add_local_full(glib::Priority::HIGH, move || {
             if let Some(row) = target.upgrade() {
