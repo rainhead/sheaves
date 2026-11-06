@@ -214,34 +214,90 @@ pub fn present_logger(
 }
 
 /// Selects all of `row`'s text whenever it gains focus, as a Mac text field
-/// does, so that typing `1` into a total of `0:00` gives `1`, not `10:00`. GTK
-/// selects all only when focus arrives from the keyboard: a click places the
-/// cursor where it lands, and does so after focus has arrived, so the selection
-/// waits until the click has been handled. It waits at high priority, ahead of
-/// input, so a key already pressed replaces the total rather than going into it.
+/// does, so that typing `1` into a total of `0:00` gives `1`, not `10:00`.
 ///
-/// A field keeps its selection when it loses focus, and GTK treats a press
+/// GTK selects all only when focus arrives from the keyboard. A click places the
+/// cursor where it lands, and while the button is down every movement of the
+/// pointer, however small, moves that end of the selection with it. So a click
+/// that brings focus here selects all when the button comes up, unless the
+/// pointer has moved far enough to be a drag, which keeps what it selected.
+///
+/// A field also keeps its selection when it loses focus, and GTK treats a press
 /// inside a selection as the start of a drag: if none follows, the release
-/// collapses the selection to where it was clicked, after ours has been made.
-/// So whatever was selected goes first, while the click is still moving focus
-/// here and before GTK looks for a selection.
+/// collapses the selection to where it was clicked. So whatever was selected
+/// goes as focus arrives, which is before GTK looks for a selection.
 fn select_all_on_focus(row: &adw::EntryRow) {
-    use gtk::glib;
+    use gtk::{gdk, glib};
+    use std::cell::Cell;
+
+    // Where the press now bringing focus here began, if one is.
+    let press: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
     let focus = gtk::EventControllerFocus::new();
-    let target = row.downgrade();
-    focus.connect_enter(move |_| {
-        if let Some(row) = target.upgrade() {
-            row.select_region(0, 0);
-        }
-        let target = target.clone();
-        glib::idle_add_local_full(glib::Priority::HIGH, move || {
-            if let Some(row) = target.upgrade() {
-                row.select_region(0, -1);
+
+    let pointer = gtk::EventControllerLegacy::new();
+    // Before the field's own handling: a press must be seen before the field
+    // takes focus, and a release before the field reacts to it.
+    pointer.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let target = row.downgrade();
+        let press = press.clone();
+        let focus = focus.clone();
+        pointer.connect_event(move |_, event| {
+            let primary = event
+                .downcast_ref::<gdk::ButtonEvent>()
+                .is_some_and(|button| button.button() == gdk::BUTTON_PRIMARY);
+            match (event.event_type(), event.position()) {
+                (gdk::EventType::ButtonPress, Some(at)) if primary && !focus.contains_focus() => {
+                    press.set(Some(at));
+                }
+                (gdk::EventType::ButtonRelease, Some((x, y))) if primary => {
+                    if let (Some((from_x, from_y)), Some(row)) = (press.take(), target.upgrade())
+                        && !row.drag_check_threshold(
+                            from_x as i32,
+                            from_y as i32,
+                            x as i32,
+                            y as i32,
+                        )
+                    {
+                        select_all_soon(&row);
+                    }
+                }
+                _ => {}
             }
-            glib::ControlFlow::Break
+            glib::Propagation::Proceed
         });
-    });
+    }
+    row.add_controller(pointer);
+
+    let target = row.downgrade();
+    {
+        let press = press.clone();
+        focus.connect_enter(move |_| {
+            if let Some(row) = target.upgrade() {
+                row.select_region(0, 0);
+                if press.get().is_none() {
+                    select_all_soon(&row);
+                }
+            }
+        });
+    }
+    // A release this never saw must not stop the next focus from selecting.
+    focus.connect_leave(move |_| press.set(None));
     row.add_controller(focus);
+}
+
+/// Selects all of `row`'s text once the event being handled is done with, and
+/// ahead of any input already waiting, so a key pressed by then replaces the
+/// text rather than going into it.
+fn select_all_soon(row: &adw::EntryRow) {
+    use gtk::glib;
+    let target = row.downgrade();
+    glib::idle_add_local_full(glib::Priority::HIGH, move || {
+        if let Some(row) = target.upgrade() {
+            row.select_region(0, -1);
+        }
+        glib::ControlFlow::Break
+    });
 }
 
 /// The hours in `text`, if it is a length worth logging.
