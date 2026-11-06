@@ -217,16 +217,19 @@ pub fn present_logger(
 /// does, so that typing `1` into a total of `0:00` gives `1`, not `10:00`. GTK
 /// selects all only when focus arrives from the keyboard: a click places the
 /// cursor where it lands, and does so after focus has arrived, so the selection
-/// waits until the click has been handled.
+/// waits until the click has been handled. It waits at high priority, ahead of
+/// input, so a key already pressed replaces the total rather than going into it.
 fn select_all_on_focus(row: &adw::EntryRow) {
+    use gtk::glib;
     let focus = gtk::EventControllerFocus::new();
     let target = row.downgrade();
     focus.connect_enter(move |_| {
         let target = target.clone();
-        gtk::glib::idle_add_local_once(move || {
+        glib::idle_add_local_full(glib::Priority::HIGH, move || {
             if let Some(row) = target.upgrade() {
                 row.select_region(0, -1);
             }
+            glib::ControlFlow::Break
         });
     });
     row.add_controller(focus);
