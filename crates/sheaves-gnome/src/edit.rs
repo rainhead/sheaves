@@ -84,6 +84,7 @@ pub fn present_editor(
         .text(opened.as_str())
         .activates_default(true)
         .build();
+    select_all_on_focus(&time);
     let fields = gtk::ListBox::new();
     fields.add_css_class("boxed-list");
     fields.set_selection_mode(gtk::SelectionMode::None);
@@ -210,6 +211,25 @@ pub fn present_logger(
         }
     });
     dialog.present(Some(parent));
+}
+
+/// Selects all of `row`'s text whenever it gains focus, as a Mac text field
+/// does, so that typing `1` into a total of `0:00` gives `1`, not `10:00`. GTK
+/// selects all only when focus arrives from the keyboard: a click places the
+/// cursor where it lands, and does so after focus has arrived, so the selection
+/// waits until the click has been handled.
+fn select_all_on_focus(row: &adw::EntryRow) {
+    let focus = gtk::EventControllerFocus::new();
+    let target = row.downgrade();
+    focus.connect_enter(move |_| {
+        let target = target.clone();
+        gtk::glib::idle_add_local_once(move || {
+            if let Some(row) = target.upgrade() {
+                row.select_region(0, -1);
+            }
+        });
+    });
+    row.add_controller(focus);
 }
 
 /// The hours in `text`, if it is a length worth logging.
