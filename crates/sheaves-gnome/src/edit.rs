@@ -269,10 +269,18 @@ fn select_all_on_focus(row: &adw::EntryRow) {
     }
     row.add_controller(pointer);
 
+    // Whether focus left with the window, when another window became active.
+    // GTK reports its return as focus arriving, but nothing should change then:
+    // the cursor and any selection stay where they were, as on the Mac.
+    let away = Rc::new(Cell::new(false));
     let target = row.downgrade();
     {
         let press = press.clone();
+        let away = away.clone();
         focus.connect_enter(move |_| {
+            if away.replace(false) {
+                return;
+            }
             if let Some(row) = target.upgrade() {
                 row.select_region(0, 0);
                 if press.get().is_none() {
@@ -281,8 +289,17 @@ fn select_all_on_focus(row: &adw::EntryRow) {
             }
         });
     }
-    // A release this never saw must not stop the next focus from selecting.
-    focus.connect_leave(move |_| press.set(None));
+    let target = row.downgrade();
+    focus.connect_leave(move |_| {
+        // A release this never saw must not stop the next focus from selecting.
+        press.set(None);
+        let window_inactive = target
+            .upgrade()
+            .and_then(|row| row.root())
+            .and_downcast::<gtk::Window>()
+            .is_some_and(|window| !window.is_active());
+        away.set(window_inactive);
+    });
     row.add_controller(focus);
 }
 
