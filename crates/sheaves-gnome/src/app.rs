@@ -17,7 +17,7 @@ use sheaves_core::tracker::{Activity, Connection};
 
 use crate::prompt::{self, Outcome, Wording};
 
-use crate::indicator::{self, Command, Indicator, Look};
+use crate::indicator::{self, Click, Command, Indicator, Look};
 use crate::keyring::Keyring;
 use crate::quick::QuickEntry;
 use crate::settings;
@@ -184,8 +184,8 @@ fn start(app: &adw::Application) -> Rc<Shell> {
     glib::spawn_future_local({
         let shell = shell.clone();
         async move {
-            while let Ok(command) = command_rx.recv().await {
-                shell.obey(command);
+            while let Ok(click) = command_rx.recv().await {
+                shell.obey(click);
             }
         }
     });
@@ -223,7 +223,7 @@ fn absence_threshold() -> f64 {
 /// Runs the top bar item on a runtime of its own, showing each look sent on
 /// `looks`.
 fn start_indicator(
-    commands: async_channel::Sender<Command>,
+    commands: async_channel::Sender<Click>,
     mut looks: tokio::sync::watch::Receiver<Look>,
 ) {
     std::thread::Builder::new()
@@ -383,7 +383,7 @@ impl Shell {
             Action::Toggle(entry) if entry.is_running => {
                 glib::spawn_future_local(async move { tracker.toggle(entry).await });
             }
-            Action::Toggle(entry) => self.resume(entry),
+            Action::Toggle(entry) => self.resume(entry, None),
             Action::LogTime => {
                 let latest = self.latest.borrow();
                 let day = latest.state.day;
@@ -453,13 +453,14 @@ impl Shell {
     /// Resumes `entry`, asking first when it is from a day that is over: resuming
     /// it would add today's work to that day. Both the window and the top bar come
     /// here, since just after midnight the top bar can still offer yesterday's.
-    fn resume(self: &Rc<Self>, entry: TrackedEntry) {
+    /// `activation` is the token of the top bar click that asked, if one did.
+    fn resume(self: &Rc<Self>, entry: TrackedEntry, activation: Option<String>) {
         let tracker = self.tracker.clone();
         if entry.spent_date == self.latest.borrow().state.today {
             glib::spawn_future_local(async move { tracker.resume(entry).await });
             return;
         }
-        self.window.window.present();
+        self.raise(activation);
         let starting = tracker.clone();
         let target = entry.target();
         let notes = entry.notes.clone();
@@ -487,9 +488,24 @@ impl Shell {
         );
     }
 
-    fn obey(self: &Rc<Self>, command: Command) {
+    /// Brings the window forward. A top bar click passes the token the shell
+    /// sent with it, without which GNOME holds the window back (see [`Click`]).
+    /// Given a token, GTK activates the window with it: at once if the window is
+    /// showing, otherwise as it is shown.
+    fn raise(&self, activation: Option<String>) {
+        if let Some(token) = activation {
+            self.window.window.set_startup_id(&token);
+        }
+        self.window.window.present();
+    }
+
+    fn obey(self: &Rc<Self>, click: Click) {
+        let Click {
+            command,
+            activation,
+        } = click;
         match command {
-            Command::Open => self.window.window.present(),
+            Command::Open => self.raise(activation),
             Command::Quit => self.app.quit(),
             Command::StopOrResume => {
                 let activity = self.latest.borrow().activity.clone();
@@ -498,8 +514,8 @@ impl Shell {
                     Activity::Running(entry) => {
                         glib::spawn_future_local(async move { tracker.stop(entry).await });
                     }
-                    Activity::Recent(entry) => self.resume(entry),
-                    Activity::Idle => self.window.window.present(),
+                    Activity::Recent(entry) => self.resume(entry, activation),
+                    Activity::Idle => self.raise(activation),
                 }
             }
         }

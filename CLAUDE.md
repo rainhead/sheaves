@@ -85,6 +85,12 @@ nothing. They are listed with their symptom, because that is how you will meet t
   leaves the session bus at every lock and every item with it. An item that
   registers once and never again disappears for good after the first lock.
   Symptom over SSH: "The name org.kde.StatusNotifierWatcher was not provided".
+- **GNOME raises a window only with the shell's activation token.** A window
+  presented on a D-Bus call, such as a click in the top bar, is held back: GNOME
+  posts "Sheaves is ready" instead, and places the window from the monitor's top
+  left corner, under the dock. The AppIndicator extension sends a token through
+  `ProvideXdgActivationToken` before each click; hand it to `set_startup_id`
+  before `present`.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
