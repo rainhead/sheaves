@@ -54,6 +54,20 @@ pub enum Command {
     Quit,
 }
 
+/// A click in the top bar: what it asks for, and the token the shell handed over
+/// with it.
+///
+/// GNOME raises a window only when the request carries an activation token from
+/// the shell; without one it leaves the window behind and posts "Sheaves is
+/// ready" instead, and places the window as if it were unwanted, from the top
+/// left corner of the screen and under the dock. The AppIndicator extension
+/// sends a token through `ProvideXdgActivationToken` just before each click.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Click {
+    pub command: Command,
+    pub activation: Option<String>,
+}
+
 /// How the item looks: what the app's state says the top bar should show.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Look {
@@ -153,11 +167,23 @@ struct Shared {
     glyph: Option<String>,
     /// Counts layout changes, which the menu protocol reports with each layout.
     revision: u32,
+    /// The token the shell sent for the click about to arrive.
+    activation: Option<String>,
+}
+
+/// Sends `command` with the token the shell sent ahead of it. A token is good for
+/// one click, so it goes with this one whether it is needed or not.
+fn send(shared: &Mutex<Shared>, commands: &async_channel::Sender<Click>, command: Command) {
+    let activation = lock(shared).activation.take();
+    let _ = commands.try_send(Click {
+        command,
+        activation,
+    });
 }
 
 struct Item {
     shared: Arc<Mutex<Shared>>,
-    commands: async_channel::Sender<Command>,
+    commands: async_channel::Sender<Click>,
 }
 
 #[interface(name = "org.kde.StatusNotifierItem")]
@@ -228,11 +254,17 @@ impl Item {
     }
 
     fn activate(&self, _x: i32, _y: i32) {
-        let _ = self.commands.try_send(Command::Open);
+        send(&self.shared, &self.commands, Command::Open);
     }
 
     fn secondary_activate(&self, _x: i32, _y: i32) {
-        let _ = self.commands.try_send(Command::StopOrResume);
+        send(&self.shared, &self.commands, Command::StopOrResume);
+    }
+
+    /// The shell calls this before each click, and waits for it to return, so
+    /// the token is here by the time the click is.
+    fn provide_xdg_activation_token(&self, token: String) {
+        lock(&self.shared).activation = Some(token);
     }
 
     fn context_menu(&self, _x: i32, _y: i32) {}
@@ -328,7 +360,7 @@ fn layout(look: &Look) -> Layout {
 
 struct Menu {
     shared: Arc<Mutex<Shared>>,
-    commands: async_channel::Sender<Command>,
+    commands: async_channel::Sender<Click>,
 }
 
 #[interface(name = "com.canonical.dbusmenu")]
@@ -393,7 +425,7 @@ impl Menu {
             QUIT => Command::Quit,
             _ => return,
         };
-        let _ = self.commands.try_send(command);
+        send(&self.shared, &self.commands, command);
     }
 
     fn event_group(&self, events: Vec<(i32, String, OwnedValue, u32)>) -> Vec<i32> {
@@ -430,7 +462,7 @@ impl Indicator {
     /// Clicks arrive on `commands`; `glyph` is the idle glyph's path, from
     /// [`install_glyph`]. Must run inside a Tokio runtime.
     pub async fn start(
-        commands: async_channel::Sender<Command>,
+        commands: async_channel::Sender<Click>,
         glyph: Option<PathBuf>,
     ) -> zbus::Result<Self> {
         let shared = Arc::new(Mutex::new(Shared {
@@ -659,5 +691,34 @@ mod tests {
         );
         assert_eq!(entries(&running), [TOGGLE, SEPARATOR, OPEN, QUIT]);
         assert_eq!(layout(&running).children.len(), 4);
+    }
+
+    /// The token the shell sends ahead of a click goes with that click, from the
+    /// item or its menu, and with no later one: GNOME accepts each token once.
+    #[test]
+    fn a_click_carries_the_token_sent_ahead_of_it() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let (commands, clicks) = async_channel::unbounded();
+        let item = Item {
+            shared: shared.clone(),
+            commands: commands.clone(),
+        };
+        let menu = Menu { shared, commands };
+
+        item.provide_xdg_activation_token("first".to_string());
+        item.activate(0, 0);
+        item.activate(0, 0);
+        item.provide_xdg_activation_token("second".to_string());
+        menu.event(OPEN, "clicked", text(""), 0);
+
+        let received: Vec<Click> = std::iter::from_fn(|| clicks.try_recv().ok()).collect();
+        let open = |activation: Option<&str>| Click {
+            command: Command::Open,
+            activation: activation.map(str::to_string),
+        };
+        assert_eq!(
+            received,
+            [open(Some("first")), open(None), open(Some("second"))]
+        );
     }
 }
