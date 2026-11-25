@@ -91,8 +91,8 @@ pub fn present_editor(
     let chooser = Chooser::new(projects, Some(&entry.target()));
     fields.append(&chooser.project);
     fields.append(&chooser.task);
-    fields.append(&notes);
     fields.append(&time);
+    fields.append(&notes);
 
     let remove = gtk::Button::with_label("Delete…");
     remove.add_css_class("destructive-action");

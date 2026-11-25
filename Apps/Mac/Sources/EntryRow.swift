@@ -60,9 +60,9 @@ struct EntryRow: View {
         .contentShape(.rect)
         .onHover { isHovering = $0 }
         .contextMenu {
-            Button(entry.notes?.isEmpty == false ? "Edit Notes…" : "Add Notes…") { beginEditingNotes() }
-                .disabled(entry.isLocked)
             Button("Edit Time…") { beginEditingHours() }
+                .disabled(entry.isLocked)
+            Button(entry.notes?.isEmpty == false ? "Edit Notes…" : "Add Notes…") { beginEditingNotes() }
                 .disabled(entry.isLocked)
             MoveMenu(entry: entry)
                 .disabled(entry.isLocked)
@@ -77,10 +77,10 @@ struct EntryRow: View {
         .accessibilityAction(named: entry.isRunning ? "Stop timer" : "Resume timer") {
             requestToggle()
         }
+        .accessibilityAction(named: "Edit time") { beginEditingHours() }
         .accessibilityAction(named: entry.notes?.isEmpty == false ? "Edit notes" : "Add notes") {
             beginEditingNotes()
         }
-        .accessibilityAction(named: "Edit time") { beginEditingHours() }
         .accessibilityAction(named: "Delete", requestDelete)
         .confirmationDialog(
             "Delete this time entry?",
