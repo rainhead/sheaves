@@ -12,7 +12,7 @@ On the Mac, the `Makefile` runs the first two steps for you:
 ```sh
 make build                                         # core, project, then the app
 make run                                           # build, quit Sheaves, open the new build
-make test                                          # every suite below
+make test                                          # Rust core, Swift core, Mac app; not GNOME
 ```
 
 The steps it runs, and the rest:
@@ -112,8 +112,8 @@ nothing. They are listed with their symptom, because that is how you will meet t
   `Apps/Mac/Resources/Sheaves.entitlements` from it, so an edit made to that file
   vanishes at the next generation, and the build still succeeds.
 - **"Executed 0 tests" with `TEST SUCCEEDED` is a failure,** unless Swift Testing
-  then reports its own count ("Test run with 33 tests … passed"). The app's tests
-  use Swift Testing, so XCTest's count there is always 0.
+  then reports a count above zero ("Test run with 33 tests … passed"). The app's
+  tests use Swift Testing, so XCTest's count there is always 0.
 - **Over SSH, the Mac cannot sign with the development certificate.** The login
   keychain stays locked to an SSH session, and `CodeSign` fails with
   `errSecInternalComponent`. Test an ad-hoc build in a folder of its own:
