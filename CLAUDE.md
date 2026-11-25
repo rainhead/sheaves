@@ -114,11 +114,12 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **"Executed 0 tests" with `TEST SUCCEEDED` is a failure,** unless Swift Testing
   then reports a count above zero ("Test run with 33 tests … passed"). The app's
   tests use Swift Testing, so XCTest's count there is always 0.
-- **Over SSH, the Mac cannot sign with the development certificate.** The login
-  keychain stays locked to an SSH session, and `CodeSign` fails with
-  `errSecInternalComponent`. Test an ad-hoc build in a folder of its own:
-  `-derivedDataPath "$(mktemp -d)" CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=`. That
-  also leaves the Debug app the user runs untouched.
+- **Over SSH, the Mac's login keychain stays locked,** so `make test` fails there
+  twice: `KeychainStoreTests` in `swift test` cannot save a token, and `CodeSign`
+  fails with `errSecInternalComponent`. Run the app's tests alone, on an ad-hoc
+  build in a folder of its own: add `-derivedDataPath "$(mktemp -d)"
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` to `xcodebuild … test`. That also leaves
+  the Debug app the user runs untouched. The Keychain tests need the desk.
 - **System Events' `keystroke`/`key code` does not trigger a Carbon global hotkey.**
   Post a real `CGEvent` to `.cghidEventTap` instead. A synthetic click also trips
   global event monitors that a real click in this app would not.
