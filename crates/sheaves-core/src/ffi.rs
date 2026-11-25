@@ -111,6 +111,11 @@ impl ProjectTargets {
     pub fn project_label(&self) -> String {
         self.label()
     }
+
+    /// Whether the search text `query` finds this project.
+    pub fn matches_search(&self, query: String) -> bool {
+        self.matches_query(&query)
+    }
 }
 
 #[uniffi::export]

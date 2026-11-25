@@ -142,6 +142,25 @@ impl ProjectTargets {
         project_label(&self.project, self.client.as_ref())
     }
 
+    /// Whether every word of `query` appears, in any case, somewhere in the
+    /// project's name, its client's name or one of its tasks' names. A query with
+    /// no words matches everything. The apps' search fields share this rule.
+    pub fn matches_query(&self, query: &str) -> bool {
+        let mut haystack = self.project.name.to_lowercase();
+        if let Some(client) = &self.client {
+            haystack.push(' ');
+            haystack.push_str(&client.name.to_lowercase());
+        }
+        for task in &self.tasks {
+            haystack.push(' ');
+            haystack.push_str(&task.name.to_lowercase());
+        }
+        query
+            .to_lowercase()
+            .split_whitespace()
+            .all(|word| haystack.contains(word))
+    }
+
     /// The pair to start, given whichever task the row is showing.
     pub fn target(&self, task: Reference) -> TimerTarget {
         TimerTarget {
@@ -273,6 +292,31 @@ mod tests {
             assert!(!tracked.is_running);
             assert_eq!(tracked.banked_hours, 2.11);
             assert_eq!(tracked.hours(Timestamp::now()), 2.11);
+        }
+    }
+
+    mod project_search {
+        use super::*;
+
+        fn project(name: &str, client: &str, tasks: &[&str]) -> ProjectTargets {
+            ProjectTargets {
+                project: Reference::new(1, name),
+                client: Some(Reference::new(2, client)),
+                tasks: tasks
+                    .iter()
+                    .enumerate()
+                    .map(|(id, task)| Reference::new(id as i64, *task))
+                    .collect(),
+            }
+        }
+
+        #[test]
+        fn finds_a_project_by_any_of_its_words() {
+            let store = project("Online Store", "123 Industries", &["Programming"]);
+            assert!(store.matches_query(""));
+            assert!(store.matches_query("store"));
+            assert!(store.matches_query("Industries prog"));
+            assert!(!store.matches_query("design"));
         }
     }
 
