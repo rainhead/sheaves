@@ -70,6 +70,17 @@ fn has_shortcut_modifier(state: gdk::ModifierType) -> bool {
     )
 }
 
+/// Where the keyboard goes after the list changes from `before` to `after`,
+/// when the row at `index` had it.
+fn refocus(before: &[TrackedEntry], after: &[TrackedEntry], index: i32) -> i32 {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| before.get(index))
+        .and_then(|had| after.iter().position(|entry| entry.id == had.id))
+        .and_then(|position| i32::try_from(position).ok())
+        .unwrap_or(index)
+}
+
 fn deletable(entries: &[TrackedEntry], index: i32) -> Option<&TrackedEntry> {
     let index = usize::try_from(index).ok()?;
     entries.get(index).filter(|entry| !entry.is_locked)
@@ -405,12 +416,14 @@ impl Window {
 
     fn rebuild_entries(&self, entries: &[TrackedEntry]) {
         // Rebuilding drops the row that had the keyboard, which would send it back
-        // to the top of the window in the middle of a run of arrow presses.
+        // to the top of the window in the middle of a run of arrow presses. It goes
+        // back to the same entry, wherever a sync has moved it; to the same place
+        // when that entry has gone.
         let focused = self
             .entries
             .focus_child()
             .and_downcast::<gtk::ListBoxRow>()
-            .map(|row| row.index());
+            .map(|row| refocus(&self.shown_entries.borrow(), entries, row.index()));
         self.entries.remove_all();
         let mut hours = Vec::new();
         for entry in entries {
@@ -561,6 +574,19 @@ mod tests {
         assert!(deletable(&entries, 0).is_some());
         assert!(deletable(&entries, 1).is_none(), "a locked entry stays");
         assert!(deletable(&entries, 2).is_some(), "a running one may go");
+    }
+
+    #[test]
+    fn the_keyboard_follows_its_entry_when_a_row_is_inserted_above() {
+        let mut a = entry(false, false);
+        a.id = EntryId::Server(1);
+        let mut b = entry(false, false);
+        b.id = EntryId::Server(2);
+        let mut new = entry(false, false);
+        new.id = EntryId::Server(3);
+        let before = [a.clone(), b.clone()];
+        assert_eq!(refocus(&before, &[new, a.clone(), b], 1), 2);
+        assert_eq!(refocus(&before, &[a], 1), 1, "gone: stays in place");
     }
 
     #[test]
