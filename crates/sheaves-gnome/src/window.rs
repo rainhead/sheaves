@@ -58,6 +58,18 @@ pub struct Window {
 
 /// The entry that ⌫ or Delete asks to delete when the row at `index` has the
 /// keyboard. A locked entry can't be deleted, in Harvest or here, as on the Mac.
+/// Whether a shortcut modifier is held. Caps Lock and Num Lock are not
+/// shortcuts, and with either on `state` is never empty.
+fn has_shortcut_modifier(state: gdk::ModifierType) -> bool {
+    state.intersects(
+        gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::SUPER_MASK
+            | gdk::ModifierType::META_MASK,
+    )
+}
+
 fn deletable(entries: &[TrackedEntry], index: i32) -> Option<&TrackedEntry> {
     let index = usize::try_from(index).ok()?;
     entries.get(index).filter(|entry| !entry.is_locked)
@@ -275,7 +287,7 @@ impl Window {
                 let Some(this) = this.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
-                if !state.is_empty() || this.window.visible_dialog().is_some() {
+                if has_shortcut_modifier(state) || this.window.visible_dialog().is_some() {
                     return glib::Propagation::Proceed;
                 }
                 if key == gdk::Key::Escape {
@@ -300,7 +312,7 @@ impl Window {
                     key,
                     gdk::Key::Delete | gdk::Key::KP_Delete | gdk::Key::BackSpace
                 );
-                if !delete || !state.is_empty() {
+                if !delete || has_shortcut_modifier(state) {
                     return glib::Propagation::Proceed;
                 }
                 let index = this
@@ -384,6 +396,13 @@ impl Window {
         self.banner.set_revealed(title.is_some());
     }
 
+    /// Whether the keyboard is in a text field that has something typed in it.
+    fn typing_elsewhere(&self) -> bool {
+        gtk::prelude::GtkWindowExt::focus(&self.window)
+            .and_dynamic_cast::<gtk::Editable>()
+            .is_ok_and(|field| !field.text().is_empty())
+    }
+
     fn rebuild_entries(&self, entries: &[TrackedEntry]) {
         // Rebuilding drops the row that had the keyboard, which would send it back
         // to the top of the window in the middle of a run of arrow presses.
@@ -437,6 +456,10 @@ impl Window {
             hours.push((entry.id, label));
         }
         self.entries.set_visible(!entries.is_empty());
+        // Someone already typing a search keeps the keyboard where it is.
+        if self.focus_first.get() && self.typing_elsewhere() {
+            self.focus_first.set(false);
+        }
         let keep = focused.or(self.focus_first.get().then_some(0));
         if let (Some(index), false) = (keep, entries.is_empty()) {
             self.focus_first.set(false);
@@ -538,6 +561,15 @@ mod tests {
         assert!(deletable(&entries, 0).is_some());
         assert!(deletable(&entries, 1).is_none(), "a locked entry stays");
         assert!(deletable(&entries, 2).is_some(), "a running one may go");
+    }
+
+    #[test]
+    fn caps_lock_and_num_lock_are_not_shortcuts() {
+        assert!(!has_shortcut_modifier(gdk::ModifierType::empty()));
+        assert!(!has_shortcut_modifier(gdk::ModifierType::LOCK_MASK));
+        assert!(has_shortcut_modifier(
+            gdk::ModifierType::LOCK_MASK | gdk::ModifierType::CONTROL_MASK
+        ));
     }
 
     #[test]
