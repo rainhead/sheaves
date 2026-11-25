@@ -4,11 +4,11 @@
 //! The window draws whatever state the core last reported. Actions go back to the
 //! core through [`Action`]; nothing here decides anything.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gdk, gio, glib};
 use sheaves_core::ffi::TrackerSnapshot;
 use sheaves_core::hours::HoursFormat;
 use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
@@ -26,6 +26,8 @@ pub enum Action {
     Edit(TrackedEntry),
     /// Log time on the day on screen without a timer.
     LogTime,
+    /// Ask to delete an entry, after the same confirmation as the editor's Delete.
+    Delete(TrackedEntry),
     ShiftDay(i32),
     Today,
     Sync,
@@ -47,6 +49,18 @@ pub struct Window {
     hours: RefCell<Vec<(EntryId, gtk::Label)>>,
     shown_entries: RefCell<Vec<TrackedEntry>>,
     actions: async_channel::Sender<Action>,
+    /// Only on offer on a day other than today.
+    go_today: gio::SimpleAction,
+    /// Until the first entries are drawn, the window has no better place to put
+    /// the keyboard than on the first of them.
+    focus_first: Cell<bool>,
+}
+
+/// The entry that ⌫ or Delete asks to delete when the row at `index` has the
+/// keyboard. A locked entry can't be deleted, in Harvest or here, as on the Mac.
+fn deletable(entries: &[TrackedEntry], index: i32) -> Option<&TrackedEntry> {
+    let index = usize::try_from(index).ok()?;
+    entries.get(index).filter(|entry| !entry.is_locked)
 }
 
 impl Window {
@@ -209,7 +223,8 @@ impl Window {
             });
         }
 
-        Rc::new(Self {
+        let go_today = gio::SimpleAction::new("today", None);
+        let this = Rc::new(Self {
             window,
             day,
             total,
@@ -222,7 +237,101 @@ impl Window {
             hours: RefCell::default(),
             shown_entries: RefCell::default(),
             actions,
-        })
+            go_today,
+            focus_first: Cell::new(true),
+        });
+        this.install_keys();
+        this
+    }
+
+    /// The keyboard. Shortcuts that work anywhere in the window are actions with
+    /// accelerators, so GNOME's shortcut conventions and any future shortcuts
+    /// window see them. Alt+arrows rather than Ctrl+arrows for the day, as in
+    /// GNOME's back and forward, because Ctrl+arrows move by word in the search
+    /// field. ↑ ↓ and ⏎ on the entries are the list box's own.
+    fn install_keys(self: &Rc<Self>) {
+        let window = &self.window;
+        let app = window.application().expect("the window has an application");
+        let shortcuts = [
+            ("log-time", Action::LogTime, "<Control>n"),
+            ("settings", Action::OpenSettings, "<Control>comma"),
+            ("previous-day", Action::ShiftDay(-1), "<Alt>Left"),
+            ("next-day", Action::ShiftDay(1), "<Alt>Right"),
+        ];
+        for (name, action, accelerator) in shortcuts {
+            let simple = gio::SimpleAction::new(name, None);
+            self.when_free(&simple, action);
+            window.add_action(&simple);
+            app.set_accels_for_action(&format!("win.{name}"), &[accelerator]);
+        }
+        self.when_free(&self.go_today, Action::Today);
+        window.add_action(&self.go_today);
+        app.set_accels_for_action("win.today", &["<Alt>Home"]);
+
+        let keys = gtk::EventControllerKey::new();
+        {
+            let this = Rc::downgrade(self);
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let Some(this) = this.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                if !state.is_empty() || this.window.visible_dialog().is_some() {
+                    return glib::Propagation::Proceed;
+                }
+                if key == gdk::Key::Escape {
+                    this.window.close();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+        }
+        self.window.add_controller(keys);
+
+        // On the list of entries only, so a text field elsewhere keeps its own
+        // Delete and BackSpace.
+        let keys = gtk::EventControllerKey::new();
+        {
+            let this = Rc::downgrade(self);
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let Some(this) = this.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let delete = matches!(
+                    key,
+                    gdk::Key::Delete | gdk::Key::KP_Delete | gdk::Key::BackSpace
+                );
+                if !delete || !state.is_empty() {
+                    return glib::Propagation::Proceed;
+                }
+                let index = this
+                    .entries
+                    .focus_child()
+                    .and_downcast::<gtk::ListBoxRow>()
+                    .map_or(-1, |row| row.index());
+                let shown = this.shown_entries.borrow();
+                match deletable(&shown, index) {
+                    Some(entry) => {
+                        let _ = this.actions.try_send(Action::Delete(entry.clone()));
+                        glib::Propagation::Stop
+                    }
+                    None => glib::Propagation::Proceed,
+                }
+            });
+        }
+        self.entries.add_controller(keys);
+    }
+
+    /// Sends `action` when `simple` is activated and no dialog is over the window,
+    /// whose own fields and buttons should not meet a shortcut meant for the day.
+    fn when_free(self: &Rc<Self>, simple: &gio::SimpleAction, action: Action) {
+        let this = Rc::downgrade(self);
+        simple.connect_activate(move |_, _| {
+            if let Some(this) = this.upgrade()
+                && this.window.visible_dialog().is_none()
+            {
+                let _ = this.actions.try_send(action.clone());
+            }
+        });
     }
 
     pub fn render(&self, snapshot: &TrackerSnapshot) {
@@ -240,6 +349,7 @@ impl Window {
             format::hours(snapshot.total_hours, format)
         ));
         self.today.set_visible(!snapshot.is_today);
+        self.go_today.set_enabled(!snapshot.is_today);
 
         self.render_banner(snapshot);
         self.status.set_label(&status_text(snapshot));
@@ -275,6 +385,13 @@ impl Window {
     }
 
     fn rebuild_entries(&self, entries: &[TrackedEntry]) {
+        // Rebuilding drops the row that had the keyboard, which would send it back
+        // to the top of the window in the middle of a run of arrow presses.
+        let focused = self
+            .entries
+            .focus_child()
+            .and_downcast::<gtk::ListBoxRow>()
+            .map(|row| row.index());
         self.entries.remove_all();
         let mut hours = Vec::new();
         for entry in entries {
@@ -320,6 +437,14 @@ impl Window {
             hours.push((entry.id, label));
         }
         self.entries.set_visible(!entries.is_empty());
+        let keep = focused.or(self.focus_first.get().then_some(0));
+        if let (Some(index), false) = (keep, entries.is_empty()) {
+            self.focus_first.set(false);
+            let last = entries.len() as i32 - 1;
+            if let Some(row) = self.entries.row_at_index(index.clamp(0, last)) {
+                row.grab_focus();
+            }
+        }
         self.no_entries.set_visible(entries.is_empty());
         *self.hours.borrow_mut() = hours;
     }
@@ -380,4 +505,45 @@ pub fn status_text(snapshot: &TrackerSnapshot) -> String {
         count => parts.push(format!("{count} changes waiting to send")),
     }
     parts.join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::Timestamp;
+    use sheaves_core::calendar_date::CalendarDate;
+    use sheaves_core::models::Reference;
+
+    fn entry(is_locked: bool, is_running: bool) -> TrackedEntry {
+        TrackedEntry {
+            id: EntryId::Server(1),
+            project: Reference::new(1, "Online Store"),
+            task: Reference::new(2, "Programming"),
+            client: None,
+            notes: None,
+            spent_date: CalendarDate::new(2026, 11, 25),
+            banked_hours: 1.0,
+            is_running,
+            timer_started_at: None,
+            is_locked,
+            is_billable: true,
+            is_pending: false,
+            updated_at: Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn delete_picks_the_focused_entry_unless_it_is_locked() {
+        let entries = [entry(false, false), entry(true, false), entry(false, true)];
+        assert!(deletable(&entries, 0).is_some());
+        assert!(deletable(&entries, 1).is_none(), "a locked entry stays");
+        assert!(deletable(&entries, 2).is_some(), "a running one may go");
+    }
+
+    #[test]
+    fn delete_with_nothing_focused_does_nothing() {
+        let entries = [entry(false, false)];
+        assert!(deletable(&entries, -1).is_none());
+        assert!(deletable(&entries, 1).is_none());
+    }
 }
