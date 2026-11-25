@@ -241,7 +241,7 @@ impl QuickEntry {
             }
         }
         self.status.set_label(&window::status_text(snapshot));
-        let changed = self.projects.show(&snapshot.ordered_projects);
+        let changed = self.projects.show(snapshot);
         if changed {
             self.choose_first();
         }

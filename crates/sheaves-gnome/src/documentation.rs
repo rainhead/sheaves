@@ -51,7 +51,18 @@ pub fn render(directory: PathBuf) -> glib::ExitCode {
         let failed = failed.clone();
         glib::spawn_future_local(async move {
             tracker.sync().await;
-            window.render(&tracker.snapshot());
+            // The demo account has no change waiting to reach Harvest, so the
+            // picture marks one entry as having one.
+            let mut snapshot = tracker.snapshot();
+            if let Some(entry) = snapshot
+                .state
+                .entries
+                .iter_mut()
+                .find(|entry| !entry.is_running)
+            {
+                entry.is_pending = true;
+            }
+            window.render(&snapshot);
             window.window.present();
             // A moment for the window to be mapped and laid out.
             glib::timeout_future(Duration::from_millis(600)).await;

@@ -115,7 +115,7 @@ fn stopped(today: CalendarDate) -> Value {
             client: (2, "ABC Corp"),
             task: (233, "Graphic Design"),
             hours: 2.25,
-            notes: None,
+            notes: Some("Homepage banner and footer, second round of changes after the client's review"),
             running: false,
         },
     )

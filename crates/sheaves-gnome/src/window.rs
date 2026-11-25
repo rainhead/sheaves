@@ -14,6 +14,7 @@ use sheaves_core::hours::HoursFormat;
 use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
 use sheaves_core::tracker::Connection;
 
+use crate::budget;
 use crate::format;
 use crate::projects::ProjectList;
 
@@ -38,6 +39,7 @@ pub struct Window {
     total: gtk::Label,
     today: gtk::Label,
     banner: adw::Banner,
+    budget: BudgetBar,
     entries: gtk::ListBox,
     no_entries: gtk::Label,
     projects: Rc<ProjectList>,
@@ -137,6 +139,8 @@ impl Window {
         column.set_margin_bottom(12);
         column.set_margin_start(12);
         column.set_margin_end(12);
+        let budget = BudgetBar::new();
+        column.append(&budget.root);
         column.append(&entries);
         column.append(&no_entries);
         column.append(&heading("Start a timer"));
@@ -215,6 +219,7 @@ impl Window {
             total,
             today,
             banner,
+            budget,
             entries,
             no_entries,
             projects,
@@ -254,7 +259,8 @@ impl Window {
             }
         }
 
-        self.projects.show(&snapshot.ordered_projects);
+        self.budget.render(snapshot);
+        self.projects.show(snapshot);
     }
 
     fn render_banner(&self, snapshot: &TrackerSnapshot) {
@@ -281,8 +287,16 @@ impl Window {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&entry.task.name))
                 .subtitle(glib::markup_escape_text(&subtitle(entry)))
+                // The project on the first line and up to two of notes.
+                .subtitle_lines(3)
                 .activatable(!entry.is_locked)
                 .build();
+            if entry.is_pending {
+                // A local change Harvest has not acknowledged yet.
+                let waiting = gtk::Image::from_icon_name("emblem-synchronizing-symbolic");
+                waiting.set_tooltip_text(Some("Waiting to sync"));
+                row.add_prefix(&waiting);
+            }
             if entry.is_locked {
                 // Approved or invoiced in Harvest: it can be looked at, not changed.
                 let lock = gtk::Image::from_icon_name("changes-prevent-symbolic");
@@ -325,6 +339,89 @@ impl Window {
     }
 }
 
+/// The budget of the project on the clock: how much is left and how much is gone.
+/// It shows nothing unless there is a readable budget for that project, as on the
+/// Mac, so an account without budgets has no empty bar.
+struct BudgetBar {
+    root: gtk::Box,
+    project: gtk::Label,
+    left: gtk::Label,
+    bar: gtk::ProgressBar,
+}
+
+impl BudgetBar {
+    fn new() -> Self {
+        install_css();
+        let project = gtk::Label::new(None);
+        project.add_css_class("caption");
+        project.add_css_class("dim-label");
+        project.set_xalign(0.0);
+        project.set_hexpand(true);
+        project.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let left = gtk::Label::new(None);
+        left.add_css_class("caption");
+        left.add_css_class("numeric");
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        line.append(&project);
+        line.append(&left);
+        let bar = gtk::ProgressBar::new();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        root.append(&line);
+        root.append(&bar);
+        root.set_visible(false);
+        Self {
+            root,
+            project,
+            left,
+            bar,
+        }
+    }
+
+    fn render(&self, snapshot: &TrackerSnapshot) {
+        let shown = snapshot.running_entry.as_ref().and_then(|entry| {
+            let budget = snapshot.state.budget_for(entry)?;
+            let format = hours_format(snapshot);
+            Some((entry, budget, budget::left(budget, format)?, format))
+        });
+        let Some((entry, budget, left, format)) = shown else {
+            self.root.set_visible(false);
+            return;
+        };
+        let detail = budget::detail(&entry.project.name, budget, format);
+        self.project.set_label(&entry.project.name);
+        self.left.set_label(&left.text);
+        self.bar.set_fraction(budget.fraction_used());
+        for widget in [self.left.upcast_ref::<gtk::Widget>(), self.bar.upcast_ref()] {
+            if left.over {
+                widget.add_css_class("budget-over");
+            } else {
+                widget.remove_css_class("budget-over");
+            }
+        }
+        self.root.set_tooltip_text(Some(&detail));
+        self.root
+            .update_property(&[gtk::accessible::Property::Label(&detail)]);
+        self.root.set_visible(true);
+    }
+}
+
+/// Colours the bar and the figure red once the budget is overspent.
+fn install_css() {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "progressbar.budget-over > trough > progress { background-color: @error_color; }\n\
+         label.budget-over { color: @error_color; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+}
+
 fn heading(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("heading");
@@ -344,7 +441,8 @@ pub fn hours_format(snapshot: &TrackerSnapshot) -> HoursFormat {
     )
 }
 
-/// "123 Industries · Online Store — Checkout flow".
+/// The project and its client on the first line, and the notes beneath:
+/// "123 Industries · Online Store\nCheckout flow".
 fn subtitle(entry: &TrackedEntry) -> String {
     let mut subtitle = entry.target().project_label();
     if let Some(notes) = entry
@@ -352,7 +450,7 @@ fn subtitle(entry: &TrackedEntry) -> String {
         .as_deref()
         .filter(|notes| !notes.trim().is_empty())
     {
-        subtitle.push_str(" — ");
+        subtitle.push('\n');
         subtitle.push_str(notes.trim());
     }
     subtitle
@@ -380,4 +478,44 @@ pub fn status_text(snapshot: &TrackerSnapshot) -> String {
         count => parts.push(format!("{count} changes waiting to send")),
     }
     parts.join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::Timestamp;
+    use sheaves_core::calendar_date::CalendarDate;
+    use sheaves_core::models::Reference;
+
+    fn entry(notes: Option<&str>) -> TrackedEntry {
+        TrackedEntry {
+            id: EntryId::Server(1),
+            project: Reference::new(1, "Online Store"),
+            task: Reference::new(2, "Programming"),
+            client: Some(Reference::new(3, "123 Industries")),
+            notes: notes.map(str::to_string),
+            spent_date: CalendarDate::new(2026, 11, 4),
+            banked_hours: 1.5,
+            is_running: false,
+            timer_started_at: None,
+            is_locked: false,
+            is_billable: true,
+            is_pending: false,
+            updated_at: Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn notes_sit_beneath_the_project() {
+        assert_eq!(
+            subtitle(&entry(Some(" Checkout flow\n"))),
+            "123 Industries · Online Store\nCheckout flow"
+        );
+    }
+
+    #[test]
+    fn no_notes_leave_only_the_project() {
+        assert_eq!(subtitle(&entry(None)), "123 Industries · Online Store");
+        assert_eq!(subtitle(&entry(Some("  "))), "123 Industries · Online Store");
+    }
 }

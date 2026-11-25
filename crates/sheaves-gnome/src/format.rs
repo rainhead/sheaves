@@ -8,6 +8,7 @@
 
 use std::ffi::CStr;
 
+use sheaves_core::budget::BudgetFigure;
 use sheaves_core::calendar_date::CalendarDate;
 use sheaves_core::hours::HoursFormat;
 
@@ -26,6 +27,68 @@ pub fn hours(hours: f64, format: HoursFormat) -> String {
             format!("{}:{:02}", minutes / 60, minutes % 60)
         }
     }
+}
+
+/// A budget figure: a duration, or money to the whole unit with the client's
+/// currency, or a bare number when the currency is unknown.
+pub fn figure(figure: &BudgetFigure, format: HoursFormat) -> String {
+    match figure {
+        BudgetFigure::Hours(value) => hours(*value, format),
+        BudgetFigure::Money { amount, currency } => money(*amount, currency.as_deref()),
+    }
+}
+
+/// `amount` to the whole unit, grouped as the locale groups digits, led by its
+/// currency's symbol or else its code. The C library knows nothing of currency
+/// placement, so the symbol always leads.
+fn money(amount: f64, currency: Option<&str>) -> String {
+    let amount = if amount.is_finite() { amount } else { 0.0 };
+    let number = whole(amount);
+    match currency {
+        None => number,
+        Some(code) => match symbol(code) {
+            Some(symbol) => format!("{symbol}{number}"),
+            // A code reads as a word, so it gets a no-break space.
+            None => format!("{code}\u{a0}{number}"),
+        },
+    }
+}
+
+fn symbol(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "USD" => "$",
+        "EUR" => "€",
+        "GBP" => "£",
+        "JPY" => "¥",
+        "CNY" => "CN¥",
+        "INR" => "₹",
+        "KRW" => "₩",
+        "CAD" => "CA$",
+        "AUD" => "A$",
+        "NZD" => "NZ$",
+        _ => return None,
+    })
+}
+
+/// `value` rounded to a whole number, with the locale's digit grouping.
+fn whole(value: f64) -> String {
+    let mut buffer = [0u8; 64];
+    // SAFETY: the format takes one double, the buffer is large enough for any
+    // value this is given, and snprintf always terminates what it writes.
+    let written = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%'.0f".as_ptr(),
+            value,
+        )
+    };
+    if written < 0 {
+        return format!("{value:.0}");
+    }
+    CStr::from_bytes_until_nul(&buffer)
+        .map(|text| text.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| format!("{value:.0}"))
 }
 
 /// `value` to two places, with the locale's decimal separator.
@@ -88,6 +151,16 @@ mod tests {
         assert_eq!(hours(-2.0, HoursFormat::HoursMinutes), "0:00");
         assert_eq!(hours(f64::NAN, HoursFormat::HoursMinutes), "0:00");
         assert_eq!(hours(f64::INFINITY, HoursFormat::Decimal), decimal(0.0));
+    }
+
+    /// Tests run in the C locale, which does not group digits.
+    #[test]
+    fn money_has_no_cents() {
+        let money = |amount, code: Option<&str>| money(amount, code);
+        assert_eq!(money(2400.4, Some("USD")), "$2400");
+        assert_eq!(money(1007.0, Some("EUR")), "€1007");
+        assert_eq!(money(90.0, Some("CHF")), "CHF\u{a0}90");
+        assert_eq!(money(90.0, None), "90");
     }
 
     /// Tests run in the C locale, which writes a full stop.

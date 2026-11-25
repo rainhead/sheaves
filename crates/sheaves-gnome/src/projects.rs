@@ -7,13 +7,41 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
+use crate::budget;
+use sheaves_core::ffi::TrackerSnapshot;
 use sheaves_core::tracked_entry::{ProjectTargets, TimerTarget};
+
+/// Overspending is worth a colour, as on the Mac. Pango markup cannot name the
+/// theme's red, so this is GNOME's own.
+const OVER: &str = "#e01b24";
+
+/// The client, and the budget after it when there is one, as markup: "123
+/// Industries · 1,007 left", the figure red when it is an overrun.
+fn subtitle(client: &str, budget: Option<&(String, bool)>) -> String {
+    let client = glib::markup_escape_text(client);
+    let Some((text, over)) = budget else {
+        return client.to_string();
+    };
+    let text = glib::markup_escape_text(text);
+    let figure = if *over {
+        format!("<span foreground=\"{OVER}\">{text}</span>")
+    } else {
+        text.to_string()
+    };
+    if client.is_empty() {
+        figure
+    } else {
+        format!("{client} · {figure}")
+    }
+}
 
 pub struct ProjectList {
     pub list: gtk::ListBox,
     /// What each row is searched by, in row order.
     haystacks: Rc<RefCell<Vec<String>>>,
     shown: RefCell<Vec<ProjectTargets>>,
+    /// The budget text each shown row had, so a change of budget rebuilds them.
+    shown_budgets: RefCell<Vec<Option<(String, bool)>>>,
     /// Each row's task menu, in row order.
     tasks: RefCell<Vec<gtk::DropDown>>,
     start: Rc<dyn Fn(TimerTarget)>,
@@ -67,6 +95,7 @@ impl ProjectList {
             list,
             haystacks,
             shown: RefCell::default(),
+            shown_budgets: RefCell::default(),
             tasks: RefCell::default(),
             start: Rc::new(start),
             choosable: std::cell::Cell::new(false),
@@ -88,23 +117,33 @@ impl ProjectList {
     /// Shows `projects`, rebuilding the rows only when they changed, so a row is
     /// not swapped out from under the pointer once a second. Returns whether it
     /// rebuilt them.
-    pub fn show(&self, projects: &[ProjectTargets]) -> bool {
-        if *self.shown.borrow() == projects {
+    pub fn show(&self, snapshot: &TrackerSnapshot) -> bool {
+        let projects = &snapshot.ordered_projects;
+        let format = crate::window::hours_format(snapshot);
+        let budgets: Vec<Option<(String, bool)>> = projects
+            .iter()
+            .map(|project| {
+                let budget = snapshot.state.budgets.get(&project.project.id)?;
+                budget::left(budget, format).map(|left| (left.text, left.over))
+            })
+            .collect();
+        if *self.shown.borrow() == projects.as_slice() && *self.shown_budgets.borrow() == budgets {
             return false;
         }
         self.list.remove_all();
         let mut haystacks = Vec::new();
         let mut menus = Vec::new();
-        for project in projects {
+        for (project, budget) in projects.iter().zip(&budgets) {
             haystacks.push(haystack(project));
             let row = adw::ActionRow::builder()
                 .activatable(self.choosable.get())
                 .title(glib::markup_escape_text(&project.project.name))
-                .subtitle(glib::markup_escape_text(
+                .subtitle(subtitle(
                     project
                         .client
                         .as_ref()
                         .map_or("", |client| client.name.as_str()),
+                    budget.as_ref(),
                 ))
                 .build();
             let names: Vec<&str> = project
@@ -134,6 +173,7 @@ impl ProjectList {
         *self.haystacks.borrow_mut() = haystacks;
         *self.tasks.borrow_mut() = menus;
         *self.shown.borrow_mut() = projects.to_vec();
+        *self.shown_budgets.borrow_mut() = budgets;
         self.list.invalidate_filter();
         true
     }
@@ -183,6 +223,19 @@ mod tests {
                 .map(|(id, task)| Reference::new(id as i64, *task))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn budget_follows_the_client() {
+        assert_eq!(subtitle("A & B", None), "A &amp; B");
+        let left = ("8:00 left".to_string(), false);
+        assert_eq!(subtitle("ABC", Some(&left)), "ABC · 8:00 left");
+        assert_eq!(subtitle("", Some(&left)), "8:00 left");
+        let over = ("$240 over".to_string(), true);
+        assert_eq!(
+            subtitle("ABC", Some(&over)),
+            format!("ABC · <span foreground=\"{OVER}\">$240 over</span>")
+        );
     }
 
     #[test]
