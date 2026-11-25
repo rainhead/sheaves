@@ -62,7 +62,7 @@ struct DayView: View {
             } else {
                 header
                 if case .offline(let reason) = tracker.connection {
-                    FailureBanner(reason: reason)
+                    FailureBanner(reason: "Offline: \(reason)", retry: { Task { await tracker.sync() } })
                 }
                 if let notice = tracker.notice {
                     FailureBanner(reason: notice)
@@ -318,6 +318,8 @@ struct DayView: View {
 /// when the list is empty, because an empty day and a failed load look identical.
 struct FailureBanner: View {
     let reason: String
+    /// Asks Harvest again. Only a failure that trying again can fix offers it.
+    var retry: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -327,6 +329,12 @@ struct FailureBanner: View {
                 .font(.caption)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            if let retry {
+                Spacer(minLength: 0)
+                Button("Retry", action: retry)
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
@@ -351,31 +359,29 @@ struct SyncStatusLabel: View {
         .help(detail)
     }
 
+    private var status: SyncStatus { tracker.syncStatus }
+
     private var color: Color {
-        switch tracker.connection {
-        case .online: tracker.pendingCount > 0 ? .yellow : .green
-        case .connecting: .yellow
-        case .offline: .orange
-        case .needsCredentials: .secondary
+        switch status.statusTone() {
+        case .good: .green
+        case .working: .yellow
+        case .warning: .orange
+        case .idle: .secondary
         }
     }
 
+    /// The core decides which state this is; the words and the relative time are
+    /// the Mac's. Reading the status reads `now`, which keeps the label live.
     private var message: String {
-        switch tracker.connection {
-        case .needsCredentials:
-            return "Not connected"
-        case .connecting:
-            return "Connecting…"
-        case .offline:
-            return tracker.pendingCount > 0 ? "Offline · \(tracker.pendingCount.formatted()) queued" : "Offline"
-        case .online:
-            if tracker.pendingCount > 0 { return "Syncing \(tracker.pendingCount.formatted())…" }
-            guard let synced = tracker.lastSyncedAt else { return "Synced" }
-            // Reading `now` keeps this label live; the relative formatter renders a
-            // just-finished sync as "in 0 seconds", which reads like the future.
-            let elapsed = tracker.now.timeIntervalSince(synced)
-            guard elapsed >= 45 else { return "Synced just now" }
-            return "Synced \(synced.formatted(.relative(presentation: .numeric)))"
+        switch status {
+        case .notConnected: "Not connected"
+        case .connecting: "Connecting…"
+        case .offline(let queued):
+            queued > 0 ? "Offline · \(queued.formatted()) queued" : "Offline"
+        case .syncing(let pending): "Syncing \(pending.formatted())…"
+        case .syncedJustNow: "Synced just now"
+        case .synced(let at):
+            at.map { "Synced \($0.formatted(.relative(presentation: .numeric)))" } ?? "Synced"
         }
     }
 
