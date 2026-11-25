@@ -38,20 +38,49 @@ pub fn figure(figure: &BudgetFigure, format: HoursFormat) -> String {
     }
 }
 
-/// `amount` to the whole unit, grouped as the locale groups digits, led by its
-/// currency's symbol or else its code. The C library knows nothing of currency
-/// placement, so the symbol always leads.
+/// `amount` to the whole unit, grouped as the locale groups digits, with its
+/// currency's symbol or else its code on the side the locale puts it:
+/// "$1,007" in the US, "1.007 €" in Germany.
 fn money(amount: f64, currency: Option<&str>) -> String {
     let amount = if amount.is_finite() { amount } else { 0.0 };
     let number = whole(amount);
-    match currency {
-        None => number,
-        Some(code) => match symbol(code) {
-            Some(symbol) => format!("{symbol}{number}"),
-            // A code reads as a word, so it gets a no-break space.
-            None => format!("{code}\u{a0}{number}"),
-        },
+    let Some(code) = currency else {
+        return number;
+    };
+    let (symbol_first, spaced) = currency_placement();
+    match symbol(code) {
+        Some(symbol) => place(symbol, &number, symbol_first, spaced),
+        // A code reads as a word, so it always gets a space.
+        None => place(code, &number, symbol_first, true),
     }
+}
+
+/// `symbol` before or after `number`, with a no-break space between them or none.
+fn place(symbol: &str, number: &str, symbol_first: bool, spaced: bool) -> String {
+    let space = if spaced { "\u{a0}" } else { "" };
+    if symbol_first {
+        format!("{symbol}{space}{number}")
+    } else {
+        format!("{number}{space}{symbol}")
+    }
+}
+
+/// Whether the locale writes the currency symbol before a positive amount, and
+/// whether a space separates them. The C locale leaves both unspecified, and an
+/// unspecified side reads as before with no space, as in English.
+fn currency_placement() -> (bool, bool) {
+    // SAFETY: localeconv returns a pointer to static data that stays valid until
+    // the locale changes, which happens only at startup; its fields are read at
+    // once and not kept.
+    let conventions = unsafe { &*libc::localeconv() };
+    // CHAR_MAX means unspecified.
+    if conventions.p_cs_precedes as u8 == u8::MAX >> 1 {
+        return (true, false);
+    }
+    (
+        conventions.p_cs_precedes != 0,
+        conventions.p_sep_by_space == 1,
+    )
 }
 
 fn symbol(code: &str) -> Option<&'static str> {
@@ -151,6 +180,12 @@ mod tests {
         assert_eq!(hours(-2.0, HoursFormat::HoursMinutes), "0:00");
         assert_eq!(hours(f64::NAN, HoursFormat::HoursMinutes), "0:00");
         assert_eq!(hours(f64::INFINITY, HoursFormat::Decimal), decimal(0.0));
+    }
+
+    #[test]
+    fn the_symbol_goes_where_the_locale_puts_it() {
+        assert_eq!(place("$", "1,007", true, false), "$1,007");
+        assert_eq!(place("€", "1.007", false, true), "1.007\u{a0}€");
     }
 
     /// Tests run in the C locale, which does not group digits.

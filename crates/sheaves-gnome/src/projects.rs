@@ -35,13 +35,23 @@ fn subtitle(client: &str, budget: Option<&(String, bool)>) -> String {
     }
 }
 
+fn client_name(project: &ProjectTargets) -> &str {
+    project
+        .client
+        .as_ref()
+        .map_or("", |client| client.name.as_str())
+}
+
 pub struct ProjectList {
     pub list: gtk::ListBox,
     /// What each row is searched by, in row order.
     haystacks: Rc<RefCell<Vec<String>>>,
     shown: RefCell<Vec<ProjectTargets>>,
-    /// The budget text each shown row had, so a change of budget rebuilds them.
+    /// The budget text each shown row has. A change of budget alone rewrites the
+    /// rows' subtitles in place, so a project chosen in quick entry stays chosen.
     shown_budgets: RefCell<Vec<Option<(String, bool)>>>,
+    /// The rows, in order, for rewriting their subtitles.
+    rows: RefCell<Vec<adw::ActionRow>>,
     /// Each row's task menu, in row order.
     tasks: RefCell<Vec<gtk::DropDown>>,
     start: Rc<dyn Fn(TimerTarget)>,
@@ -96,6 +106,7 @@ impl ProjectList {
             haystacks,
             shown: RefCell::default(),
             shown_budgets: RefCell::default(),
+            rows: RefCell::default(),
             tasks: RefCell::default(),
             start: Rc::new(start),
             choosable: std::cell::Cell::new(false),
@@ -127,24 +138,27 @@ impl ProjectList {
                 budget::left(budget, format).map(|left| (left.text, left.over))
             })
             .collect();
-        if *self.shown.borrow() == projects.as_slice() && *self.shown_budgets.borrow() == budgets {
+        if *self.shown.borrow() == projects.as_slice() {
+            if *self.shown_budgets.borrow() != budgets {
+                for ((row, project), budget) in
+                    self.rows.borrow().iter().zip(projects).zip(&budgets)
+                {
+                    row.set_subtitle(&subtitle(client_name(project), budget.as_ref()));
+                }
+                *self.shown_budgets.borrow_mut() = budgets;
+            }
             return false;
         }
         self.list.remove_all();
         let mut haystacks = Vec::new();
         let mut menus = Vec::new();
+        let mut rows = Vec::new();
         for (project, budget) in projects.iter().zip(&budgets) {
             haystacks.push(haystack(project));
             let row = adw::ActionRow::builder()
                 .activatable(self.choosable.get())
                 .title(glib::markup_escape_text(&project.project.name))
-                .subtitle(subtitle(
-                    project
-                        .client
-                        .as_ref()
-                        .map_or("", |client| client.name.as_str()),
-                    budget.as_ref(),
-                ))
+                .subtitle(subtitle(client_name(project), budget.as_ref()))
                 .build();
             let names: Vec<&str> = project
                 .tasks
@@ -168,10 +182,12 @@ impl ProjectList {
             row.add_suffix(&tasks);
             row.add_suffix(&start);
             self.list.append(&row);
+            rows.push(row);
             menus.push(tasks);
         }
         *self.haystacks.borrow_mut() = haystacks;
         *self.tasks.borrow_mut() = menus;
+        *self.rows.borrow_mut() = rows;
         *self.shown.borrow_mut() = projects.to_vec();
         *self.shown_budgets.borrow_mut() = budgets;
         self.list.invalidate_filter();
