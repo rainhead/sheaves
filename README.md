@@ -25,9 +25,8 @@ reconciles with Harvest afterwards.
 Both apps are in daily use. The GNOME app was built on the Mac app's core
 ([how, phase by phase](docs/gnome-port.md)) and does what the Mac does: timers
 from the top bar, the day in a window, the same questions about time away, the
-same edits, and quick entry from any app. It does not show budgets, it assumes
-mains power, and it has no microphone signal, since nobody takes calls on the
-machine it was built for. iOS is not built.
+same edits, budgets, and quick entry from any app. It assumes mains power, and it
+has no microphone signal, since nobody takes calls on the machine it was built for. iOS is not built.
 
 It was built for one person's use, which is why it does what it does and no more.
 **If this is interesting to you, please get in touch** —
