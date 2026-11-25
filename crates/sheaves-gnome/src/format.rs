@@ -107,8 +107,11 @@ fn month_comes_first(pattern: &str) -> bool {
         if character != '%' {
             continue;
         }
-        // Skip glibc's flags, such as `%-d` and `%_m`.
-        let Some(letter) = specifiers.find(|c| !matches!(c, '-' | '_' | '0' | '^' | '#')) else {
+        // Skip glibc's flags (`%-d`, `%_m`), a field width (`%10d`) and the `E` and
+        // `O` modifiers (`%Od`, which or_IN uses) to reach the conversion itself.
+        let Some(letter) = specifiers
+            .find(|c| !(matches!(c, '-' | '_' | '^' | '#' | 'E' | 'O') || c.is_ascii_digit()))
+        else {
             break;
         };
         let place = month.is_none() as u8 + day.is_none() as u8;
@@ -177,6 +180,8 @@ mod tests {
         assert!(!month_comes_first("%d/%m/%Y"));
         assert!(!month_comes_first("%d.%m.%Y"));
         assert!(!month_comes_first("%-d %b %Y"));
+        assert!(!month_comes_first("%Od-%Om-%Oy"), "or_IN: modifiers before the letter");
+        assert!(!month_comes_first("%10d/%m"), "a field width");
         assert!(month_comes_first("%b %e, %Y"));
         assert!(month_comes_first(""));
     }
