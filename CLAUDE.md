@@ -7,6 +7,16 @@ AppKit and SwiftUI shell.
 
 ## Commands
 
+On the Mac, the `Makefile` runs the first two steps for you:
+
+```sh
+make build                                         # core, project, then the app
+make run                                           # build, quit Sheaves, open the new build
+make test                                          # every suite below
+```
+
+The steps it runs, and the rest:
+
 ```sh
 Scripts/build-xcframework.sh                       # after changing anything in crates/
 xcodegen generate                                  # after adding or removing ANY file
@@ -101,7 +111,14 @@ nothing. They are listed with their symptom, because that is how you will meet t
 - **Entitlements live in `project.yml`.** `xcodegen generate` rewrites
   `Apps/Mac/Resources/Sheaves.entitlements` from it, so an edit made to that file
   vanishes at the next generation, and the build still succeeds.
-- **"Executed 0 tests" with `TEST SUCCEEDED` is a failure.** It means nothing ran.
+- **"Executed 0 tests" with `TEST SUCCEEDED` is a failure,** unless Swift Testing
+  then reports its own count ("Test run with 33 tests … passed"). The app's tests
+  use Swift Testing, so XCTest's count there is always 0.
+- **Over SSH, the Mac cannot sign with the development certificate.** The login
+  keychain stays locked to an SSH session, and `CodeSign` fails with
+  `errSecInternalComponent`. Test an ad-hoc build in a folder of its own:
+  `-derivedDataPath "$(mktemp -d)" CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=`. That
+  also leaves the Debug app the user runs untouched.
 - **System Events' `keystroke`/`key code` does not trigger a Carbon global hotkey.**
   Post a real `CGEvent` to `.cghidEventTap` instead. A synthetic click also trips
   global event monitors that a real click in this app would not.
