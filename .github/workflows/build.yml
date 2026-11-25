@@ -1,12 +1,13 @@
 name: Build
 
 on:
-  # Prose changes build nothing worth testing.
+  # Prose changes build nothing worth testing, once they are on main.
   push:
     branches: [main]
     paths-ignore: ["**.md", "docs/**"]
+  # Every pull request runs, prose or not: main requires these checks, and a check
+  # filtered out by path never reports, so the pull request would wait for ever.
   pull_request:
-    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
   # Called by the release workflow, so a release runs the same suite on the same
   # toolchain rather than a second copy of it that can drift.
