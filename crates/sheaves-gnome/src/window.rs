@@ -291,18 +291,23 @@ impl Window {
                 .subtitle_lines(3)
                 .activatable(!entry.is_locked)
                 .build();
+            // Beside the duration, as on the Mac, so the text of every row starts
+            // at the same place.
             if entry.is_pending {
                 // A local change Harvest has not acknowledged yet.
                 let waiting = gtk::Image::from_icon_name("emblem-synchronizing-symbolic");
                 waiting.set_tooltip_text(Some("Waiting to sync"));
-                row.add_prefix(&waiting);
+                waiting.add_css_class("dim-label");
+                row.add_suffix(&waiting);
             }
             if entry.is_locked {
                 // Approved or invoiced in Harvest: it can be looked at, not changed.
                 let lock = gtk::Image::from_icon_name("changes-prevent-symbolic");
                 lock.set_tooltip_text(Some("Locked in Harvest"));
-                row.add_prefix(&lock);
-            } else {
+                lock.add_css_class("dim-label");
+                row.add_suffix(&lock);
+            }
+            if !entry.is_locked {
                 let actions = self.actions.clone();
                 let opened = entry.clone();
                 row.connect_activated(move |_| {
@@ -392,10 +397,15 @@ impl BudgetBar {
         self.left.set_label(&left.text);
         self.bar.set_fraction(budget.fraction_used());
         for widget in [self.left.upcast_ref::<gtk::Widget>(), self.bar.upcast_ref()] {
-            if left.over {
-                widget.add_css_class("budget-over");
-            } else {
-                widget.remove_css_class("budget-over");
+            for (class, applies) in [
+                ("budget-over", left.over),
+                ("budget-low", budget.is_running_low()),
+            ] {
+                if applies {
+                    widget.add_css_class(class);
+                } else {
+                    widget.remove_css_class(class);
+                }
             }
         }
         self.root.set_tooltip_text(Some(&detail));
@@ -405,14 +415,17 @@ impl BudgetBar {
     }
 }
 
-/// Colours the bar and the figure red once the budget is overspent.
+/// Colours the bar and the figure as the Mac does: orange as the budget runs
+/// low, red once it is overspent.
 fn install_css() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
     };
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        "progressbar.budget-over > trough > progress { background-color: @error_color; }\n\
+        "progressbar.budget-low > trough > progress { background-color: @warning_color; }\n\
+         label.budget-low { color: @warning_color; }\n\
+         progressbar.budget-over > trough > progress { background-color: @error_color; }\n\
          label.budget-over { color: @error_color; }",
     );
     gtk::style_context_add_provider_for_display(

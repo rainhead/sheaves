@@ -61,6 +61,7 @@ public extension ProjectBudget {
     var isOverBudget: Bool { isOverrun() }
     /// How much of the budget is used, 0…1, clamped so an overrun draws a full bar.
     var fractionUsed: Double { used() }
+    var isRunningLow: Bool { runningLow() }
 }
 
 public extension HarvestUser {
