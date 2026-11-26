@@ -23,3 +23,25 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# `cargo deb -p sheaves-gnome` builds the package CI attaches to each release.
+# The app still installs its own desktop entry at each launch (see launcher.rs),
+# pointing at wherever it runs from; these put it in the app grid before then.
+[package.metadata.deb]
+name = "sheaves"
+maintainer = "Peter Abrahamsen"
+copyright = "Peter Abrahamsen"
+extended-description = """\
+The running Harvest timer in GNOME's top bar, and the day's entries in a window.
+Needs a Harvest personal access token."""
+section = "utils"
+priority = "optional"
+# Worked out from the binary's libraries (GTK 4, libadwaita) by dpkg-shlibdeps.
+depends = "$auto"
+# The top bar item needs the AppIndicator extension, which Ubuntu turns on.
+recommends = "gnome-shell-extension-appindicator"
+assets = [
+    ["target/release/sheaves-gnome", "usr/bin/", "755"],
+    ["packaging/com.rainhead.Sheaves.desktop", "usr/share/applications/", "644"],
+    ["../../icons/com.rainhead.Sheaves.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+]

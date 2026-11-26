@@ -52,8 +52,6 @@ needs it turns up, not before.
 **Text scaling.** Panel widths and the visible-row count are fixed, so large
 accessibility text sizes crop rather than expand.
 
-**A package for GNOME.** It is built from the checkout and runs from there, which
-is why it installs its own desktop entry and points its login item and shortcut
-at whichever binary is running. A `.deb` or a Flatpak would do that properly, and
-is worth it once someone other than its one user wants it. A Flatpak would also
-have to be let out of its sandbox for the idle monitor.
+**A Flatpak for GNOME.** Releases carry a `.deb` for Ubuntu. A Flatpak would
+reach other distributions, but it would have to be let out of its sandbox for the
+idle monitor, the keyring and the top bar item.

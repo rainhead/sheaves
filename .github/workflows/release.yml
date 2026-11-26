@@ -79,7 +79,10 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             --notes "$(cat <<'NOTES'
-          Download the zip below, unpack it, and move `Sheaves.app` to `/Applications`.
+          **GNOME (Ubuntu 26.04):** download the `.deb` below and install it with
+          `sudo apt install ./sheaves_*_amd64.deb`. Then open Sheaves from the app grid.
+
+          **Mac:** download the zip below, unpack it, and move `Sheaves.app` to `/Applications`.
 
           macOS will refuse to open it: this build is signed ad-hoc rather than with a
           Developer ID, which needs a paid Apple Developer Program membership. Clear the
@@ -93,3 +96,39 @@ jobs:
           different app and asks again for Keychain access to the Harvest token.
           NOTES
           )"
+
+  # The GNOME app's package, added to the release the Mac job just made, so one
+  # tag publishes both. Same runner and version of Ubuntu as the GNOME tests.
+  deb:
+    name: Publish the .deb
+    needs: publish
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install GTK 4 and libadwaita
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libgtk-4-dev libadwaita-1-dev
+
+      - name: Install Rust
+        run: rustup toolchain install --no-self-update
+
+      - name: Install cargo-deb
+        uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: cargo-deb@3.8.0
+
+      # Versioned by the tag, which the publish job has already checked against
+      # the Mac app's version, so both downloads carry the same number.
+      - name: Build the .deb
+        env:
+          TAG: ${{ github.ref_name }}
+        run: cargo deb --locked -p sheaves-gnome --deb-version "${TAG#v}"
+
+      - name: Add it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" target/debian/*.deb

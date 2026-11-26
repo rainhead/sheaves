@@ -54,6 +54,14 @@ fn write_if_changed(path: &Path, contents: &str) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// The package ships its own copy of the entry, as a file; it must say what
+    /// the app would write for the place the package puts it.
+    #[test]
+    fn the_package_entry_is_the_one_the_app_writes() {
+        let packaged = include_str!("../packaging/com.rainhead.Sheaves.desktop");
+        assert_eq!(packaged, entry(Path::new("/usr/bin/sheaves-gnome")));
+    }
+
     #[test]
     fn installs_an_entry_named_for_the_app_and_its_icon() {
         let data = tempfile::tempdir().unwrap();

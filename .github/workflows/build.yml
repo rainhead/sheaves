@@ -107,3 +107,20 @@ jobs:
 
       - name: Test GNOME app
         run: cargo test --locked -p sheaves-gnome
+
+      # The release build and the package, on every change: a debug build alone
+      # once let code through that only compiled with debug assertions on.
+      - name: Install cargo-deb
+        uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: cargo-deb@3.8.0
+
+      - name: Build the .deb
+        run: cargo deb --locked -p sheaves-gnome
+
+      - name: Keep the .deb
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sheaves-deb
+          path: target/debian/*.deb
+          if-no-files-found: error

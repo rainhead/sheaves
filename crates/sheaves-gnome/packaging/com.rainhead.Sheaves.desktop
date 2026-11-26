@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sheaves
+Comment=Track time in Harvest from the top bar
+Exec="/usr/bin/sheaves-gnome"
+Icon=com.rainhead.Sheaves
+Categories=Office;ProjectManagement;
+StartupNotify=true
