@@ -79,23 +79,54 @@ struct LogTimeForm: View {
 
             // The rows GNOME's form has, in its order. The column style lines the
             // labels up on one edge and the controls on another, each row on its
-            // first line of text, so the client beneath the project does not pull
-            // the label down to the middle of the two lines.
+            // first line of text.
             Form {
                 LabeledContent("Project") { projectMenu }
                 LabeledContent("Task") { taskMenu }
-                TextField("Time", text: $draftHours, prompt: Text("1:30 or 1.5"))
-                    .font(.callout.monospacedDigit())
-                    .frame(width: 96)
-                    .focused($focus, equals: .hours)
-                    .accessibilityLabel("Time, such as 1:30 or 1.5")
+                // What the field takes is said beneath it, as a Mac form does, not
+                // as a placeholder: an example of a time inside a time field reads as
+                // a time already typed, and in a field this narrow it was cut off.
+                LabeledContent("Time") {
+                    VStack(alignment: .leading, spacing: 3) {
+                        TextField("Time", text: $draftHours)
+                            .labelsHidden()
+                            .font(.callout.monospacedDigit())
+                            .frame(width: 64)
+                            .focused($focus, equals: .hours)
+                            .accessibilityHint("Such as 1:30 or 1.5")
+                            .overlay {
+                                if hoursAreUnreadable {
+                                    RoundedRectangle(cornerRadius: 5).stroke(.red.opacity(0.7))
+                                }
+                            }
+                        Text("Such as 1:30 or 1.5")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // Written as an entry's notes are in the list below: "Add notes" by
+                // its bubble, with no label of its own. A field drawn that way rather
+                // than a button that opens one, so Tab still reaches it from Time.
+                LabeledContent {
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.bubble")
+                            .foregroundStyle(.tertiary)
+                        TextField("Notes", text: $notes, prompt: Text("Add notes"))
+                            .labelsHidden()
+                            .textFieldStyle(.plain)
+                            .focused($focus, equals: .notes)
+                    }
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4)
                     .overlay {
-                        if hoursAreUnreadable {
-                            RoundedRectangle(cornerRadius: 5).stroke(.red.opacity(0.7))
+                        if focus == .notes {
+                            RoundedRectangle(cornerRadius: 5).stroke(.separator)
                         }
                     }
-                TextField("Notes", text: $notes)
-                    .focused($focus, equals: .notes)
+                    .padding(.horizontal, -4)
+                } label: {
+                    EmptyView()
+                }
             }
             .formStyle(.columns)
             .textFieldStyle(.roundedBorder)
@@ -122,42 +153,32 @@ struct LogTimeForm: View {
         }
     }
 
-    /// The project's name alone, with its client beneath: "Client · Project" in a
-    /// control this narrow was cut off before the project began. The list it opens
-    /// has the room, so its items carry both.
+    /// "Client · Project", in the menu and its items alike: the form's column has
+    /// room for both, which the narrow control it replaced did not.
     private var projectMenu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Menu {
-                ForEach(projects) { option in
-                    Button {
-                        choose(option)
-                    } label: {
-                        if option.id == project?.id {
-                            Label(option.label, systemImage: "checkmark")
-                        } else {
-                            Text(option.label)
-                        }
+        Menu {
+            ForEach(projects) { option in
+                Button {
+                    choose(option)
+                } label: {
+                    if option.id == project?.id {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
                     }
                 }
-            } label: {
-                Text(project?.project.name ?? (projects.isEmpty ? "No projects" : "Choose a project"))
-                    .lineLimit(1)
             }
-            .menuStyle(.button)
-            // Its own height but not its own width, so a long name is cut short
-            // rather than pushing the form past the panel's edge.
-            .fixedSize(horizontal: false, vertical: true)
-            .disabled(projects.isEmpty)
-            .accessibilityLabel("Project")
-            .accessibilityValue(project?.label ?? "")
-
-            if let client = project?.client?.name, !client.isEmpty {
-                Text(client)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        } label: {
+            Text(project?.label ?? (projects.isEmpty ? "No projects" : "Choose a project"))
+                .lineLimit(1)
         }
+        .menuStyle(.button)
+        // Its own height but not its own width, so a long name is cut short
+        // rather than pushing the form past the panel's edge.
+        .fixedSize(horizontal: false, vertical: true)
+        .disabled(projects.isEmpty)
+        .accessibilityLabel("Project")
+        .accessibilityValue(project?.label ?? "")
     }
 
     /// A project with one task has nothing to choose, so it reads as a label, as it
