@@ -108,26 +108,17 @@ pub fn run() -> glib::ExitCode {
 /// shortcut. A launch while Sheaves is running is handed to the instance already
 /// running, and without the token GNOME holds its window back and places it at
 /// the monitor's top left corner, under the dock. GApplication carries the
-/// launching process's token in the platform data; the environment is the
-/// fallback for older GLib.
+/// launching process's token in the platform data.
 fn launch_token(command_line: &gio::ApplicationCommandLine) -> Option<String> {
-    let from_platform = command_line.platform_data().and_then(|data| {
-        let data = glib::VariantDict::new(Some(&data));
-        ["activation-token", "desktop-startup-id"]
-            .into_iter()
-            .find_map(|key| {
-                data.lookup::<String>(key)
-                    .ok()
-                    .flatten()
-                    .filter(|token| !token.is_empty())
-            })
-    });
-    from_platform.or_else(|| {
-        command_line
-            .getenv("XDG_ACTIVATION_TOKEN")
-            .map(|token| token.to_string())
-            .filter(|token| !token.is_empty())
-    })
+    let data = glib::VariantDict::new(command_line.platform_data().as_ref());
+    ["activation-token", "desktop-startup-id"]
+        .into_iter()
+        .find_map(|key| {
+            data.lookup::<String>(key)
+                .ok()
+                .flatten()
+                .filter(|token| !token.is_empty())
+        })
 }
 
 fn start(app: &adw::Application) -> Rc<Shell> {

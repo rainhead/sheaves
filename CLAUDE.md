@@ -100,7 +100,9 @@ nothing. They are listed with their symptom, because that is how you will meet t
   posts "Sheaves is ready" instead, and places the window from the monitor's top
   left corner, under the dock. The AppIndicator extension sends a token through
   `ProvideXdgActivationToken` before each click; hand it to `set_startup_id`
-  before `present`.
+  before `present`. A launch from the dock or app grid while Sheaves is running
+  reaches the running instance as a command line, with its token in the
+  platform data (`activation-token`); it needs the same treatment.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
