@@ -11,6 +11,9 @@ struct ProjectList: View {
     @Environment(TimeTracker.self) private var tracker
 
     var projects: [ProjectTargets]
+    /// What is typed in the search field above the list, so an empty list can say
+    /// whether nothing matched or there is nothing to match.
+    var query: String = ""
     /// Index of the highlighted row, or nil when the selection is elsewhere.
     var highlighted: Int?
     @Binding var chosenTasks: [Int64: Int64]
@@ -21,7 +24,7 @@ struct ProjectList: View {
 
     var body: some View {
         if projects.isEmpty {
-            Text("No projects yet — sync with Harvest.")
+            Text(emptyMessage)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 8)
@@ -50,6 +53,12 @@ struct ProjectList: View {
         }
     }
 
+    private var emptyMessage: String {
+        query.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "No projects yet — sync with Harvest."
+            : "No project or task matches."
+    }
+
     private func binding(for entry: ProjectTargets) -> Binding<Reference?> {
         Binding(
             get: { entry.task(chosenFrom: chosenTasks) },
@@ -60,6 +69,39 @@ struct ProjectList: View {
     private func start(_ entry: ProjectTargets) {
         guard let task = entry.task(chosenFrom: chosenTasks) else { return }
         onStart(entry.target(task: task))
+    }
+}
+
+extension [ProjectTargets] {
+    /// The projects the search text finds, in their ranked order. The rule is the
+    /// core's, shared with the GNOME app.
+    func matching(_ query: String) -> [ProjectTargets] {
+        filter { $0.matchesSearch(query: query) }
+    }
+}
+
+/// The field above a project list. The arrows and ⏎ act on the list, so the keys
+/// that would otherwise move the cursor or do nothing are used up here; Escape
+/// clears what was typed first, and only an empty field lets it through to close
+/// the panel.
+struct ProjectSearchField: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    var onMove: (Int) -> KeyPress.Result
+    var onSubmit: () -> Void
+
+    var body: some View {
+        TextField("Find a project or task", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .focused(isFocused)
+            .onSubmit(onSubmit)
+            .onKeyPress(.downArrow) { onMove(1) }
+            .onKeyPress(.upArrow) { onMove(-1) }
+            .onKeyPress(.escape) {
+                guard !text.isEmpty else { return .ignored }
+                text = ""
+                return .handled
+            }
     }
 }
 
@@ -86,11 +128,12 @@ struct TargetPicker: View {
     var maxVisible: Int = 6
     var onStart: (TimerTarget) -> Void
 
+    @State private var query = ""
     @State private var selection = 0
     @State private var chosenTasks: [Int64: Int64] = [:]
-    @FocusState private var isFocused: Bool
+    @FocusState private var isSearchFocused: Bool
 
-    private var projects: [ProjectTargets] { tracker.orderedProjects }
+    private var projects: [ProjectTargets] { tracker.orderedProjects.matching(query) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -99,23 +142,41 @@ struct TargetPicker: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            ProjectSearchField(
+                text: $query,
+                isFocused: $isSearchFocused,
+                onMove: move(by:),
+                onSubmit: { _ = activate() }
+            )
             ProjectList(
                 projects: projects,
+                query: query,
                 highlighted: min(selection, max(projects.count - 1, 0)),
                 chosenTasks: $chosenTasks,
                 maxVisible: maxVisible,
                 onStart: onStart
             )
         }
-        // The focus ring is suppressed because selection is already drawn on the row,
-        // and two highlights read as two selections.
+        // Focusable as well as the field, so the arrows and ⏎ still work after a
+        // click on the list has taken the focus away from the field. The focus ring
+        // is suppressed because selection is already drawn on the row, and two
+        // highlights read as two selections.
         .focusable()
         .focusEffectDisabled()
-        .focused($isFocused)
         .onKeyPress(.downArrow) { move(by: 1) }
         .onKeyPress(.upArrow) { move(by: -1) }
         .onKeyPress(.return) { activate() }
-        .onAppear { isFocused = true }
+        // The first match is the one ⏎ starts, as the list changes under the typing.
+        .onChange(of: query) { selection = 0 }
+        .onAppear { isSearchFocused = true }
+        // The panels are kept and shown again, so each showing starts with an empty
+        // search and the cursor in it. A sheet's window is not a showing.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let window = note.object as? NSPanel, window.sheetParent == nil else { return }
+            query = ""
+            selection = 0
+            isSearchFocused = true
+        }
     }
 
     private func move(by offset: Int) -> KeyPress.Result {
@@ -125,10 +186,12 @@ struct TargetPicker: View {
     }
 
     private func activate() -> KeyPress.Result {
-        guard projects.indices.contains(selection),
-              let task = projects[selection].task(chosenFrom: chosenTasks)
+        let selected = min(selection, max(projects.count - 1, 0))
+        guard projects.indices.contains(selected),
+              let task = projects[selected].task(chosenFrom: chosenTasks)
         else { return .ignored }
-        onStart(projects[selection].target(task: task))
+        onStart(projects[selected].target(task: task))
+        query = ""
         selection = 0
         return .handled
     }

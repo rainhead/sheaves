@@ -36,8 +36,7 @@ time logged without a timer. Seeing a week at once was cut from v1 and still is.
 the probe on the Mac; GNOME's app assumes mains power, and UPower over D-Bus would
 tell it otherwise. The microphone, left out because nobody takes calls on the
 machine it was built for; PipeWire could say whether a source is running, as Core
-Audio does on the Mac. The keyboard in the window: the Mac's panel moves through
-entries and projects with the arrows, and the GNOME window does not yet.
+Audio does on the Mac.
 
 **A signed, notarised build.** So it lives in `/Applications` rather than
 `DerivedData`. Needs a paid Developer Program membership. Less urgent since team
