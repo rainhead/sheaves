@@ -55,8 +55,11 @@ fn harvest_group(
         disconnect.set_halign(gtk::Align::End);
         disconnect.set_margin_top(12);
         let dialog = dialog.clone();
-        let pending = state.pending_count;
+        let tracker_now = tracker.clone();
         disconnect.connect_clicked(move |_| {
+            // Counted at the click, not when Settings opened: changes made while
+            // it stood open would otherwise go unmentioned.
+            let pending = tracker_now.snapshot().state.pending_count;
             let confirm = adw::AlertDialog::new(
                 Some("Disconnect from Harvest?"),
                 Some(&if pending > 0 {
