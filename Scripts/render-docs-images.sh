@@ -9,6 +9,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The views are built against whatever Rust core is on disk, which may be another
+# branch's: the build then fails on a method this branch added to the core.
+Scripts/build-xcframework.sh >/dev/null
+xcodegen generate --quiet
+
 CONTAINER="$HOME/Library/Containers/com.rainhead.Sheaves/Data/tmp/sheaves-images"
 rm -rf "$CONTAINER"
 
