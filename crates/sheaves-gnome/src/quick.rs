@@ -13,6 +13,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use sheaves_core::ffi::TrackerSnapshot;
+use sheaves_core::tracker::Connection;
 
 use crate::format;
 use crate::projects::ProjectList;
@@ -28,7 +29,9 @@ pub struct QuickEntry {
     hours: gtk::Label,
     running: gtk::Box,
     idle: gtk::Label,
-    status: gtk::Label,
+    status: window::SyncFooter,
+    no_projects: gtk::Label,
+    connect: gtk::Box,
     actions: async_channel::Sender<Action>,
     latest: std::cell::RefCell<Option<TrackerSnapshot>>,
     /// The search text the list was last filtered for. The field reports a
@@ -93,10 +96,26 @@ impl QuickEntry {
             .child(&projects.list)
             .build();
 
-        let status = gtk::Label::new(None);
-        status.add_css_class("caption");
-        status.add_css_class("dim-label");
-        status.set_xalign(0.0);
+        let status = window::SyncFooter::new();
+        let no_projects = window::no_projects_label();
+
+        // Before there is a token, as the Mac's panel has it: what is wrong and
+        // the way to fix it, in place of the projects.
+        let connect = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let prompt = gtk::Label::new(Some("Connect to Harvest"));
+        prompt.add_css_class("heading");
+        let reason = gtk::Label::new(Some(window::NEEDS_TOKEN));
+        reason.add_css_class("caption");
+        reason.add_css_class("dim-label");
+        reason.set_wrap(true);
+        reason.set_justify(gtk::Justification::Center);
+        let open_settings = gtk::Button::with_label("Settings");
+        open_settings.add_css_class("suggested-action");
+        open_settings.set_halign(gtk::Align::Center);
+        connect.append(&prompt);
+        connect.append(&reason);
+        connect.append(&open_settings);
+        connect.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
         column.set_margin_top(12);
@@ -107,7 +126,9 @@ impl QuickEntry {
         column.append(&idle);
         column.append(&search);
         column.append(&scrolled);
-        column.append(&status);
+        column.append(&no_projects);
+        column.append(&connect);
+        column.append(&status.widget);
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&adw::HeaderBar::new());
@@ -125,15 +146,25 @@ impl QuickEntry {
             running,
             idle,
             status,
+            no_projects,
+            connect,
             actions,
             latest: std::cell::RefCell::default(),
             filtered_for: std::cell::RefCell::default(),
         });
-        quick.connect(&stop);
+        quick.connect(&stop, &open_settings);
         quick
     }
 
-    fn connect(self: &Rc<Self>, stop: &gtk::Button) {
+    fn connect(self: &Rc<Self>, stop: &gtk::Button, open_settings: &gtk::Button) {
+        {
+            let quick = Rc::downgrade(self);
+            open_settings.connect_clicked(move |_| {
+                let Some(quick) = quick.upgrade() else { return };
+                let _ = quick.actions.try_send(Action::OpenSettings);
+                quick.window.set_visible(false);
+            });
+        }
         {
             let quick = Rc::downgrade(self);
             stop.connect_clicked(move |_| {
@@ -216,6 +247,7 @@ impl QuickEntry {
 
     pub fn render(&self, snapshot: &TrackerSnapshot) {
         let format = window::hours_format(snapshot);
+        let signed_out = snapshot.state.connection == Connection::NeedsCredentials;
         match &snapshot.running_entry {
             Some(entry) => {
                 self.task.set_label(&entry.task.name);
@@ -240,7 +272,18 @@ impl QuickEntry {
                 self.idle.set_visible(true);
             }
         }
-        self.status.set_label(&window::status_text(snapshot));
+        self.status.show(snapshot);
+        // Without a token nothing can be started or stopped, so the prompt
+        // stands in for all of it.
+        self.connect.set_visible(signed_out);
+        self.search.set_visible(!signed_out);
+        self.scrolled.set_visible(!signed_out);
+        self.no_projects
+            .set_visible(!signed_out && snapshot.ordered_projects.is_empty());
+        if signed_out {
+            self.running.set_visible(false);
+            self.idle.set_visible(false);
+        }
         let changed = self.projects.show(snapshot);
         if changed {
             self.choose_first();

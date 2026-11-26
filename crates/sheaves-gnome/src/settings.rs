@@ -44,18 +44,33 @@ fn harvest_group(
             .user
             .as_ref()
             .map_or("—".to_string(), |u| u.name())));
+        let projects = adw::ActionRow::builder().title("Projects").build();
+        projects.add_suffix(&dim(&format!("{} task assignments", state.targets.len())));
         group.add(&account);
         group.add(&user);
+        group.add(&projects);
 
         let disconnect = gtk::Button::with_label("Disconnect…");
         disconnect.add_css_class("destructive-action");
         disconnect.set_halign(gtk::Align::End);
         disconnect.set_margin_top(12);
         let dialog = dialog.clone();
+        let tracker_now = tracker.clone();
         disconnect.connect_clicked(move |_| {
+            // Counted at the click, not when Settings opened: changes made while
+            // it stood open would otherwise go unmentioned.
+            let pending = tracker_now.snapshot().state.pending_count;
             let confirm = adw::AlertDialog::new(
                 Some("Disconnect from Harvest?"),
-                Some("The token is removed from the keyring, and anything not yet sent to Harvest is discarded."),
+                Some(&if pending > 0 {
+                    format!(
+                        "{pending} change{} not reached Harvest yet and will be discarded along with the token.",
+                        if pending == 1 { " has" } else { "s have" },
+                    )
+                } else {
+                    "The token will be removed from your keyring. Cached entries are cleared."
+                        .to_string()
+                }),
             );
             confirm.add_responses(&[("cancel", "Cancel"), ("disconnect", "Disconnect")]);
             confirm.set_response_appearance("disconnect", adw::ResponseAppearance::Destructive);
@@ -73,10 +88,12 @@ fn harvest_group(
     }
 
     group.set_description(Some(
-        "Create a personal access token at id.getharvest.com/developers, and paste it here with the account ID shown beside it. The token is kept in your keyring.",
+        "Create a personal access token at id.getharvest.com/developers. The page shows the token and the account IDs it can reach. Sheaves stores the token in your keyring and sends it only to api.harvestapp.com.",
     ));
     let account = adw::EntryRow::builder().title("Account ID").build();
-    let token = adw::PasswordEntryRow::builder().title("Token").build();
+    let token = adw::PasswordEntryRow::builder()
+        .title("Personal Access Token")
+        .build();
     let error = gtk::Label::new(None);
     error.add_css_class("error");
     error.set_wrap(true);
@@ -89,7 +106,17 @@ fn harvest_group(
     group.add(&account);
     group.add(&token);
     group.add(&error);
-    group.add(&connect);
+    let create =
+        gtk::LinkButton::with_label("https://id.getharvest.com/developers", "Create a token…");
+    create.set_halign(gtk::Align::Start);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    buttons.set_margin_top(12);
+    connect.set_margin_top(0);
+    connect.set_hexpand(true);
+    connect.set_halign(gtk::Align::End);
+    buttons.append(&create);
+    buttons.append(&connect);
+    group.add(&buttons);
 
     let attempt = Rc::new({
         let dialog = dialog.clone();
@@ -111,10 +138,10 @@ fn harvest_group(
                     }
                     Err(ConnectFailure::UnsentChangesBelongElsewhere { count }) => {
                         let ask = adw::AlertDialog::new(
-                            Some("Discard unsent changes?"),
+                            Some("Discard changes made under another account?"),
                             Some(&format!(
-                                "{count} change{} made under a different Harvest account {} never sent. Connecting with this token discards {}.",
-                                if count == 1 { "" } else { "s" },
+                                "{count} change{} not reached Harvest yet, and {} made under a different account or user than this token belongs to. To send {}, cancel and connect with a token for that account instead.",
+                                if count == 1 { " has" } else { "s have" },
                                 if count == 1 { "was" } else { "were" },
                                 if count == 1 { "it" } else { "them" },
                             )),

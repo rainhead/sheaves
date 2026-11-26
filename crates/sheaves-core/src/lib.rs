@@ -15,6 +15,7 @@ pub mod peers;
 pub mod persistence;
 pub mod queue;
 pub mod snapshot;
+pub mod sync_status;
 pub mod tracked_entry;
 pub mod tracker;
 

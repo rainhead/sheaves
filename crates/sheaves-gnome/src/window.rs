@@ -11,6 +11,7 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use sheaves_core::ffi::TrackerSnapshot;
 use sheaves_core::hours::HoursFormat;
+use sheaves_core::sync_status::{SyncStatus, SyncTone};
 use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
 use sheaves_core::tracker::Connection;
 
@@ -33,6 +34,7 @@ pub enum Action {
     Today,
     Sync,
     OpenSettings,
+    Quit,
 }
 
 pub struct Window {
@@ -45,7 +47,8 @@ pub struct Window {
     entries: gtk::ListBox,
     no_entries: gtk::Label,
     projects: Rc<ProjectList>,
-    status: gtk::Label,
+    no_projects: gtk::Label,
+    status: SyncFooter,
     /// The hours label of each entry row, so the running one can tick without
     /// rebuilding the list under the pointer.
     hours: RefCell<Vec<(EntryId, gtk::Label)>>,
@@ -154,7 +157,7 @@ impl Window {
         let entries = gtk::ListBox::new();
         entries.add_css_class("boxed-list");
         entries.set_selection_mode(gtk::SelectionMode::None);
-        let no_entries = gtk::Label::new(Some("Nothing logged on this day."));
+        let no_entries = gtk::Label::new(None);
         no_entries.add_css_class("dim-label");
 
         let search = gtk::SearchEntry::new();
@@ -166,10 +169,8 @@ impl Window {
             })
         };
 
-        let status = gtk::Label::new(None);
-        status.add_css_class("dim-label");
-        status.add_css_class("caption");
-        status.set_xalign(0.0);
+        let status = SyncFooter::new();
+        let no_projects = no_projects_label();
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
         column.set_margin_top(12);
@@ -183,6 +184,7 @@ impl Window {
         column.append(&heading("Start a timer"));
         column.append(&search);
         column.append(&projects.list);
+        column.append(&no_projects);
         let clamp = adw::Clamp::new();
         clamp.set_maximum_size(560);
         clamp.set_child(Some(&column));
@@ -196,10 +198,14 @@ impl Window {
         footer.set_margin_end(12);
         footer.set_margin_top(6);
         footer.set_margin_bottom(6);
-        status.set_hexpand(true);
+        status.widget.set_hexpand(true);
         settings.add_css_class("flat");
-        footer.append(&status);
+        let quit = gtk::Button::from_icon_name("system-shutdown-symbolic");
+        quit.set_tooltip_text(Some("Quit Sheaves"));
+        quit.add_css_class("flat");
+        footer.append(&status.widget);
         footer.append(&settings);
+        footer.append(&quit);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&banner);
@@ -237,6 +243,7 @@ impl Window {
             });
         }
         settings.connect_clicked(send(Action::OpenSettings));
+        quit.connect_clicked(send(Action::Quit));
         log_time.connect_clicked(send(Action::LogTime));
         {
             let actions = actions.clone();
@@ -261,6 +268,7 @@ impl Window {
             entries,
             no_entries,
             projects,
+            no_projects,
             status,
             hours: RefCell::default(),
             shown_entries: RefCell::default(),
@@ -380,7 +388,12 @@ impl Window {
         self.go_today.set_enabled(!snapshot.is_today);
 
         self.render_banner(snapshot);
-        self.status.set_label(&status_text(snapshot));
+        self.status.show(snapshot);
+        self.no_entries.set_label(if snapshot.is_today {
+            "Nothing tracked yet today."
+        } else {
+            "Nothing tracked on this day."
+        });
 
         if *self.shown_entries.borrow() != state.entries {
             self.rebuild_entries(&state.entries);
@@ -394,14 +407,15 @@ impl Window {
 
         self.budget.render(snapshot);
         self.projects.show(snapshot);
+        self.no_projects.set_visible(
+            snapshot.ordered_projects.is_empty()
+                && snapshot.state.connection != Connection::NeedsCredentials,
+        );
     }
 
     fn render_banner(&self, snapshot: &TrackerSnapshot) {
         let (title, button) = match &snapshot.state.connection {
-            Connection::NeedsCredentials => (
-                Some("Connect to Harvest to see your timesheet.".to_string()),
-                Some("Settings"),
-            ),
+            Connection::NeedsCredentials => (Some(NEEDS_TOKEN.to_string()), Some("Settings")),
             Connection::Offline { reason } => (Some(format!("Offline: {reason}")), Some("Retry")),
             Connection::Connecting | Connection::Online => (snapshot.notice.clone(), None),
         };
@@ -452,7 +466,7 @@ impl Window {
             if entry.is_locked {
                 // Approved or invoiced in Harvest: it can be looked at, not changed.
                 let lock = gtk::Image::from_icon_name("changes-prevent-symbolic");
-                lock.set_tooltip_text(Some("Locked in Harvest"));
+                lock.set_tooltip_text(Some("Approved or invoiced — Harvest won’t accept changes"));
                 lock.add_css_class("dim-label");
                 row.add_suffix(&lock);
             }
@@ -473,7 +487,11 @@ impl Window {
             } else {
                 "media-playback-start-symbolic"
             });
-            toggle.set_tooltip_text(Some(if entry.is_running { "Stop" } else { "Resume" }));
+            toggle.set_tooltip_text(Some(if entry.is_running {
+                "Stop timer"
+            } else {
+                "Resume timer"
+            }));
             toggle.add_css_class("flat");
             toggle.set_valign(gtk::Align::Center);
             toggle.set_sensitive(!entry.is_locked);
@@ -630,33 +648,130 @@ fn subtitle(entry: &TrackedEntry) -> String {
     subtitle
 }
 
-/// "Synced 3 minutes ago · 2 changes waiting".
-pub fn status_text(snapshot: &TrackerSnapshot) -> String {
-    let state = &snapshot.state;
-    let mut parts = Vec::new();
-    match (&state.connection, state.last_synced_at) {
-        (Connection::Connecting, _) => parts.push("Connecting…".to_string()),
-        (_, Some(synced)) => {
-            let minutes = ((state.now.as_second() - synced.as_second()) / 60).max(0);
-            parts.push(match minutes {
-                0 => "Synced just now".to_string(),
-                1 => "Synced a minute ago".to_string(),
-                minutes => format!("Synced {minutes} minutes ago"),
-            });
+/// What the core's sync status is called, in the words the Mac's footer uses.
+pub fn status_words(status: &SyncStatus, now: jiff::Timestamp) -> String {
+    match status {
+        SyncStatus::NotConnected => "Not connected".to_string(),
+        SyncStatus::Connecting => "Connecting…".to_string(),
+        SyncStatus::Offline { queued: 0 } => "Offline".to_string(),
+        SyncStatus::Offline { queued } => format!("Offline · {queued} queued"),
+        SyncStatus::Syncing { pending } => format!("Syncing {pending}…"),
+        SyncStatus::SyncedJustNow => "Synced just now".to_string(),
+        SyncStatus::Synced { at: None } => "Synced".to_string(),
+        SyncStatus::Synced { at: Some(at) } => {
+            format!("Synced {}", format::ago(now.as_second() - at.as_second()))
         }
-        (_, None) => {}
     }
-    match state.pending_count {
-        0 => {}
-        1 => parts.push("1 change waiting to send".to_string()),
-        count => parts.push(format!("{count} changes waiting to send")),
+}
+
+/// The sentence the Mac's panel gives when there is no token.
+pub const NEEDS_TOKEN: &str = "Sheaves needs a personal access token before it can track anything.";
+
+/// Shown where the project list would be when Harvest has sent none.
+pub fn no_projects_label() -> gtk::Label {
+    let label = gtk::Label::new(Some("No projects yet — sync with Harvest."));
+    label.add_css_class("dim-label");
+    label.set_visible(false);
+    label
+}
+
+/// The footer's sync line: a coloured dot and the words for the core's status.
+pub struct SyncFooter {
+    pub widget: gtk::Box,
+    dot: gtk::Box,
+    label: gtk::Label,
+}
+
+impl SyncFooter {
+    pub fn new() -> Self {
+        install_dot_style();
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.add_css_class("sync-dot");
+        dot.set_valign(gtk::Align::Center);
+        let label = gtk::Label::new(None);
+        label.add_css_class("dim-label");
+        label.add_css_class("caption");
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let widget = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        widget.append(&dot);
+        widget.append(&label);
+        Self { widget, dot, label }
     }
-    parts.join(" · ")
+
+    pub fn show(&self, snapshot: &TrackerSnapshot) {
+        let status = snapshot.state.sync_status();
+        for class in ["sync-good", "sync-working", "sync-warning", "sync-idle"] {
+            self.dot.remove_css_class(class);
+        }
+        self.dot.add_css_class(match status.tone() {
+            SyncTone::Good => "sync-good",
+            SyncTone::Working => "sync-working",
+            SyncTone::Warning => "sync-warning",
+            SyncTone::Idle => "sync-idle",
+        });
+        self.label
+            .set_label(&status_words(&status, snapshot.state.now));
+        // As on the Mac: why Harvest is unreachable, or what offline means.
+        self.widget
+            .set_tooltip_text(Some(&match &snapshot.state.connection {
+                Connection::Offline { reason } => reason.clone(),
+                _ => "Sheaves keeps working offline and sends changes when Harvest is reachable."
+                    .to_string(),
+            }));
+    }
+}
+
+/// The dot's colours, the Mac's: green in step, yellow working, orange offline,
+/// grey with no token. Added once for the display.
+fn install_dot_style() {
+    thread_local!(static INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if INSTALLED.with(|installed| installed.replace(true)) {
+        return;
+    }
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".sync-dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
+         .sync-good { background-color: #33d17a; }
+         .sync-working { background-color: #f6d32d; }
+         .sync-warning { background-color: #ff7800; }
+         .sync-idle { background-color: alpha(currentColor, 0.4); }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_footer_words_are_the_macs() {
+        let now = jiff::Timestamp::from_second(1_000_000).unwrap();
+        let words = |status| status_words(&status, now);
+        assert_eq!(words(SyncStatus::NotConnected), "Not connected");
+        assert_eq!(words(SyncStatus::Connecting), "Connecting…");
+        assert_eq!(words(SyncStatus::Offline { queued: 0 }), "Offline");
+        assert_eq!(
+            words(SyncStatus::Offline { queued: 3 }),
+            "Offline · 3 queued"
+        );
+        assert_eq!(words(SyncStatus::Syncing { pending: 2 }), "Syncing 2…");
+        assert_eq!(words(SyncStatus::SyncedJustNow), "Synced just now");
+        assert_eq!(words(SyncStatus::Synced { at: None }), "Synced");
+        let earlier = jiff::Timestamp::from_second(1_000_000 - 180).unwrap();
+        assert_eq!(
+            words(SyncStatus::Synced { at: Some(earlier) }),
+            "Synced 3 minutes ago"
+        );
+    }
+
     use jiff::Timestamp;
     use sheaves_core::calendar_date::CalendarDate;
     use sheaves_core::models::Reference;

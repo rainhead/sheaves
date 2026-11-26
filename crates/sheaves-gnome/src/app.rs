@@ -383,6 +383,9 @@ impl Shell {
         let tracker = self.tracker.clone();
         match action {
             Action::OpenSettings => {
+                // Over the window, which may be hidden: asked for from the top
+                // bar or quick entry, the dialog needs it showing.
+                self.window.window.present();
                 settings::present(&self.window.window, tracker, &self.latest.borrow());
             }
             Action::Start(target) => {
@@ -467,6 +470,7 @@ impl Shell {
             Action::Today => {
                 glib::spawn_future_local(async move { tracker.go_to_today().await });
             }
+            Action::Quit => self.app.quit(),
             Action::Sync => {
                 glib::spawn_future_local(async move { tracker.sync().await });
             }
@@ -529,6 +533,10 @@ impl Shell {
         } = click;
         match command {
             Command::Open => self.raise(activation),
+            Command::Settings => {
+                self.raise(activation);
+                self.act(Action::OpenSettings);
+            }
             Command::Quit => self.app.quit(),
             Command::StopOrResume => {
                 let activity = self.latest.borrow().activity.clone();

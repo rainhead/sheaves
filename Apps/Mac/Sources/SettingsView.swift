@@ -100,7 +100,7 @@ struct SettingsView: View {
             } message: {
                 Text(
                     tracker.pendingCount > 0
-                        ? "\(tracker.pendingCount.formatted()) change\(tracker.pendingCount == 1 ? "" : "s") have not reached Harvest yet and will be discarded along with the token."
+                        ? "\(tracker.pendingCount.formatted()) change\(tracker.pendingCount == 1 ? " has" : "s have") not reached Harvest yet and will be discarded along with the token."
                         : "The token will be removed from your Keychain. Cached entries are cleared."
                 )
             }

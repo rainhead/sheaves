@@ -84,6 +84,8 @@ public final class TimeTracker {
     public var day: CalendarDate { snapshot.state.day }
     public var lastSyncedAt: Date? { snapshot.state.lastSyncedAt }
     public var pendingCount: Int { Int(snapshot.state.pendingCount) }
+    /// Which sync state the footer shows. The core decides; the shell words it.
+    public var syncStatus: SyncStatus { snapshot.state.syncStatusNow() }
     public var budgets: [Int64: ProjectBudget] { snapshot.state.budgets }
     /// Advances while a timer runs, so durations stay live.
     public var now: Date { snapshot.state.now }

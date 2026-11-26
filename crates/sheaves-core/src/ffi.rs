@@ -38,6 +38,7 @@ use crate::models::{HarvestUser, Reference};
 use crate::peers::{Peers, Presence, machine_id_in};
 use crate::queue::MutationQueue;
 use crate::snapshot::SnapshotStore;
+use crate::sync_status::{SyncStatus, SyncTone};
 use crate::tracked_entry::{EntryId, ProjectTargets, TimerTarget, TrackedEntry};
 use crate::tracker::{Activity, ConnectError, Connection, PowerState, TimeTracker, TrackerState};
 
@@ -77,6 +78,22 @@ impl HarvestUser {
 impl Connection {
     pub fn has_credentials(&self) -> bool {
         self.is_configured()
+    }
+}
+
+#[uniffi::export]
+impl TrackerState {
+    /// Which sync state the footer shows; see [`SyncStatus`].
+    pub fn sync_status_now(&self) -> SyncStatus {
+        self.sync_status()
+    }
+}
+
+#[uniffi::export]
+impl SyncStatus {
+    /// The colour of the dot beside the words.
+    pub fn status_tone(&self) -> SyncTone {
+        self.tone()
     }
 }
 

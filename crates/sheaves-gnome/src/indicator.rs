@@ -6,7 +6,7 @@
 //! the icon when an item has the Ayatana extension's `XAyatanaLabel` property.
 //! The Rust crates for the protocol have no label, so the item is written here on
 //! zbus, with the small part of the `com.canonical.dbusmenu` protocol a flat menu
-//! of three entries needs.
+//! of a few entries needs.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -50,6 +50,7 @@ pub fn install_glyph(folder: &Path) -> std::io::Result<PathBuf> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Open,
+    Settings,
     StopOrResume,
     Quit,
 }
@@ -83,8 +84,9 @@ pub struct Look {
     pub toggle: Option<String>,
 }
 
-/// Longest project name shown in the top bar before it is shortened.
-const LABEL_NAME_LIMIT: usize = 24;
+/// Longest project name shown in the top bar before it is shortened, the same
+/// as on the Mac.
+const LABEL_NAME_LIMIT: usize = 18;
 
 impl Look {
     /// The look for `activity`. The icon alone carries the state, as the Mac's
@@ -159,6 +161,8 @@ const TOGGLE: i32 = 1;
 const SEPARATOR: i32 = 2;
 const OPEN: i32 = 3;
 const QUIT: i32 = 4;
+const SETTINGS: i32 = 5;
+const SEPARATOR_BEFORE_QUIT: i32 = 6;
 
 #[derive(Default)]
 struct Shared {
@@ -326,8 +330,14 @@ fn properties(id: i32, look: &Look) -> Option<HashMap<String, OwnedValue>> {
         OPEN => {
             properties.insert("label".to_string(), text("Open Sheaves"));
         }
+        SETTINGS => {
+            properties.insert("label".to_string(), text("Settings…"));
+        }
+        SEPARATOR_BEFORE_QUIT => {
+            properties.insert("type".to_string(), text("separator"));
+        }
         QUIT => {
-            properties.insert("label".to_string(), text("Quit"));
+            properties.insert("label".to_string(), text("Quit Sheaves"));
         }
         _ => return None,
     }
@@ -335,10 +345,17 @@ fn properties(id: i32, look: &Look) -> Option<HashMap<String, OwnedValue>> {
 }
 
 fn entries(look: &Look) -> Vec<i32> {
-    [TOGGLE, SEPARATOR, OPEN, QUIT]
-        .into_iter()
-        .filter(|id| properties(*id, look).is_some())
-        .collect()
+    [
+        TOGGLE,
+        SEPARATOR,
+        OPEN,
+        SETTINGS,
+        SEPARATOR_BEFORE_QUIT,
+        QUIT,
+    ]
+    .into_iter()
+    .filter(|id| properties(*id, look).is_some())
+    .collect()
 }
 
 fn layout(look: &Look) -> Layout {
@@ -422,6 +439,7 @@ impl Menu {
         let command = match id {
             TOGGLE => Command::StopOrResume,
             OPEN => Command::Open,
+            SETTINGS => Command::Settings,
             QUIT => Command::Quit,
             _ => return,
         };
@@ -667,12 +685,35 @@ mod tests {
         );
     }
 
+    /// The labels are the Mac's status item menu.
+    #[test]
+    fn the_menu_reads_as_the_macs_does() {
+        let look = Look::default();
+        let label = |id| {
+            let mut properties = properties(id, &look).unwrap();
+            String::try_from(properties.remove("label").unwrap()).unwrap()
+        };
+        assert_eq!(label(OPEN), "Open Sheaves");
+        assert_eq!(label(SETTINGS), "Settings…");
+        assert_eq!(label(QUIT), "Quit Sheaves");
+    }
+
+    #[test]
+    fn a_click_on_settings_asks_for_settings() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let (commands, clicks) = async_channel::unbounded();
+        let menu = Menu { shared, commands };
+        menu.event(SETTINGS, "clicked", text(""), 0);
+        assert_eq!(clicks.try_recv().unwrap().command, Command::Settings);
+    }
+
     #[test]
     fn a_long_project_name_is_shortened() {
         assert_eq!(shortened("Orcasound"), "Orcasound");
         let long = "A project with a name far too long for the top bar";
         let short = shortened(long);
-        assert_eq!(short.chars().count(), LABEL_NAME_LIMIT);
+        // Trimmed of a trailing space before the ellipsis, as the Mac does.
+        assert!(short.chars().count() <= LABEL_NAME_LIMIT);
         assert!(short.ends_with('…'));
     }
 
@@ -683,14 +724,27 @@ mod tests {
             HoursFormat::HoursMinutes,
             at("2026-11-03T09:30:00Z"),
         );
-        assert_eq!(entries(&idle), [OPEN, QUIT]);
+        assert_eq!(
+            entries(&idle),
+            [OPEN, SETTINGS, SEPARATOR_BEFORE_QUIT, QUIT]
+        );
         let running = Look::of(
             &Activity::Running(entry("Orcasound", true)),
             HoursFormat::HoursMinutes,
             at("2026-11-03T09:30:00Z"),
         );
-        assert_eq!(entries(&running), [TOGGLE, SEPARATOR, OPEN, QUIT]);
-        assert_eq!(layout(&running).children.len(), 4);
+        assert_eq!(
+            entries(&running),
+            [
+                TOGGLE,
+                SEPARATOR,
+                OPEN,
+                SETTINGS,
+                SEPARATOR_BEFORE_QUIT,
+                QUIT
+            ]
+        );
+        assert_eq!(layout(&running).children.len(), 6);
     }
 
     /// The token the shell sends ahead of a click goes with that click, from the
