@@ -13,16 +13,15 @@ final class QuickEntryController {
     private let openSettings: @MainActor () -> Void
     private var panel: NSPanel?
     private var content: NSHostingController<AnyView>?
+    private var resignObserver: (any NSObjectProtocol)?
 
     init(tracker: TimeTracker, openSettings: @escaping @MainActor () -> Void) {
         self.tracker = tracker
         self.openSettings = openSettings
     }
 
-    /// Hides the panel only when it has the keyboard. Not `isVisible`: a click in
-    /// another app takes the panel off screen (`hidesOnDeactivate`), but AppKit
-    /// still reports it as visible, so the next press hid a panel nobody could see
-    /// and it took a second press to bring it back.
+    /// Hides the panel only when it has the keyboard, which is whenever it is on
+    /// screen: it closes as soon as it loses the keyboard (see `makePanel`).
     func toggle() {
         if panel?.isKeyWindow == true {
             hide()
@@ -70,9 +69,18 @@ final class QuickEntryController {
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.level = .floating
-        panel.hidesOnDeactivate = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Closed for good as soon as it loses the keyboard, as Spotlight is, to a
+        // click in another app or on the menu bar item. Not `hidesOnDeactivate`:
+        // that only takes the panel off screen until Sheaves is next active, so
+        // clicking the menu bar item brought it back beside the menu bar panel.
+        // It also left AppKit reporting the panel as visible while it was gone.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hide() }
+        }
 
         let root = QuickEntryView(onDismiss: { [weak self] in self?.hide() })
             .environment(tracker)
