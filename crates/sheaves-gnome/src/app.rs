@@ -85,16 +85,40 @@ pub fn run() -> glib::ExitCode {
                     .any(|argument| argument.to_str() == Some(flag))
             };
             if let Some(shell) = shell.borrow().as_ref() {
+                let token = launch_token(command_line);
+                if !has("--background") {
+                    log::info!(
+                        "launched {} an activation token",
+                        if token.is_some() { "with" } else { "without" }
+                    );
+                }
                 if has("--quick-entry") {
-                    shell.quick.present();
+                    shell.quick.present_with(token.as_deref());
                 } else if !has("--background") {
-                    shell.window.window.present();
+                    shell.raise(token);
                 }
             }
             glib::ExitCode::SUCCESS
         });
     }
     app.run()
+}
+
+/// The activation token GNOME gave the launch, from the dock, the app grid or a
+/// shortcut. A launch while Sheaves is running is handed to the instance already
+/// running, and without the token GNOME holds its window back and places it at
+/// the monitor's top left corner, under the dock. GApplication carries the
+/// launching process's token in the platform data.
+fn launch_token(command_line: &gio::ApplicationCommandLine) -> Option<String> {
+    let data = glib::VariantDict::new(command_line.platform_data().as_ref());
+    ["activation-token", "desktop-startup-id"]
+        .into_iter()
+        .find_map(|key| {
+            data.lookup::<String>(key)
+                .ok()
+                .flatten()
+                .filter(|token| !token.is_empty())
+        })
 }
 
 fn start(app: &adw::Application) -> Rc<Shell> {
@@ -515,8 +539,8 @@ impl Shell {
         );
     }
 
-    /// Brings the window forward. A top bar click passes the token the shell
-    /// sent with it, without which GNOME holds the window back (see [`Click`]).
+    /// Brings the window forward. A top bar click or a launch passes the token
+    /// the shell sent with it, without which GNOME holds the window back (see [`Click`]).
     /// Given a token, GTK activates the window with it: at once if the window is
     /// showing, otherwise as it is shown.
     fn raise(&self, activation: Option<String>) {
