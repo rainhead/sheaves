@@ -544,7 +544,11 @@ it on Ubuntu 26.04, the release Hostess runs.
   beside the full date had crowded it. The day has a fixed width so the arrows do
   not move as its name changes. Only + shares the header, at the start; Settings
   is in the footer, as on the Mac, because with it and the window's own buttons
-  the day could not be centred at the window's usual width.
+  the day could not be centred at the window's usual width. On 2026-11-25 the
+  Mac's panel took this arrangement too, after Peter found the two headers
+  different: + at the start, and the day's total as "3:45 logged" beneath the day
+  instead of beside the arrows. Its Log time form also took GNOME's rows (Project,
+  Task, Time, Notes), with the labels in one column and the controls in another.
 - **Not in this phase:** the power source (the tracker assumes mains power, which
   Hostess is), editing notes or hours (phase 8), presence and its prompt, and the
   peers field (phase 7).

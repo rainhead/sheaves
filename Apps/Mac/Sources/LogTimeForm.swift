@@ -77,24 +77,16 @@ struct LogTimeForm: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
-                GridRow {
-                    Text("Project").foregroundStyle(.secondary)
-                    projectMenu
-                }
-                GridRow {
-                    Text("Task").foregroundStyle(.secondary)
-                    taskMenu
-                }
-            }
-            .font(.callout)
-
-            HStack(spacing: 6) {
-                TextField("1:30", text: $draftHours)
-                    .textFieldStyle(.roundedBorder)
+            // The rows GNOME's form has, in its order. The column style lines the
+            // labels up on one edge and the controls on another, each row on its
+            // first line of text, so the client beneath the project does not pull
+            // the label down to the middle of the two lines.
+            Form {
+                LabeledContent("Project") { projectMenu }
+                LabeledContent("Task") { taskMenu }
+                TextField("Time", text: $draftHours, prompt: Text("1:30 or 1.5"))
                     .font(.callout.monospacedDigit())
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 58)
+                    .frame(width: 96)
                     .focused($focus, equals: .hours)
                     .accessibilityLabel("Time, such as 1:30 or 1.5")
                     .overlay {
@@ -103,10 +95,11 @@ struct LogTimeForm: View {
                         }
                     }
                 TextField("Notes", text: $notes)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.callout)
                     .focused($focus, equals: .notes)
             }
+            .formStyle(.columns)
+            .textFieldStyle(.roundedBorder)
+            .font(.callout)
             .onSubmit(log)
 
             HStack {
@@ -150,7 +143,7 @@ struct LogTimeForm: View {
                 Text(project?.project.name ?? (projects.isEmpty ? "No projects" : "Choose a project"))
                     .lineLimit(1)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
             // Its own height but not its own width, so a long name is cut short
             // rather than pushing the form past the panel's edge.
             .fixedSize(horizontal: false, vertical: true)
@@ -189,7 +182,7 @@ struct LogTimeForm: View {
                 Text(task?.name ?? "Choose a task")
                     .lineLimit(1)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
             // Its own height but not its own width, so a long name is cut short
             // rather than pushing the form past the panel's edge.
             .fixedSize(horizontal: false, vertical: true)
