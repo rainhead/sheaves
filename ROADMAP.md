@@ -32,9 +32,8 @@ should be a small app that exists to host those.
 **A week view.** Editing a day is done: notes, time, project and task, delete, and
 time logged without a timer. Seeing a week at once was cut from v1 and still is.
 
-**What the GNOME app leaves out.** Budgets, which the core already holds and the
-window only has to draw. Battery and Low Power Mode, which slow and stop the
-probe on the Mac; GNOME's app assumes mains power, and UPower over D-Bus would
+**What the GNOME app leaves out.** Battery and Low Power Mode, which slow and stop
+the probe on the Mac; GNOME's app assumes mains power, and UPower over D-Bus would
 tell it otherwise. The microphone, left out because nobody takes calls on the
 machine it was built for; PipeWire could say whether a source is running, as Core
 Audio does on the Mac.

@@ -132,6 +132,10 @@ impl ProjectBudget {
         self.fraction_used()
     }
 
+    pub fn running_low(&self) -> bool {
+        self.is_running_low()
+    }
+
     pub fn remaining_figure(&self) -> Option<BudgetFigure> {
         self.remaining()
     }

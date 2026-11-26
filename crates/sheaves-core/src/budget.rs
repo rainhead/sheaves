@@ -135,6 +135,12 @@ impl ProjectBudget {
         self.budget_remaining.unwrap_or(0.0) < 0.0
     }
 
+    /// Nine tenths or more spent, but not yet overspent: the point at which the
+    /// shells start to warn.
+    pub fn is_running_low(&self) -> bool {
+        !self.is_over_budget() && self.fraction_used() >= 0.9
+    }
+
     /// How much of the budget is used, from 0 to 1.
     ///
     /// Clamped, so an overrun draws a full bar rather than one running off the end.
@@ -237,6 +243,15 @@ mod tests {
         assert_eq!(budget.total(), Some(BudgetFigure::Hours(40.0)));
         assert_eq!(budget.fraction_used(), 0.8);
         assert!(!budget.is_over_budget());
+        assert!(!budget.is_running_low());
+    }
+
+    #[test]
+    fn runs_low_at_nine_tenths_until_it_is_overspent() {
+        let low = budget(BudgetBasis::Project, 40.0, 36.0, 4.0, None);
+        assert!(low.is_running_low());
+        let over = budget(BudgetBasis::Project, 40.0, 44.0, -4.0, None);
+        assert!(!over.is_running_low(), "overspent is a different warning");
     }
 
     #[test]
