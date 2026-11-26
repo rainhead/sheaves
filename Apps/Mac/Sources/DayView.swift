@@ -30,12 +30,18 @@ struct DayView: View {
     @State private var confirmingDelete: TrackedEntry.ID?
     /// Whether the form for logging time without a timer is open under the header.
     @State private var isLoggingTime = false
-    private var isEditingField: Bool { editingNotes != nil || editingHours != nil || isLoggingTime }
+    /// What is typed in the project search field under the entries.
+    @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
+    private var isEditingField: Bool {
+        editingNotes != nil || editingHours != nil || isLoggingTime || isSearchFocused
+    }
     @FocusState private var isPanelFocused: Bool
 
     private var format: HoursFormat { HoursFormat(company: tracker.company) }
 
-    private var projects: [ProjectTargets] { tracker.orderedProjects }
+    /// The projects the search leaves showing; all of them while it is empty.
+    private var projects: [ProjectTargets] { tracker.orderedProjects.matching(searchText) }
 
     private var rows: [PanelRow] {
         tracker.entries.map { PanelRow.entry($0.id) } + projects.map { PanelRow.project($0.id) }
@@ -86,8 +92,15 @@ struct DayView: View {
                 // the common case, and searching is for the exception.
                 entryList
                 Divider()
+                ProjectSearchField(
+                    text: $searchText,
+                    isFocused: $isSearchFocused,
+                    onMove: moveWithinProjects(by:),
+                    onSubmit: startSearchedProject
+                )
                 ProjectList(
                     projects: projects,
+                    query: searchText,
                     highlighted: highlightedProject,
                     chosenTasks: $chosenTasks,
                     onStart: { target in Task { await tracker.start(target) } }
@@ -109,7 +122,38 @@ struct DayView: View {
         // Not `onKeyPress(.delete)`: that is U+0008, and the Mac's ⌫ sends U+007F,
         // so it never matches. This is the command both delete keys raise.
         .onDeleteCommand(perform: requestDelete)
+        // The first match is the one ⏎ starts, as the list changes under the typing.
+        .onChange(of: searchText) { selection = projects.first.map { .project($0.id) } }
         .onAppear { isPanelFocused = true }
+        // The panel is kept and shown again, so each showing starts with an empty
+        // search and the keyboard on the panel. A sheet's window is not a showing.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let window = note.object as? NSPanel, window.sheetParent == nil else { return }
+            searchText = ""
+            isPanelFocused = true
+        }
+    }
+
+    /// The arrows in the search field move through the projects it leaves, and no
+    /// further: the entries above are not what is being searched.
+    private func moveWithinProjects(by offset: Int) -> KeyPress.Result {
+        guard !projects.isEmpty else { return .ignored }
+        let current = highlightedProject ?? -1
+        selection = .project(projects[min(max(current + offset, 0), projects.count - 1)].id)
+        return .handled
+    }
+
+    /// ⏎ in the search field starts the highlighted project, or the first match when
+    /// the highlight is on an entry, and hands the keyboard back to the panel.
+    private func startSearchedProject() {
+        let id: Int64?
+        if case .project(let selected) = effectiveSelection { id = selected } else { id = projects.first?.id }
+        guard let project = projects.first(where: { $0.id == id }),
+              let task = project.task(chosenFrom: chosenTasks)
+        else { return }
+        Task { await tracker.start(project.target(task: task)) }
+        searchText = ""
+        isPanelFocused = true
     }
 
     /// Every key here defers to an open notes or duration field. Relying on the text

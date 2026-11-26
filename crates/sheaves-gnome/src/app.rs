@@ -125,6 +125,14 @@ fn start(app: &adw::Application) -> Rc<Shell> {
         Arc::new(Observer(snapshots)),
     );
 
+    let quit = gio::SimpleAction::new("quit", None);
+    {
+        let app = app.clone();
+        quit.connect_activate(move |_, _| app.quit());
+    }
+    app.add_action(&quit);
+    app.set_accels_for_action("app.quit", &["<Control>q"]);
+
     let (actions, action_rx) = async_channel::unbounded();
     let window = Window::new(app, actions.clone());
     let quick = QuickEntry::new(app, actions);
@@ -437,6 +445,21 @@ impl Shell {
                     move || {
                         let tracker = deleting.clone();
                         let entry = deleted.clone();
+                        glib::spawn_future_local(async move { tracker.delete(entry).await });
+                    },
+                );
+            }
+            Action::Delete(entry) => {
+                let latest = self.latest.borrow();
+                let asked = entry.clone();
+                crate::edit::confirm_delete(
+                    &self.window.window,
+                    &asked,
+                    window::hours_format(&latest),
+                    latest.state.now,
+                    move || {
+                        let tracker = tracker.clone();
+                        let entry = entry.clone();
                         glib::spawn_future_local(async move { tracker.delete(entry).await });
                     },
                 );
