@@ -6,6 +6,7 @@
 
 mod app;
 mod autostart;
+mod budget;
 mod chooser;
 #[cfg(debug_assertions)]
 mod documentation;

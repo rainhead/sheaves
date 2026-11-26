@@ -15,6 +15,7 @@ use sheaves_core::sync_status::{SyncStatus, SyncTone};
 use sheaves_core::tracked_entry::{EntryId, TimerTarget, TrackedEntry};
 use sheaves_core::tracker::Connection;
 
+use crate::budget;
 use crate::format;
 use crate::projects::ProjectList;
 
@@ -42,6 +43,7 @@ pub struct Window {
     total: gtk::Label,
     today: gtk::Label,
     banner: adw::Banner,
+    budget: BudgetBar,
     entries: gtk::ListBox,
     no_entries: gtk::Label,
     projects: Rc<ProjectList>,
@@ -175,6 +177,8 @@ impl Window {
         column.set_margin_bottom(12);
         column.set_margin_start(12);
         column.set_margin_end(12);
+        let budget = BudgetBar::new();
+        column.append(&budget.root);
         column.append(&entries);
         column.append(&no_entries);
         column.append(&heading("Start a timer"));
@@ -260,6 +264,7 @@ impl Window {
             total,
             today,
             banner,
+            budget,
             entries,
             no_entries,
             projects,
@@ -400,7 +405,8 @@ impl Window {
             }
         }
 
-        self.projects.show(&snapshot.ordered_projects);
+        self.budget.render(snapshot);
+        self.projects.show(snapshot);
         self.no_projects.set_visible(
             snapshot.ordered_projects.is_empty()
                 && snapshot.state.connection != Connection::NeedsCredentials,
@@ -444,14 +450,27 @@ impl Window {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&entry.task.name))
                 .subtitle(glib::markup_escape_text(&subtitle(entry)))
+                // The project on the first line and up to two of notes.
+                .subtitle_lines(3)
                 .activatable(!entry.is_locked)
                 .build();
+            // Beside the duration, as on the Mac, so the text of every row starts
+            // at the same place.
+            if entry.is_pending {
+                // A local change Harvest has not acknowledged yet.
+                let waiting = gtk::Image::from_icon_name("emblem-synchronizing-symbolic");
+                waiting.set_tooltip_text(Some("Waiting to sync"));
+                waiting.add_css_class("dim-label");
+                row.add_suffix(&waiting);
+            }
             if entry.is_locked {
                 // Approved or invoiced in Harvest: it can be looked at, not changed.
                 let lock = gtk::Image::from_icon_name("changes-prevent-symbolic");
                 lock.set_tooltip_text(Some("Approved or invoiced — Harvest won’t accept changes"));
-                row.add_prefix(&lock);
-            } else {
+                lock.add_css_class("dim-label");
+                row.add_suffix(&lock);
+            }
+            if !entry.is_locked {
                 let actions = self.actions.clone();
                 let opened = entry.clone();
                 row.connect_activated(move |_| {
@@ -504,6 +523,97 @@ impl Window {
     }
 }
 
+/// The budget of the project on the clock: how much is left and how much is gone.
+/// It shows nothing unless there is a readable budget for that project, as on the
+/// Mac, so an account without budgets has no empty bar.
+struct BudgetBar {
+    root: gtk::Box,
+    project: gtk::Label,
+    left: gtk::Label,
+    bar: gtk::ProgressBar,
+}
+
+impl BudgetBar {
+    fn new() -> Self {
+        install_css();
+        let project = gtk::Label::new(None);
+        project.add_css_class("caption");
+        project.add_css_class("dim-label");
+        project.set_xalign(0.0);
+        project.set_hexpand(true);
+        project.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let left = gtk::Label::new(None);
+        left.add_css_class("caption");
+        left.add_css_class("numeric");
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        line.append(&project);
+        line.append(&left);
+        let bar = gtk::ProgressBar::new();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        root.append(&line);
+        root.append(&bar);
+        root.set_visible(false);
+        Self {
+            root,
+            project,
+            left,
+            bar,
+        }
+    }
+
+    fn render(&self, snapshot: &TrackerSnapshot) {
+        let shown = snapshot.running_entry.as_ref().and_then(|entry| {
+            let budget = snapshot.state.budget_for(entry)?;
+            let format = hours_format(snapshot);
+            Some((entry, budget, budget::left(budget, format)?, format))
+        });
+        let Some((entry, budget, left, format)) = shown else {
+            self.root.set_visible(false);
+            return;
+        };
+        let detail = budget::detail(&entry.project.name, budget, format);
+        self.project.set_label(&entry.project.name);
+        self.left.set_label(&left.text);
+        self.bar.set_fraction(budget.fraction_used());
+        for widget in [self.left.upcast_ref::<gtk::Widget>(), self.bar.upcast_ref()] {
+            for (class, applies) in [
+                ("budget-over", left.over),
+                ("budget-low", budget.is_running_low()),
+            ] {
+                if applies {
+                    widget.add_css_class(class);
+                } else {
+                    widget.remove_css_class(class);
+                }
+            }
+        }
+        self.root.set_tooltip_text(Some(&detail));
+        self.root
+            .update_property(&[gtk::accessible::Property::Label(&detail)]);
+        self.root.set_visible(true);
+    }
+}
+
+/// Colours the bar and the figure as the Mac does: orange as the budget runs
+/// low, red once it is overspent.
+fn install_css() {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "progressbar.budget-low > trough > progress { background-color: @warning_color; }\n\
+         label.budget-low { color: @warning_color; }\n\
+         progressbar.budget-over > trough > progress { background-color: @error_color; }\n\
+         label.budget-over { color: @error_color; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+}
+
 fn heading(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("heading");
@@ -523,7 +633,8 @@ pub fn hours_format(snapshot: &TrackerSnapshot) -> HoursFormat {
     )
 }
 
-/// "123 Industries · Online Store — Checkout flow".
+/// The project and its client on the first line, and the notes beneath:
+/// "123 Industries · Online Store\nCheckout flow".
 fn subtitle(entry: &TrackedEntry) -> String {
     let mut subtitle = entry.target().project_label();
     if let Some(notes) = entry
@@ -531,7 +642,7 @@ fn subtitle(entry: &TrackedEntry) -> String {
         .as_deref()
         .filter(|notes| !notes.trim().is_empty())
     {
-        subtitle.push_str(" — ");
+        subtitle.push('\n');
         subtitle.push_str(notes.trim());
     }
     subtitle
@@ -711,6 +822,30 @@ mod tests {
         assert!(has_shortcut_modifier(
             gdk::ModifierType::LOCK_MASK | gdk::ModifierType::CONTROL_MASK
         ));
+    }
+
+    fn with_notes(notes: Option<&str>) -> TrackedEntry {
+        let mut entry = entry(false, false);
+        entry.client = Some(Reference::new(3, "123 Industries"));
+        entry.notes = notes.map(str::to_string);
+        entry
+    }
+
+    #[test]
+    fn notes_sit_beneath_the_project() {
+        assert_eq!(
+            subtitle(&with_notes(Some(" Checkout flow\n"))),
+            "123 Industries · Online Store\nCheckout flow"
+        );
+    }
+
+    #[test]
+    fn no_notes_leave_only_the_project() {
+        assert_eq!(subtitle(&with_notes(None)), "123 Industries · Online Store");
+        assert_eq!(
+            subtitle(&with_notes(Some("  "))),
+            "123 Industries · Online Store"
+        );
     }
 
     #[test]

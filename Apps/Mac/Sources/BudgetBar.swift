@@ -45,7 +45,7 @@ struct BudgetBar: View {
     /// budget runs out, and red once it is gone.
     private func tint(for budget: ProjectBudget) -> Color {
         if budget.isOverBudget { return .red }
-        return budget.fractionUsed >= 0.9 ? .orange : .accentColor
+        return budget.isRunningLow ? .orange : .accentColor
     }
 
     /// The full picture, for the tooltip and for VoiceOver: what a glance at the bar

@@ -284,7 +284,7 @@ impl QuickEntry {
             self.running.set_visible(false);
             self.idle.set_visible(false);
         }
-        let changed = self.projects.show(&snapshot.ordered_projects);
+        let changed = self.projects.show(snapshot);
         if changed {
             self.choose_first();
         }
