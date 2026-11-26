@@ -19,8 +19,12 @@ final class QuickEntryController {
         self.openSettings = openSettings
     }
 
+    /// Hides the panel only when it has the keyboard. Not `isVisible`: a click in
+    /// another app takes the panel off screen (`hidesOnDeactivate`), but AppKit
+    /// still reports it as visible, so the next press hid a panel nobody could see
+    /// and it took a second press to bring it back.
     func toggle() {
-        if panel?.isVisible == true {
+        if panel?.isKeyWindow == true {
             hide()
         } else {
             show()
