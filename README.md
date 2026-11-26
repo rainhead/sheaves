@@ -62,6 +62,10 @@ different app and asks again for Keychain access to your Harvest token. Both cos
 away with a Developer ID certificate and notarisation, which is a paid membership and
 therefore waiting on the paragraph above.
 
+Each download is attested: GitHub records that it was built by this repository's
+release workflow at that tag, and `gh attestation verify <file> --repo
+rainhead/sheaves` checks it.
+
 ## Building it
 
 Both apps need [rustup](https://rustup.rs), which installs the Rust compiler that
