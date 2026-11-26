@@ -101,6 +101,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
   left corner, under the dock. The AppIndicator extension sends a token through
   `ProvideXdgActivationToken` before each click; hand it to `set_startup_id`
   before `present`.
+- **`hidesOnDeactivate` only hides a window until the app is next active.** AppKit
+  keeps reporting it as visible while it is off screen, and puts it back at the
+  next activation, which clicking the status item causes. Symptom: quick entry
+  needed the hotkey twice after a click elsewhere, then came back beside the menu
+  bar panel. Order the window out when it resigns key instead.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
