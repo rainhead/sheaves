@@ -29,8 +29,12 @@ jobs:
     needs: test
     runs-on: macos-26
     permissions:
-      # The only step that needs more than a read: creating the release.
+      # Creating the release, and attesting where the zip came from: the
+      # attestation is signed with a certificate GitHub issues for this
+      # workflow's identity, so it needs an OIDC token.
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,6 +69,13 @@ jobs:
             exit 1
           fi
 
+      # Anyone can check the download came from this workflow at this tag:
+      # `gh attestation verify Sheaves-0.2.0.zip --repo rainhead/sheaves`.
+      - name: Attest where the zip came from
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.zip }}
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,6 +94,9 @@ jobs:
           `sudo apt install ./sheaves_*_amd64.deb`. Then open Sheaves from the app grid.
 
           **Mac:** download the zip below, unpack it, and move `Sheaves.app` to `/Applications`.
+
+          To check that a download was built by this repository's release workflow at
+          this tag: `gh attestation verify <file> --repo rainhead/sheaves`.
 
           macOS will refuse to open it: this build is signed ad-hoc rather than with a
           Developer ID, which needs a paid Apple Developer Program membership. Clear the
@@ -105,6 +119,8 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,6 +142,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: cargo deb --locked -p sheaves-gnome --deb-version "${TAG#v}"
+
+      - name: Attest where the .deb came from
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: target/debian/*.deb
 
       - name: Add it to the release
         env:
