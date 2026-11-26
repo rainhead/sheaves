@@ -207,47 +207,11 @@ struct DayView: View {
         confirmingDelete = entry.id
     }
 
+    /// Arranged as GNOME's header is: + at the start, and the day centred between
+    /// its arrows with the day's total beneath it, and on any other day a way back
+    /// to today.
     private var header: some View {
-        HStack {
-            Button {
-                Task { await tracker.shiftDay(by: -1) }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Previous day")
-            .contentShape(.rect)
-            .keyboardShortcut(.leftArrow, modifiers: .command)
-
-            VStack(spacing: 0) {
-                Text(dayTitle)
-                    .font(.headline)
-                if !tracker.isToday {
-                    Button("Back to today") {
-                        Task { await tracker.goToToday() }
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                }
-            }
-            .frame(maxWidth: .infinity)
-
-            Button {
-                Task { await tracker.shiftDay(by: 1) }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Next day")
-            .contentShape(.rect)
-            .keyboardShortcut(.rightArrow, modifiers: .command)
-
-            Text(tracker.totalHours.formattedHours(format))
-                .font(.headline.monospacedDigit())
-                .frame(minWidth: 52, alignment: .trailing)
-
+        HStack(spacing: 0) {
             // Opens the form rather than toggling it, so a second press does not
             // throw away what was typed.
             Button {
@@ -263,6 +227,61 @@ struct DayView: View {
             .accessibilityLabel("Log time")
             .contentShape(.rect)
             .keyboardShortcut("n")
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 6) {
+                Button {
+                    Task { await tracker.shiftDay(by: -1) }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Previous day")
+                .contentShape(.rect)
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+
+                VStack(spacing: 0) {
+                    Text(dayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text("\(tracker.totalHours.formattedHours(format)) logged")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        if !tracker.isToday {
+                            Button("Back to today") {
+                                Task { await tracker.goToToday() }
+                            }
+                            .buttonStyle(.link)
+                        }
+                    }
+                    .font(.caption)
+                    .lineLimit(1)
+                }
+                // A fixed width, so the arrows stay put as the day's name and total
+                // change length: clicking back twice would otherwise miss the
+                // second time.
+                .frame(width: 170)
+
+                Button {
+                    Task { await tracker.shiftDay(by: 1) }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Next day")
+                .contentShape(.rect)
+                .keyboardShortcut(.rightArrow, modifiers: .command)
+            }
+
+            Spacer(minLength: 0)
+
+            // As wide as +, so the day is centred in the panel rather than in what
+            // + leaves of it.
+            Color.clear.frame(width: 22, height: 22)
         }
     }
 

@@ -544,7 +544,13 @@ it on Ubuntu 26.04, the release Hostess runs.
   beside the full date had crowded it. The day has a fixed width so the arrows do
   not move as its name changes. Only + shares the header, at the start; Settings
   is in the footer, as on the Mac, because with it and the window's own buttons
-  the day could not be centred at the window's usual width.
+  the day could not be centred at the window's usual width. On 2026-11-25 the
+  Mac's panel took this arrangement too, after Peter found the two headers
+  different: + at the start, and the day's total as "3:45 logged" beneath the day
+  instead of beside the arrows. Its Log time form also took GNOME's rows (Project,
+  Task, Time, Notes), as a Mac form: the labels in one column and the controls in
+  another, with the example times beneath the field rather than in it, and notes
+  written as an entry's are, by "Add notes" with no label of its own.
 - **Not in this phase:** the power source (the tracker assumes mains power, which
   Hostess is), editing notes or hours (phase 8), presence and its prompt, and the
   peers field (phase 7).
@@ -649,8 +655,9 @@ an entry and logging time both worked.
   time are edited in place.
 - **A + button in the panel's header, or ⌘N, logs time** in a form that opens
   under the header, on the day on screen when Log is pressed
-  ([`LogTimeForm`](../Apps/Mac/Sources/LogTimeForm.swift)). It shows the project's
-  name with its client beneath, as GNOME's row does.
+  ([`LogTimeForm`](../Apps/Mac/Sources/LogTimeForm.swift)). It showed the project's
+  name with its client beneath, as GNOME's row does, until 2026-11-25: the form's
+  column has room for "Client · Project", which the menu now shows as its items do.
 
 ### Phase 9: presence through Harvest, replacing the tailnet (core; Opus)
 
