@@ -277,6 +277,11 @@ On GNOME:
 | Ctrl+Alt+Super+T | Quick entry, from any app (switched on in Settings; changed in GNOME's) |
 | ↑ ↓, ⏎, Escape | In quick entry: choose a project, start it, close |
 | Middle-click the top bar item | Stop or resume, without opening anything |
+| ↑ ↓, ⏎ | Move through the day's entries; ⏎ opens the focused one to edit |
+| Delete or ⌫ | Delete the focused entry, after asking |
+| Alt+← Alt+→, Alt+Home | Previous or next day; back to today |
+| Ctrl+N, Ctrl+, | Log time; Settings |
+| Escape, Ctrl+Q | Hide the window; quit |
 
 ## Licence
 
