@@ -103,6 +103,11 @@ nothing. They are listed with their symptom, because that is how you will meet t
   before `present`. A launch from the dock or app grid while Sheaves is running
   reaches the running instance as a command line, with its token in the
   platform data (`activation-token`); it needs the same treatment.
+- **`hidesOnDeactivate` only hides a window until the app is next active.** AppKit
+  keeps reporting it as visible while it is off screen, and puts it back at the
+  next activation, which clicking the status item causes. Symptom: quick entry
+  needed the hotkey twice after a click elsewhere, then came back beside the menu
+  bar panel. Order the window out when it resigns key instead.
 - **Arm window-dismissal watchers a run loop late.** Armed synchronously, the click
   that opened a panel can still be in flight and close it again.
 
