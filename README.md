@@ -38,8 +38,16 @@ for distribution before anyone else wants the app is the wrong order.
 
 ## Installing
 
-Download the newest zip from [Releases](https://github.com/rainhead/sheaves/releases),
-unpack it, and move `Sheaves.app` to `/Applications`.
+On GNOME (Ubuntu 26.04), download the newest `.deb` from
+[Releases](https://github.com/rainhead/sheaves/releases) and install it:
+
+```sh
+sudo apt install ./sheaves_*_amd64.deb
+```
+
+On the Mac, download the newest zip from
+[Releases](https://github.com/rainhead/sheaves/releases), unpack it, and move
+`Sheaves.app` to `/Applications`.
 
 macOS will refuse to open it. Releases are signed *ad-hoc* rather than with a
 Developer ID, and Gatekeeper does not accept an ad-hoc signature from the internet —
@@ -95,7 +103,7 @@ that made ⌘V silently do nothing.
 
 ### On GNOME
 
-There is no package; build from the checkout and run.
+To run it from the checkout instead of the package:
 
 ```sh
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev   # Ubuntu 26.04
@@ -106,18 +114,23 @@ cargo test --workspace                           # the core and the GNOME app
 The running timer shows in the top bar through Ubuntu's AppIndicator extension,
 which is on by default there; elsewhere, install that extension. Each launch
 installs a desktop entry and icon into `~/.local/share`, pointing at the binary
-where it is, so GNOME knows the window and the app grid lists it. Settings has
+where it is, so GNOME knows the window and the app grid lists it; that entry
+takes the place of the package's, so the app grid opens whichever build ran last. Settings has
 switches to start at login and to add the quick entry key to GNOME's keyboard
 shortcuts.
 
 ### Releases
 
-Releases are of the Mac app. A release is cut by bumping `MARKETING_VERSION` in
-[`project.yml`](project.yml) and pushing a matching `v` tag.
-[`Scripts/package-release.sh`](Scripts/package-release.sh) builds and zips the app,
-and [the release workflow](.github/workflows/release.yml) runs that same script after
-the tests pass — refusing any tag that disagrees with the version the built app
-reports.
+A release is cut by bumping `MARKETING_VERSION` in [`project.yml`](project.yml)
+and pushing a matching `v` tag.
+[`Scripts/package-release.sh`](Scripts/package-release.sh) builds and zips the Mac
+app, and [the release workflow](.github/workflows/release.yml) runs that same script
+after the tests pass — refusing any tag that disagrees with the version the built app
+reports. It then builds the GNOME app's `.deb` with
+[cargo-deb](https://github.com/kornelski/cargo-deb), configured in
+[the GNOME app's `Cargo.toml`](crates/sheaves-gnome/Cargo.toml), versioned by the
+tag, and adds it to the same release. Every change builds the `.deb` too, kept as
+an artifact of its CI run.
 
 ## Connecting to Harvest
 
