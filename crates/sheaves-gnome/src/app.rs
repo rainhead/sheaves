@@ -93,10 +93,7 @@ pub fn run() -> glib::ExitCode {
                     );
                 }
                 if has("--quick-entry") {
-                    if let Some(token) = &token {
-                        shell.quick.window().set_startup_id(token);
-                    }
-                    shell.quick.present();
+                    shell.quick.present_with(token.as_deref());
                 } else if !has("--background") {
                     shell.raise(token);
                 }
@@ -118,15 +115,19 @@ fn launch_token(command_line: &gio::ApplicationCommandLine) -> Option<String> {
         let data = glib::VariantDict::new(Some(&data));
         ["activation-token", "desktop-startup-id"]
             .into_iter()
-            .find_map(|key| data.lookup::<String>(key).ok().flatten())
+            .find_map(|key| {
+                data.lookup::<String>(key)
+                    .ok()
+                    .flatten()
+                    .filter(|token| !token.is_empty())
+            })
     });
-    from_platform
-        .or_else(|| {
-            command_line
-                .getenv("XDG_ACTIVATION_TOKEN")
-                .map(|token| token.to_string())
-        })
-        .filter(|token| !token.is_empty())
+    from_platform.or_else(|| {
+        command_line
+            .getenv("XDG_ACTIVATION_TOKEN")
+            .map(|token| token.to_string())
+            .filter(|token| !token.is_empty())
+    })
 }
 
 fn start(app: &adw::Application) -> Rc<Shell> {
