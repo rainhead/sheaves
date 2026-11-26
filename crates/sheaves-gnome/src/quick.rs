@@ -232,6 +232,15 @@ impl QuickEntry {
     /// Opens fresh, since the window is kept between uses: nothing typed, the top
     /// project chosen and in view, and the cursor in the search field. It also
     /// looks at Harvest, as the Mac's panel does.
+    /// Raises the window, with `activation` when the launch that asked carried
+    /// GNOME's token, without which GNOME holds the window back.
+    pub fn present_with(&self, activation: Option<&str>) {
+        if let Some(token) = activation {
+            self.window.set_startup_id(token);
+        }
+        self.present();
+    }
+
     pub fn present(&self) {
         self.search.set_text("");
         self.filtered_for.borrow_mut().clear();
