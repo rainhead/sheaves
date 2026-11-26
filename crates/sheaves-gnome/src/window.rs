@@ -660,11 +660,7 @@ mod tests {
             "Synced 3 minutes ago"
         );
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
     use jiff::Timestamp;
     use sheaves_core::calendar_date::CalendarDate;
     use sheaves_core::models::Reference;

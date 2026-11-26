@@ -180,7 +180,10 @@ mod tests {
         assert!(!month_comes_first("%d/%m/%Y"));
         assert!(!month_comes_first("%d.%m.%Y"));
         assert!(!month_comes_first("%-d %b %Y"));
-        assert!(!month_comes_first("%Od-%Om-%Oy"), "or_IN: modifiers before the letter");
+        assert!(
+            !month_comes_first("%Od-%Om-%Oy"),
+            "or_IN: modifiers before the letter"
+        );
         assert!(!month_comes_first("%10d/%m"), "a field width");
         assert!(month_comes_first("%b %e, %Y"));
         assert!(month_comes_first(""));
